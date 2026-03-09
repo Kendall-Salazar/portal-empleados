@@ -1,0 +1,895 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chronos OrganizaT</title>
+    <!-- Google Fonts -->
+    <link
+        href="https://fonts.googleapis.com/css2?family=Same:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700&display=swap"
+        rel="stylesheet">
+    <!-- Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <link rel="stylesheet" href="style.css?v=2">
+</head>
+
+<body>
+
+    <div class="app-layout">
+
+        <!-- SIDEBAR -->
+        <aside class="sidebar">
+            <div class="brand">
+                <div class="brand-icon">
+                    <i class="fa-solid fa-user-tie"></i>
+                </div>
+                <h1 style="font-size: 1.15rem;">Portal<span>Empleados</span></h1>
+            </div>
+
+            <div class="sidebar-content">
+                <div class="sidebar-menu">
+                    <!-- PORTAL SECTION -->
+                    <button id="nav-planilla" class="nav-btn active" onclick="switchMainTab('planilla')">
+                        <i class="fa-solid fa-users"></i> Mi Equipo
+                    </button>
+                    <button id="nav-planilla-mensual" class="nav-btn" onclick="switchMainTab('planilla-mensual')">
+                        <i class="fa-solid fa-file-invoice-dollar"></i> Planilla de Pago
+                    </button>
+                    <button id="nav-vacaciones" class="nav-btn" onclick="switchMainTab('vacaciones')">
+                        <i class="fa-solid fa-umbrella-beach"></i> Vacaciones
+                    </button>
+                    <button id="nav-aguinaldo" class="nav-btn" onclick="switchMainTab('aguinaldo')">
+                        <i class="fa-solid fa-gift"></i> Aguinaldo
+                    </button>
+                    <button id="nav-utilidades" class="nav-btn" onclick="switchMainTab('utilidades')">
+                        <i class="fa-solid fa-toolbox"></i> Utilidades
+                    </button>
+
+                    <div class="menu-divider" style="height: 1px; background: var(--border); margin: 10px 0;"></div>
+
+                    <!-- SCHEDULE SECTION -->
+                    <button id="nav-schedule" class="nav-btn" onclick="switchMainTab('schedule')">
+                        <i class="fa-solid fa-calendar-days"></i> Generar Horario
+                    </button>
+                    <button id="nav-history" class="nav-btn" onclick="openOverlay('overlay-history')">
+                        <i class="fa-solid fa-clock-rotate-left"></i> Historial Horarios
+                    </button>
+                </div>
+
+                <!-- SCHEDULE SPECIFIC CONFIG -->
+                <div id="scheduleConfigSidebar" style="display: none;">
+                    <!-- CONFIG CARD -->
+                    <div class="config-section">
+                        <h3><i class="fa-solid fa-moon"></i> Turno Nocturno</h3>
+                        <p class="helper-text-sm" style="margin-top:-5px; margin-bottom: 10px;">¿Cómo se asigna el
+                            horario
+                            de noche?</p>
+
+                        <input type="hidden" id="nightModeConfig" value="rotation">
+                        <div class="segmented-control" id="nightModeSegmented" style="margin-bottom: 0.8rem;">
+                            <button type="button" class="seg-btn active"
+                                onclick="setNightMode('rotation', this)">Rotación</button>
+                            <button type="button" class="seg-btn" onclick="setNightMode('fixed_person', this)">Fijo a
+                                Empleado</button>
+                        </div>
+                    </div>
+
+                    <div id="fixedNightContainer" class="config-section hidden fade-in" style="margin-top: 0.5rem;">
+                        <h3><i class="fa-solid fa-user-moon"></i> Responsable Noche</h3>
+                        <p class="helper-text-sm" style="margin-top:-5px; margin-bottom: 10px;">Selecciona quién cubrirá
+                            el
+                            turno nocturno fijo.</p>
+                        <input type="hidden" id="nightPersonSelect" value="">
+                        <div id="nightPersonPills" class="night-person-selector">
+                            <!-- Generated -> .night-person-card elements -->
+                        </div>
+                    </div>
+
+                    <!-- EXTENDED HOURS TOGGLE -->
+                    <div class="config-section"
+                        style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border);">
+                        <h3><i class="fa-solid fa-clock"></i> Turnos Extendidos</h3>
+                        <label class="option-card hover-glow" style="margin-bottom: 0.8rem; padding: 0.8rem;">
+                            <div class="opt-content">
+                                <div class="opt-icon"
+                                    style="background: rgba(16, 185, 129, 0.1); color: #10b981; width: 32px; height: 32px; font-size: 0.9rem;">
+                                    <i class="fa-solid fa-hourglass-end"></i>
+                                </div>
+                                <div class="opt-text">
+                                    <strong style="font-size: 0.85rem;">Habilitar Q y T16</strong>
+                                    <small style="font-size: 0.7rem;">Turnos > 8hrs</small>
+                                </div>
+                            </div>
+                            <div class="toggle-container">
+                                <input type="checkbox" id="allowLongShifts" class="toggle-checkbox"
+                                    onchange="updateConfig()">
+                                <div class="toggle-slider"></div>
+                            </div>
+                        </label>
+
+                        <!-- STRICT PREFERENCES MOVED TO EMPLOYEE MODAL -->
+
+                        <!-- REFUERZO TOGGLE -->
+                        <h3><i class="fa-solid fa-user-shield"></i> Refuerzo Provisional</h3>
+                        <label class="option-card hover-glow" style="margin-bottom: 0.5rem; padding: 0.8rem;">
+                            <div class="opt-content">
+                                <div class="opt-icon"
+                                    style="background: rgba(245, 158, 11, 0.1); color: #f59e0b; width: 32px; height: 32px; font-size: 0.9rem;">
+                                    <i class="fa-solid fa-user-plus"></i>
+                                </div>
+                                <div class="opt-text">
+                                    <strong style="font-size: 0.85rem;">Activar Refuerzo</strong>
+                                    <small style="font-size: 0.7rem;">Solo si es necesario</small>
+                                </div>
+                            </div>
+                            <div class="toggle-container">
+                                <input type="checkbox" id="useRefuerzo" class="toggle-checkbox"
+                                    onchange="toggleRefuerzoConfig()">
+                                <div class="toggle-slider"></div>
+                            </div>
+                        </label>
+
+                        <div id="refuerzoTypeContainer" class="select-wrapper hidden fade-in"
+                            style="padding: 0 1.2rem;">
+                            <label
+                                style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem; display: block;">Preferencia
+                                de Horario</label>
+                            <select id="refuerzoTypeSelect" onchange="updateConfig()"
+                                style="width: 100%; padding: 0.5rem; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-panel); color: var(--text-main);">
+                                <option value="diurno">Diurno (Cubre Mañana)</option>
+                                <option value="nocturno">Nocturno (Cubre Tarde/Noche)</option>
+                                <option value="automatico">Automático (Mejor Opción)</option>
+                            </select>
+                        </div>
+
+                        <!-- COLLISION DAY Q-SHIFT TOGGLE -->
+                        <h3 style="margin-top: 1rem;"><i class="fa-solid fa-puzzle-piece"></i> Día de Colisión</h3>
+                        <label class="option-card hover-glow" style="margin-bottom: 0.5rem; padding: 0.8rem;">
+                            <div class="opt-content">
+                                <div class="opt-icon"
+                                    style="background: rgba(99, 102, 241, 0.1); color: #6366f1; width: 32px; height: 32px; font-size: 0.9rem;">
+                                    <i class="fa-solid fa-puzzle-piece"></i>
+                                </div>
+                                <div class="opt-text">
+                                    <strong style="font-size: 0.85rem;">Quebrado en Colisión</strong>
+                                    <small style="font-size: 0.7rem;">Usa turno Q solo el día con 2 OFF</small>
+                                </div>
+                            </div>
+                            <div class="toggle-container">
+                                <input type="checkbox" id="allowCollisionQuebrado" class="toggle-checkbox"
+                                    onchange="toggleCollisionConfig()">
+                                <div class="toggle-slider"></div>
+                            </div>
+                        </label>
+
+                        <div id="collisionPriorityContainer" class="select-wrapper fade-in" style="padding: 0 1.2rem;">
+                            <label
+                                style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem; display: block;">Prioridad
+                                de Pico</label>
+                            <select id="collisionPeakPriority" onchange="updateConfig()"
+                                style="width: 100%; padding: 0.5rem; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-panel); color: var(--text-main);">
+                                <option value="pm">4 Tarde + 3 Mañana (Recomendado)</option>
+                                <option value="am">4 Mañana + 3 Tarde</option>
+                            </select>
+                        </div>
+                    </div>
+                </div> <!-- END scheduleConfigSidebar -->
+
+            </div>
+
+            <div class="sidebar-footer">
+                <button class="btn-generate" onclick="generateSchedule()">
+                    <span class="icon"><i class="fa-solid fa-wand-magic-sparkles"></i></span>
+                    <span class="text">Generar</span>
+                </button>
+
+                <button id="theme-toggle" class="btn-theme-toggle" title="Cambiar Tema">
+                    <i class="fa-solid fa-moon"></i>
+                </button>
+                <div id="statusMessage" class="status-message"></div>
+            </div>
+        </aside>
+
+        <!-- MAIN CONTENT -->
+        <main class="main-content">
+            <!-- TAB: HORARIO -->
+            <div class="schedule-view hidden" id="tab-schedule-main" data-main-tab>
+                <div class="view-header">
+                    <div class="header-left">
+                        <h2>Horario Generado</h2>
+                        <span id="scheduleMeta" class="meta-tag">Listo para generar</span>
+                    </div>
+                    <div class="header-actions">
+                        <button class="btn-action primary" onclick="window.location.href='/api/export_excel'">
+                            <i class="fa-solid fa-file-excel"></i> Exportar
+                        </button>
+                        <button class="btn-action" onclick="exportToImage()">
+                            <i class="fa-solid fa-image"></i> Imagen
+                        </button>
+                        <button class="btn-action" onclick="toggleHoursColumn()">
+                            <i class="fa-solid fa-clock"></i> Horas
+                        </button>
+                        <button class="btn-action" onclick="toggleVerticalView()" id="btnToggleVertical">
+                            <i class="fa-solid fa-bars-staggered"></i> Vista Vertical
+                        </button>
+                        <button class="btn-action" onclick="toggleValidation()" id="btnToggleValidation">
+                            <i class="fa-solid fa-check-double"></i> Validación
+                        </button>
+                        <button class="btn-action primary" onclick="openSaveModal()" id="btnSaveSchedule"
+                            class="hidden">
+                            <i class="fa-solid fa-floppy-disk"></i> Guardar
+                        </button>
+                    </div>
+                </div>
+
+                <div class="big-table-wrapper" id="scheduleCapture">
+                    <table id="scheduleTable">
+                        <thead>
+                            <tr>
+                                <th id="th-collaborator" style="cursor:pointer;"
+                                    title="Click para ordenar (Nombre / Hora)">
+                                    Empleado <i class="fa-solid fa-sort"></i>
+                                </th>
+                                <th>Vie</th>
+                                <th>Sáb</th>
+                                <th>Dom</th>
+                                <th>Lun</th>
+                                <th>Mar</th>
+                                <th>Mié</th>
+                                <th>Jue</th>
+                                <th class="col-hours">Horas</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div> <!-- END tab-schedule-main -->
+
+            <!-- OVERLAYS (Now inside main-content to respect sidebar) -->
+
+            <!-- EMPLOYEES OVERLAY -->
+            <div id="overlay-employees" class="section-overlay hidden">
+                <div class="overlay-header">
+                    <h2><i class="fa-solid fa-users"></i> Gestión de Equipo</h2>
+                    <button class="close-overlay-btn" onclick="closeAllOverlays()"><i
+                            class="fa-solid fa-xmark"></i></button>
+                </div>
+                <div class="overlay-content">
+                    <div class="toolbar">
+                        <span id="employeeCount" class="count-badge">0 Empleados</span>
+                        <button class="btn-action primary" onclick="openAddModal()">
+                            <i class="fa-solid fa-user-plus"></i> Añadir Nuevo
+                        </button>
+                    </div>
+                    <div class="employee-grid-large" id="employeeGrid">
+                        <!-- Injected JS -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- HISTORY OVERLAY -->
+            <div id="overlay-history" class="section-overlay hidden">
+                <div class="overlay-header">
+                    <h2><i class="fa-solid fa-clock-rotate-left"></i> Historial Horarios</h2>
+                    <button class="close-overlay-btn" onclick="closeAllOverlays()"><i
+                            class="fa-solid fa-xmark"></i></button>
+                </div>
+                <div class="overlay-content">
+                    <div class="toolbar">
+                        <p class="helper-text">Semanas guardadas previamente.</p>
+                        <button class="btn-action" onclick="loadHistory()">
+                            <i class="fa-solid fa-rotate"></i> Actualizar
+                        </button>
+                    </div>
+                    <div id="historyList" class="history-list"></div>
+                </div>
+            </div>
+
+            <!-- TAB: PLANILLA / MI EQUIPO -->
+            <section id="tab-planilla" class="schedule-view hidden" data-main-tab>
+                <!-- Content rendered by JS -->
+            </section>
+
+            <!-- TAB: PLANILLA MENSUAL -->
+            <section id="tab-planilla-mensual" class="schedule-view hidden" data-main-tab>
+                <!-- Content rendered by JS -->
+            </section>
+
+            <!-- TAB: VACACIONES -->
+            <section id="tab-vacaciones" class="schedule-view hidden" data-main-tab>
+                <!-- Content rendered by JS -->
+            </section>
+
+            <!-- TAB: AGUINALDO -->
+            <section id="tab-aguinaldo" class="schedule-view hidden" data-main-tab>
+                <!-- Content rendered by JS -->
+            </section>
+
+            <!-- TAB: UTILIDADES -->
+            <section id="tab-utilidades" class="hidden" data-main-tab>
+                <!-- Content rendered by JS -->
+            </section>
+
+        </main>
+
+    </div>
+
+    <!-- MODALS (Dialogs) -->
+
+    <!-- SAVE MODAL -->
+    <div id="saveModal" class="modal-backdrop hidden">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <h3>Guardar Semana</h3>
+                <div class="input-group">
+                    <label>Nombre de la Semana</label>
+                    <input type="text" id="scheduleNameInput" placeholder="Ej. Semana Promo Agosto" autofocus>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn-text" onclick="closeSaveModal()">Cancelar</button>
+                    <button class="btn-action primary" onclick="confirmSaveSchedule()">Confirmar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- EMPLOYEE MODAL (REMOVED: Merged into Unified Modal #planillaEmpModal) -->
+    <!-- UNIFIED EMPLOYEE MODAL -->
+    <div id="planillaEmpModal" class="modal-backdrop hidden">
+        <div class="modal-dialog large">
+            <div class="modal-header-simple">
+                <h3 id="planEmpModalTitle">Nuevo Colaborador</h3>
+                <button class="close-icon" onclick="closePlanillaEmpModal()"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-body-scroll">
+                <div class="modal-tabs">
+                    <button class="m-tab active" onclick="switchTab('tab-general')">Perfil Laboral</button>
+                    <button class="m-tab" onclick="switchTab('tab-schedule')">Preferencias de Horario</button>
+                </div>
+
+                <div id="tab-general" class="m-tab-content active">
+                    <input type="hidden" id="planEmpId" value="">
+                    <input type="hidden" id="planEmpGenero" value="M">
+
+                    <!-- ROW 1: Nombre + Género -->
+                    <div class="input-row">
+                        <div class="input-group" style="flex:2;">
+                            <label>Nombre Completo</label>
+                            <input type="text" id="planEmpNombre" placeholder="Ej. Juan Pérez">
+                        </div>
+                        <div class="input-group" style="flex:1;">
+                            <label>Género</label>
+                            <div style="display: flex; gap: 6px;">
+                                <button type="button" class="modal-gender-pill active" data-gender="M"
+                                    onclick="setModalGender('M', this)"
+                                    style="flex:1; padding: 8px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text-muted); font-weight: 600; cursor: pointer;">
+                                    <i class="fa-solid fa-mars"></i> M
+                                </button>
+                                <button type="button" class="modal-gender-pill" data-gender="F"
+                                    onclick="setModalGender('F', this)"
+                                    style="flex:1; padding: 8px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text-muted); font-weight: 600; cursor: pointer;">
+                                    <i class="fa-solid fa-venus"></i> F
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ROW 2: Cédula + Teléfono -->
+                    <div class="input-row">
+                        <div class="input-group">
+                            <label>Cédula</label>
+                            <input type="text" id="planEmpCedula" placeholder="Ej. 1-2345-6789">
+                        </div>
+                        <div class="input-group">
+                            <label>Teléfono</label>
+                            <input type="text" id="planEmpTelefono" placeholder="Ej. 8888-8888">
+                        </div>
+                    </div>
+
+                    <!-- ROW 3: Correo + Fecha Inicio -->
+                    <div class="input-row">
+                        <div class="input-group">
+                            <label>Correo</label>
+                            <input type="text" id="planEmpCorreo" placeholder="ejemplo@correo.com">
+                        </div>
+                        <div class="input-group">
+                            <label>Fecha de Inicio</label>
+                            <input type="date" id="planEmpFechaInicio" class="custom-input"
+                                style="width: 100%; padding: 0.7rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px;">
+                        </div>
+                    </div>
+
+                    <!-- ROW 4: Tipo Pago -->
+                    <div class="input-row">
+                        <div class="input-group">
+                            <label>Tipo de Pago</label>
+                            <select id="planEmpTipoPago">
+                                <option value="tarjeta">Tarjeta</option>
+                                <option value="efectivo">Efectivo</option>
+                                <option value="fijo">Salario Fijo</option>
+                            </select>
+                        </div>
+                        <div class="input-group" id="containerSalarioFijo" style="display: none;">
+                            <label>Salario Fijo Mensual</label>
+                            <input type="number" id="planEmpSalarioFijo" placeholder="Ej. 350000"
+                                style="width: 100%; padding: 0.7rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px;">
+                        </div>
+                    </div>
+
+
+
+                    <!-- TOGGLES PLANILLA: Seguro + Nocturno -->
+                    <div style="margin-top: 1rem; display: flex; gap: 12px; flex-wrap: wrap;">
+                        <label class="option-card hover-glow" style="flex: 1; min-width: 180px; padding: 12px 16px;">
+                            <div class="opt-content">
+                                <div class="opt-icon"
+                                    style="background: rgba(16, 185, 129, 0.1); color: #10b981; width: 32px; height: 32px; font-size: 0.9rem;">
+                                    <i class="fa-solid fa-shield-check"></i>
+                                </div>
+                                <div class="opt-text">
+                                    <strong style="font-size: 0.85rem;">Aplica Seguro</strong>
+                                    <small style="font-size: 0.7rem;">Rebajo de CCSS en planilla</small>
+                                </div>
+                            </div>
+                            <div class="toggle-container">
+                                <input type="checkbox" id="planEmpSeguro" class="toggle-checkbox" checked>
+                                <div class="toggle-slider"></div>
+                            </div>
+                        </label>
+
+                        <label class="option-card hover-glow" style="flex: 1; min-width: 180px; padding: 12px 16px;">
+                            <div class="opt-content">
+                                <div class="opt-icon"
+                                    style="background: rgba(99, 102, 241, 0.1); color: #6366f1; width: 32px; height: 32px; font-size: 0.9rem;">
+                                    <i class="fa-solid fa-moon"></i>
+                                </div>
+                                <div class="opt-text">
+                                    <strong style="font-size: 0.85rem;">Puede Nocturno</strong>
+                                    <small style="font-size: 0.7rem;">Aplica para generación</small>
+                                </div>
+                            </div>
+                            <div class="toggle-container">
+                                <input type="checkbox" id="planEmpNocturno" class="toggle-checkbox" checked>
+                                <div class="toggle-slider"></div>
+                            </div>
+                        </label>
+                    </div>
+                </div> <!-- END tab-general -->
+
+                <div id="tab-schedule" class="m-tab-content">
+
+                    <div class="option-card-row" style="margin-bottom: 1.5rem;">
+                        <label class="option-card">
+                            <div class="opt-content">
+                                <div class="opt-icon" style="background: rgba(239, 68, 68, 0.1); color: #ef4444;"><i
+                                        class="fa-solid fa-thumbtack"></i></div>
+                                <div class="opt-text">
+                                    <strong>Forzar "Libres"</strong>
+                                    <small>Obligar Rol Libres</small>
+                                </div>
+                            </div>
+                            <div class="toggle-container">
+                                <input type="checkbox" id="empForcedLibres" class="toggle-checkbox">
+                                <div class="toggle-slider"></div>
+                            </div>
+                        </label>
+
+                        <label class="option-card">
+                            <div class="opt-content">
+                                <div class="opt-icon" style="background: rgba(124, 58, 237, 0.1); color: #7c3aed;"><i
+                                        class="fa-solid fa-bolt"></i></div>
+                                <div class="opt-text">
+                                    <strong>Forzar Quebrado</strong>
+                                    <small>Turnos Q (6 días)</small>
+                                </div>
+                            </div>
+                            <div class="toggle-container">
+                                <input type="checkbox" id="empForcedQuebrado" class="toggle-checkbox">
+                                <div class="toggle-slider"></div>
+                            </div>
+                        </label>
+
+                        <label class="option-card">
+                            <div class="opt-content">
+                                <div class="opt-icon" style="background: rgba(245, 158, 11, 0.1); color: #f59e0b;"><i
+                                        class="fa-solid fa-fire"></i></div>
+                                <div class="opt-text">
+                                    <strong>Sin Descanso</strong>
+                                    <small>Trabajar los 7 días</small>
+                                </div>
+                            </div>
+                            <div class="toggle-container">
+                                <input type="checkbox" id="empNoRest" class="toggle-checkbox">
+                                <div class="toggle-slider"></div>
+                            </div>
+                        </label>
+
+                        <label class="option-card hover-glow">
+                            <div class="opt-content">
+                                <div class="opt-icon" style="background: rgba(59, 130, 246, 0.15); color: #3b82f6;"><i
+                                        class="fa-solid fa-star"></i></div>
+                                <div class="opt-text">
+                                    <strong>Jefe de Pista</strong>
+                                    <small>Marcador de rol</small>
+                                </div>
+                            </div>
+                            <div class="toggle-container">
+                                <input type="checkbox" id="empJefePista" class="toggle-checkbox"
+                                    onchange="toggleJefeShiftSelect()">
+                                <div class="toggle-slider"></div>
+                            </div>
+                        </label>
+
+                        <div id="jefeShiftConfig" class="input-group jefe-shift-config" style="display: none;">
+                            <label style="font-size: 0.8rem; margin-bottom: 5px; color: #94a3b8;">Horario Base
+                                (L-V)</label>
+                            <select id="jefeShiftSelect" onchange="animateSelect(this)"
+                                style="padding: 5px; font-size: 0.85rem; width: 100%; border-radius: 4px; background: #0f172a; color: white; border: 1px solid #475569;">
+                                <option value="J_06-16">06:00 AM - 04:00 PM</option>
+                                <option value="J_07-17">07:00 AM - 05:00 PM</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="pref-section">
+                        <h4><i class="fa-solid fa-umbrella-beach" style="color:#10b981;"></i> Ausencias</h4>
+                        <p class="helper-text-sm">Selecciona los días que el empleado estará fuera. Cuentan como Libre.
+                        </p>
+                        <div class="vacation-days-row" id="vacationCheckboxes">
+                            <!-- Injected via JS -->
+                        </div>
+                    </div>
+
+                    <div class="pref-section">
+                        <label class="option-card strict-pref-card">
+                            <div class="opt-content">
+                                <div class="opt-icon" style="background: rgba(239, 68, 68, 0.1); color: #ef4444;"><i
+                                        class="fa-solid fa-lock"></i></div>
+                                <div class="opt-text">
+                                    <strong>Preferencias Estrictas</strong>
+                                    <small>Si está activado, los turnos asignados son obligatorios. Si no, el generador
+                                        puede ajustarlos para cumplir coberturas.</small>
+                                </div>
+                            </div>
+                            <div class="toggle-container">
+                                <input type="checkbox" id="empStrictPreferences" class="toggle-checkbox">
+                                <div class="toggle-slider"></div>
+                            </div>
+                        </label>
+                    </div>
+
+                    <div class="pref-section">
+                        <h4><i class="fa-solid fa-calendar-days" style="color:#6366f1;"></i> Preferencia de Turnos</h4>
+                        <p class="helper-text-sm">Haz click en un día para elegir el turno preferido.</p>
+
+                        <div class="day-cards-grid" id="dayCardsGrid">
+                            <!-- 7 day cards generated by JS -->
+                        </div>
+
+                        <!-- Floating pill selector panel -->
+                        <div class="pill-selector-panel hidden" id="pillSelectorPanel">
+                            <div class="pill-panel-header">
+                                <span class="pill-panel-day" id="pillPanelDay">Viernes</span>
+                                <button class="pill-panel-close" onclick="closePillPanel()"><i
+                                        class="fa-solid fa-xmark"></i></button>
+                            </div>
+                            <div class="pill-panel-body">
+                                <div class="pill-group">
+                                    <span class="pill-group-label">Especiales</span>
+                                    <div class="pill-options" id="pillGroupSpecial">
+                                        <!-- Auto, VAC, PERM, OFF, Noche -->
+                                    </div>
+                                </div>
+                                <div class="pill-group">
+                                    <span class="pill-group-label"><i class="fa-solid fa-sun"></i> Mañana</span>
+                                    <div class="pill-options" id="pillGroupMorning">
+                                        <!-- 05-13, 06-14, 07-15, 08-16, 09-17 -->
+                                    </div>
+                                </div>
+                                <div class="pill-group">
+                                    <span class="pill-group-label"><i class="fa-solid fa-cloud-sun"></i> Tarde</span>
+                                    <div class="pill-options" id="pillGroupAfternoon">
+                                        <!-- 11-19, 12-20, 13-20, 14-21, 14-22, 15-22, 16-22 -->
+                                    </div>
+                                </div>
+                                <div class="pill-group" id="pillGroupExtendedWrap">
+                                    <span class="pill-group-label"><i class="fa-solid fa-bolt"></i> Extendidos /
+                                        Quebrados</span>
+                                    <div class="pill-options" id="pillGroupExtended">
+                                        <!-- 13-22, 14-23, Q1, Q2 -->
+                                    </div>
+                                </div>
+                                <div class="pill-group" id="pillGroupJefeWrap" style="display: none;">
+                                    <span class="pill-group-label"><i class="fa-solid fa-star"></i> Jefe de Pista</span>
+                                    <div class="pill-options" id="pillGroupJefe">
+                                        <!-- J_06-16, J_07-17 -->
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Hidden selects to maintain data compatibility -->
+                    <div style="display:none;">
+                        <div class="shifts-grid">
+                            <select class="shift-select" data-day="Vie"></select>
+                            <select class="shift-select" data-day="Sáb"></select>
+                            <select class="shift-select" data-day="Dom"></select>
+                            <select class="shift-select" data-day="Lun"></select>
+                            <select class="shift-select" data-day="Mar"></select>
+                            <select class="shift-select" data-day="Mié"></select>
+                            <select class="shift-select" data-day="Jue"></select>
+                        </div>
+                    </div>
+                </div> <!-- END tab-schedule -->
+            </div>
+            <div class="modal-actions-footer">
+                <button class="btn-text" onclick="closePlanillaEmpModal()">Cancelar</button>
+                <button class="btn-action primary" onclick="guardarPlanillaEmp()">Guardar Colaborador</button>
+            </div>
+        </div>
+    </div>
+    </div>
+    </div>
+
+    <!-- REGISTRAR VACACION MODAL -->
+    <div id="vacacionModal" class="modal-backdrop hidden">
+        <div class="modal-dialog">
+            <div class="modal-header-simple">
+                <h3>Registrar Vacación: <span id="vacEmpName" style="color: var(--primary);"></span></h3>
+                <button class="close-icon" onclick="closeRegistrarVacacion()"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-body-scroll">
+                <input type="hidden" id="vacEmpId" value="">
+                <div class="input-row">
+                    <div class="input-group">
+                        <label>Fecha Inicio</label>
+                        <input type="date" id="vacFechaInicio" class="custom-input" onchange="autoCalcVacDias()"
+                            style="width: 100%; padding: 0.7rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px;">
+                    </div>
+                    <div class="input-group">
+                        <label>Fecha Fin</label>
+                        <input type="date" id="vacFechaFin" class="custom-input" onchange="autoCalcVacDias()"
+                            style="width: 100%; padding: 0.7rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px;">
+                    </div>
+                </div>
+                <div class="input-row">
+                    <div class="input-group">
+                        <label>Días a Descontar</label>
+                        <input type="number" step="0.5" id="vacDias" placeholder="Ej. 5" class="custom-input"
+                            style="width: 100%; padding: 0.7rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px;">
+                    </div>
+                    <div class="input-group">
+                        <label>Fecha de Reingreso</label>
+                        <input type="date" id="vacFechaReingreso" class="custom-input"
+                            style="width: 100%; padding: 0.7rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px;">
+                    </div>
+                </div>
+                <div class="input-group">
+                    <label>Notas Adicionales</label>
+                    <input type="text" id="vacNotas" placeholder="Opcional">
+                </div>
+            </div>
+            <div class="modal-actions-footer">
+                <button class="btn-text" onclick="closeRegistrarVacacion()">Cancelar</button>
+                <button class="btn-action primary" onclick="guardarVacacion()">Guardar Vacación</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- HISTORIAL VACACIONES MODAL -->
+    <div id="vacHistorialModal" class="modal-backdrop hidden">
+        <div class="modal-dialog" style="max-width: 1000px; width: 95%;">
+            <div class="modal-header-simple">
+                <h3>Historial de Vacaciones: <span id="vacHistName" style="color: var(--primary);"></span></h3>
+                <button class="close-icon" onclick="closeVacHistorial()"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-body-scroll" style="max-height:600px; overflow-y:auto; padding-bottom: 2rem;">
+                <div id="vacHistContent"></div>
+            </div>
+        </div>
+    </div>
+
+    </div>
+    </div>
+
+    <!-- MODAL: TARIFAS & CONFIG -->
+    <div id="planillaConfigModal" class="modal-backdrop hidden">
+        <div class="modal-dialog">
+            <div class="modal-header-simple">
+                <h3>Configuración de Tarifas</h3>
+                <button class="close-icon" onclick="closeTarifasModal()"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-body-scroll">
+                <div class="input-row">
+                    <div class="input-group">
+                        <label>Tarifa Diurna (¢)</label>
+                        <input type="number" id="cfgTarifaDiurna" step="0.01" class="custom-input"
+                            style="width: 100%; padding: 0.7rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px;">
+                    </div>
+                    <div class="input-group">
+                        <label>Tarifa Mixta (¢)</label>
+                        <input type="number" id="cfgTarifaMixta" step="0.01" class="custom-input"
+                            style="width: 100%; padding: 0.7rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px;">
+                    </div>
+                </div>
+                <div class="input-row">
+                    <div class="input-group">
+                        <label>Tarifa Nocturna (¢)</label>
+                        <input type="number" id="cfgTarifaNocturna" step="0.01" class="custom-input"
+                            style="width: 100%; padding: 0.7rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px;">
+                    </div>
+                    <div class="input-group">
+                        <label>Deducción Seguro (¢)</label>
+                        <input type="number" id="cfgTarifaSeguro" step="0.01" class="custom-input"
+                            style="width: 100%; padding: 0.7rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px;">
+                    </div>
+                </div>
+            </div>
+            <div class="modal-actions-footer">
+                <button class="btn-text" onclick="closeTarifasModal()">Cancelar</button>
+                <button class="btn-action primary" onclick="guardarTarifas()">Guardar Tarifas</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: NUEVO MES -->
+    <div id="nuevoMesModal" class="modal-backdrop hidden">
+        <div class="modal-dialog">
+            <div class="modal-header-simple">
+                <h3>Iniciar Nuevo Mes</h3>
+                <button class="close-icon" onclick="closeNuevoMesModal()"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-body-scroll">
+                <p class="helper-text-sm" style="margin-bottom:15px;">
+                    Se generará el archivo Excel e insertará el catálogo de empleados base actual.
+                </p>
+                <div class="input-row">
+                    <div class="input-group" style="flex:1;">
+                        <label>Año</label>
+                        <input type="number" id="nuevoMesAnio" value="" class="custom-input"
+                            style="width: 100%; padding: 0.7rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px;"
+                            required>
+                    </div>
+                    <div class="input-group" style="flex:2;">
+                        <label>Mes</label>
+                        <select id="nuevoMesSel"
+                            style="width: 100%; padding: 0.7rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px;">
+                            <option value="1">Enero</option>
+                            <option value="2">Febrero</option>
+                            <option value="3">Marzo</option>
+                            <option value="4">Abril</option>
+                            <option value="5">Mayo</option>
+                            <option value="6">Junio</option>
+                            <option value="7">Julio</option>
+                            <option value="8">Agosto</option>
+                            <option value="9">Septiembre</option>
+                            <option value="10">Octubre</option>
+                            <option value="11">Noviembre</option>
+                            <option value="12">Diciembre</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-actions-footer">
+                <button class="btn-text" onclick="closeNuevoMesModal()">Cancelar</button>
+                <button class="btn-action primary" onclick="crearNuevoMes()"><i class="fa-solid fa-file-excel"></i>
+                    Generar Excel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: NUEVA SEMANA -->
+    <div id="nuevaSemanaModal" class="modal-backdrop hidden">
+        <div class="modal-dialog">
+            <div class="modal-header-simple">
+                <h3>Agregar Semana</h3>
+                <button class="close-icon" onclick="closeNuevaSemanaModal()"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-body-scroll">
+                <p class="helper-text-sm" style="margin-bottom:15px;">
+                    Ingresa la fecha del <strong>Primer Día (Viernes)</strong> de la semana a procesar.
+                </p>
+                <div class="input-group">
+                    <label>Fecha del Viernes</label>
+                    <input type="date" id="nuevaSemanaFecha" class="custom-input"
+                        style="width: 100%; padding: 0.7rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px;"
+                        required>
+                </div>
+            </div>
+            <div class="modal-actions-footer">
+                <button class="btn-text" onclick="closeNuevaSemanaModal()">Cancelar</button>
+                <button class="btn-action primary" onclick="guardarNuevaSemana()"><i class="fa-solid fa-plus"></i>
+                    Agregar Semana</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: IMPORTAR HORARIO -->
+    <div id="importarHorarioModal" class="modal-backdrop hidden">
+        <div class="modal-dialog">
+            <div class="modal-header-simple">
+                <h3>Importar Horario Semanal</h3>
+                <button class="close-icon" onclick="closeImportarHorarioModal()"><i
+                        class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-body-scroll">
+                <p class="helper-text-sm" style="margin-bottom:15px;">
+                    Seleccione un horario guardado para rellenar las horas de la <strong
+                        id="importSemanaNombreLbl"></strong>.
+                </p>
+                <input type="hidden" id="importSemanaId" value="">
+                <input type="hidden" id="importSemanaTxt" value="">
+                <div class="input-group">
+                    <label>Horario Generado</label>
+                    <select id="importHorarioSel"
+                        style="width: 100%; padding: 0.7rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px;"></select>
+                </div>
+                <div class="input-group" style="margin-top: 15px; display: flex; align-items: center; gap: 10px;">
+                    <input type="checkbox" id="importSyncEmps" checked>
+                    <label for="importSyncEmps"
+                        style="margin: 0; cursor: pointer; color: var(--text-muted); font-size: 0.9rem;">Sincronizar
+                        nuevos empleados a la planilla</label>
+                </div>
+            </div>
+            <div class="modal-actions-footer">
+                <button class="btn-text" onclick="closeImportarHorarioModal()">Cancelar</button>
+                <button class="btn-action primary" onclick="ejecutarImportarHorario()"><i
+                        class="fa-solid fa-download"></i> Importar Horas</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: BOLETAS -->
+    <div id="boletasModal" class="modal-backdrop hidden">
+        <div class="modal-dialog">
+            <div class="modal-header-simple">
+                <h3>Generar Boletas (JPEGs)</h3>
+                <button class="close-icon" onclick="closeBoletasModal()"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-body-scroll">
+                <p class="helper-text-sm" style="margin-bottom:15px;">
+                    Extrae las tarifas y horas del Excel, y genera imágenes listas para enviar.
+                </p>
+                <div class="input-group">
+                    <label>Semana</label>
+                    <select id="boletaSemanaSel"
+                        style="width: 100%; padding: 0.7rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px;"></select>
+                </div>
+            </div>
+            <div class="modal-actions-footer">
+                <button class="btn-text" onclick="closeBoletasModal()">Cancelar</button>
+                <button class="btn-action primary" onclick="ejecutarBoletas()"><i class="fa-solid fa-image"></i> Generar
+                    Boletas</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: HISTORIAL DE PLANILLAS -->
+    <div id="planillaHistorialModal" class="modal-backdrop hidden">
+        <div class="modal-dialog" style="max-width: 800px; width: 95%;">
+            <div class="modal-header-simple">
+                <h3><i class="fa-solid fa-clock-rotate-left"></i> Historial de Planillas</h3>
+                <button class="close-icon" onclick="closePlanillasHistorial()"><i
+                        class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-body-scroll" style="max-height: 60vh; overflow-y: auto; padding-bottom: 2rem;">
+                <p class="helper-text-sm" style="margin-bottom:15px;">
+                    Aquí puedes ver todos los archivos Excel y sus semanas registradas.
+                </p>
+                <div id="planillaHistContent">
+                    <div class="portal-loading">
+                        <div class="portal-spinner"></div><span>Cargando historial...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+    <script src="planillas_ui.js"></script>
+</body>
+
+</html>

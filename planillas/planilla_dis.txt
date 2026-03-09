@@ -1,0 +1,891 @@
+  0           RESUME                   0
+
+  1           LOAD_CONST               0 (0)
+              LOAD_CONST               1 (None)
+              IMPORT_NAME              0 (openpyxl)
+              STORE_NAME               0 (openpyxl)
+
+  2           LOAD_CONST               0 (0)
+              LOAD_CONST               2 (('Font', 'PatternFill', 'Alignment', 'Border', 'Side'))
+              IMPORT_NAME              1 (openpyxl.styles)
+              IMPORT_FROM              2 (Font)
+              STORE_NAME               2 (Font)
+              IMPORT_FROM              3 (PatternFill)
+              STORE_NAME               3 (PatternFill)
+              IMPORT_FROM              4 (Alignment)
+              STORE_NAME               4 (Alignment)
+              IMPORT_FROM              5 (Border)
+              STORE_NAME               5 (Border)
+              IMPORT_FROM              6 (Side)
+              STORE_NAME               6 (Side)
+              POP_TOP
+
+  3           LOAD_CONST               0 (0)
+              LOAD_CONST               3 (('datetime', 'timedelta'))
+              IMPORT_NAME              7 (datetime)
+              IMPORT_FROM              7 (datetime)
+              STORE_NAME               7 (datetime)
+              IMPORT_FROM              8 (timedelta)
+              STORE_NAME               8 (timedelta)
+              POP_TOP
+
+  6           LOAD_CONST               4 (50.0)
+              STORE_NAME               9 (TARIFA_DIURNA)
+
+  7           LOAD_CONST               5 (75.0)
+              STORE_NAME              10 (TARIFA_NOCTURNA)
+
+  8           LOAD_CONST               6 (62.5)
+              STORE_NAME              11 (TARIFA_MIXTA)
+
+  9           BUILD_LIST               0
+              STORE_NAME              12 (SAMPLE_EMPS)
+
+ 12           LOAD_NAME                2 (Font)
+              PUSH_NULL
+              LOAD_CONST               7 ('Arial')
+              LOAD_CONST               8 (10)
+              LOAD_CONST               9 (('name', 'size'))
+              CALL_KW                  2
+              STORE_NAME              13 (f_data)
+
+ 13           LOAD_NAME                2 (Font)
+              PUSH_NULL
+              LOAD_CONST               7 ('Arial')
+              LOAD_CONST              10 (11)
+              LOAD_CONST              11 (True)
+              LOAD_CONST              12 ('FFFFFF')
+              LOAD_CONST              13 (('name', 'size', 'bold', 'color'))
+              CALL_KW                  4
+              STORE_NAME              14 (f_header)
+
+ 14           LOAD_NAME                3 (PatternFill)
+              PUSH_NULL
+              LOAD_CONST              14 ('solid')
+              LOAD_CONST              12 ('FFFFFF')
+              LOAD_CONST              12 ('FFFFFF')
+              LOAD_CONST              15 (('fill_type', 'start_color', 'end_color'))
+              CALL_KW                  3
+              STORE_NAME              15 (ROW_1)
+
+ 15           LOAD_NAME                3 (PatternFill)
+              PUSH_NULL
+              LOAD_CONST              14 ('solid')
+              LOAD_CONST              16 ('F2F2F2')
+              LOAD_CONST              16 ('F2F2F2')
+              LOAD_CONST              15 (('fill_type', 'start_color', 'end_color'))
+              CALL_KW                  3
+              STORE_NAME              16 (ROW_2)
+
+ 16           LOAD_NAME                4 (Alignment)
+              PUSH_NULL
+              LOAD_CONST              17 ('left')
+              LOAD_CONST              18 ('center')
+              LOAD_CONST              19 (('horizontal', 'vertical'))
+              CALL_KW                  2
+              STORE_NAME              17 (al_l)
+
+ 17           LOAD_NAME                4 (Alignment)
+              PUSH_NULL
+              LOAD_CONST              18 ('center')
+              LOAD_CONST              18 ('center')
+              LOAD_CONST              19 (('horizontal', 'vertical'))
+              CALL_KW                  2
+              STORE_NAME              18 (al_c)
+
+ 18           LOAD_NAME                4 (Alignment)
+              PUSH_NULL
+              LOAD_CONST              20 ('right')
+              LOAD_CONST              18 ('center')
+              LOAD_CONST              19 (('horizontal', 'vertical'))
+              CALL_KW                  2
+              STORE_NAME              19 (al_r)
+
+ 19           LOAD_NAME                6 (Side)
+              PUSH_NULL
+              LOAD_CONST              21 ('thin')
+              LOAD_CONST              22 ('000000')
+              LOAD_CONST              23 (('border_style', 'color'))
+              CALL_KW                  2
+              STORE_NAME              20 (thin)
+
+ 20           LOAD_NAME                5 (Border)
+              PUSH_NULL
+              LOAD_NAME               20 (thin)
+              LOAD_NAME               20 (thin)
+              LOAD_NAME               20 (thin)
+              LOAD_NAME               20 (thin)
+              LOAD_CONST              24 (('top', 'left', 'right', 'bottom'))
+              CALL_KW                  4
+              STORE_NAME              21 (borde)
+
+ 21           LOAD_CONST              25 ('"$"#,##0.00')
+              STORE_NAME              22 (MONEY)
+
+ 23           LOAD_CONST              36 ((None, None, None, None, None))
+              LOAD_CONST              26 (<code object sc at 0x000001CE15E75E30, file "C:\Users\kenda\OneDrive\Escritorio\filtros\planillas\planilla.py", line 23>)
+              MAKE_FUNCTION
+              SET_FUNCTION_ATTRIBUTE   1 (defaults)
+              STORE_NAME              23 (sc)
+
+ 33           LOAD_CONST              27 (<code object crear_catalogo at 0x000001CE1623CFE0, file "C:\Users\kenda\OneDrive\Escritorio\filtros\planillas\planilla.py", line 33>)
+              MAKE_FUNCTION
+              STORE_NAME              24 (crear_catalogo)
+
+ 47           LOAD_CONST              28 (<code object leer_catalogo at 0x000001CE1623C020, file "C:\Users\kenda\OneDrive\Escritorio\filtros\planillas\planilla.py", line 47>)
+              MAKE_FUNCTION
+              STORE_NAME              25 (leer_catalogo)
+
+ 70           LOAD_CONST              29 (<code object contar_semanas at 0x000001CE16141AC0, file "C:\Users\kenda\OneDrive\Escritorio\filtros\planillas\planilla.py", line 70>)
+              MAKE_FUNCTION
+              STORE_NAME              26 (contar_semanas)
+
+ 74           LOAD_CONST              30 (<code object num_semana_anual at 0x000001CE15EA6CC0, file "C:\Users\kenda\OneDrive\Escritorio\filtros\planillas\planilla.py", line 74>)
+              MAKE_FUNCTION
+              STORE_NAME              27 (num_semana_anual)
+
+ 80           LOAD_CONST              37 ((0,))
+              LOAD_CONST              31 (<code object crear_hoja_semanal at 0x000001CE1625FEB0, file "C:\Users\kenda\OneDrive\Escritorio\filtros\planillas\planilla.py", line 80>)
+              MAKE_FUNCTION
+              SET_FUNCTION_ATTRIBUTE   1 (defaults)
+              STORE_NAME              28 (crear_hoja_semanal)
+
+144           LOAD_CONST              32 (<code object crear_resumen_semanal at 0x000001CE1613E6F0, file "C:\Users\kenda\OneDrive\Escritorio\filtros\planillas\planilla.py", line 144>)
+              MAKE_FUNCTION
+              STORE_NAME              29 (crear_resumen_semanal)
+
+151           LOAD_CONST              33 (<code object crear_resumen_mensual at 0x000001CE16155FB0, file "C:\Users\kenda\OneDrive\Escritorio\filtros\planillas\planilla.py", line 151>)
+              MAKE_FUNCTION
+              STORE_NAME              30 (crear_resumen_mensual)
+
+157           LOAD_CONST              34 (<code object crear_dashboard at 0x000001CE16156550, file "C:\Users\kenda\OneDrive\Escritorio\filtros\planillas\planilla.py", line 157>)
+              MAKE_FUNCTION
+              STORE_NAME              31 (crear_dashboard)
+
+163           LOAD_CONST              35 (<code object vincular_resumen at 0x000001CE15EDA590, file "C:\Users\kenda\OneDrive\Escritorio\filtros\planillas\planilla.py", line 163>)
+              MAKE_FUNCTION
+              STORE_NAME              32 (vincular_resumen)
+              RETURN_CONST             1 (None)
+
+Disassembly of <code object sc at 0x000001CE15E75E30, file "C:\Users\kenda\OneDrive\Escritorio\filtros\planillas\planilla.py", line 23>:
+ 23           RESUME                   0
+
+ 25           LOAD_FAST                0 (ws)
+              LOAD_ATTR                1 (cell + NULL|self)
+              LOAD_FAST_LOAD_FAST     18 (row, col)
+              LOAD_CONST               1 (('row', 'column'))
+              CALL_KW                  2
+              STORE_FAST               9 (c)
+
+ 26           LOAD_FAST_LOAD_FAST     57 (val, c)
+              STORE_ATTR               1 (value)
+
+ 27           LOAD_FAST                4 (font)
+              TO_BOOL
+              POP_JUMP_IF_FALSE        6 (to L1)
+              LOAD_FAST_LOAD_FAST     73 (font, c)
+              STORE_ATTR               2 (font)
+
+ 28   L1:     LOAD_FAST                5 (fill)
+              TO_BOOL
+              POP_JUMP_IF_FALSE        6 (to L2)
+              LOAD_FAST_LOAD_FAST     89 (fill, c)
+              STORE_ATTR               3 (fill)
+
+ 29   L2:     LOAD_FAST                6 (align)
+              TO_BOOL
+              POP_JUMP_IF_FALSE        6 (to L3)
+              LOAD_FAST_LOAD_FAST    105 (align, c)
+              STORE_ATTR               4 (alignment)
+
+ 30   L3:     LOAD_FAST                7 (border)
+              TO_BOOL
+              POP_JUMP_IF_FALSE        6 (to L4)
+              LOAD_FAST_LOAD_FAST    121 (border, c)
+              STORE_ATTR               5 (border)
+
+ 31   L4:     LOAD_FAST                8 (num_format)
+              TO_BOOL
+              POP_JUMP_IF_FALSE        7 (to L5)
+              LOAD_FAST_LOAD_FAST    137 (num_format, c)
+              STORE_ATTR               6 (number_format)
+              RETURN_CONST             2 (None)
+      L5:     RETURN_CONST             2 (None)
+
+Disassembly of <code object crear_catalogo at 0x000001CE1623CFE0, file "C:\Users\kenda\OneDrive\Escritorio\filtros\planillas\planilla.py", line 33>:
+ 33           RESUME                   0
+
+ 36           LOAD_CONST               1 ('Catalogo')
+              LOAD_FAST                0 (wb)
+              LOAD_ATTR                0 (sheetnames)
+              CONTAINS_OP              0
+              POP_JUMP_IF_FALSE       34 (to L1)
+
+ 37           LOAD_FAST                0 (wb)
+              LOAD_CONST               1 ('Catalogo')
+              BINARY_SUBSCR
+              STORE_FAST               1 (ws)
+
+ 38           LOAD_FAST                1 (ws)
+              LOAD_ATTR                3 (delete_rows + NULL|self)
+              LOAD_CONST               2 (1)
+              LOAD_FAST                1 (ws)
+              LOAD_ATTR                4 (max_row)
+              CALL                     2
+              POP_TOP
+              JUMP_FORWARD            17 (to L2)
+
+ 40   L1:     LOAD_FAST                0 (wb)
+              LOAD_ATTR                7 (create_sheet + NULL|self)
+              LOAD_CONST               1 ('Catalogo')
+              CALL                     1
+              STORE_FAST               1 (ws)
+
+ 42   L2:     BUILD_LIST               0
+              LOAD_CONST               3 (('Nombre', 'Tipo Pago', 'Salario Fijo', 'Adelantos', 'Prestamos'))
+              LIST_EXTEND              1
+              STORE_FAST               2 (headers)
+
+ 43           LOAD_GLOBAL              9 (enumerate + NULL)
+              LOAD_FAST                2 (headers)
+              CALL                     1
+              GET_ITER
+      L3:     FOR_ITER                98 (to L4)
+              UNPACK_SEQUENCE          2
+              STORE_FAST_STORE_FAST   52 (i, h)
+
+ 44           LOAD_GLOBAL             11 (sc + NULL)
+              LOAD_FAST                1 (ws)
+              LOAD_CONST               4 (4)
+              LOAD_FAST                3 (i)
+              LOAD_CONST               2 (1)
+              BINARY_OP                0 (+)
+              LOAD_FAST                4 (h)
+              LOAD_GLOBAL             12 (f_header)
+              LOAD_GLOBAL             15 (PatternFill + NULL)
+              LOAD_CONST               5 ('4F81BD')
+              LOAD_CONST               6 ('solid')
+              LOAD_CONST               7 (('start_color', 'fill_type'))
+              CALL_KW                  2
+              LOAD_GLOBAL             16 (al_c)
+              LOAD_GLOBAL             18 (borde)
+              CALL                     8
+              POP_TOP
+
+ 45           LOAD_CONST               8 (20)
+              LOAD_FAST                1 (ws)
+              LOAD_ATTR               20 (column_dimensions)
+              LOAD_GLOBAL             22 (openpyxl)
+              LOAD_ATTR               24 (utils)
+              LOAD_ATTR               27 (get_column_letter + NULL|self)
+              LOAD_FAST                3 (i)
+              LOAD_CONST               2 (1)
+              BINARY_OP                0 (+)
+              CALL                     1
+              BINARY_SUBSCR
+              STORE_ATTR              14 (width)
+              JUMP_BACKWARD          100 (to L3)
+
+ 43   L4:     END_FOR
+              POP_TOP
+              RETURN_CONST             9 (None)
+
+Disassembly of <code object leer_catalogo at 0x000001CE1623C020, file "C:\Users\kenda\OneDrive\Escritorio\filtros\planillas\planilla.py", line 47>:
+ 47           RESUME                   0
+
+ 49           LOAD_CONST               1 ('Catalogo')
+              LOAD_FAST                0 (wb)
+              LOAD_ATTR                0 (sheetnames)
+              CONTAINS_OP              1
+              POP_JUMP_IF_FALSE        6 (to L1)
+
+ 50           BUILD_LIST               0
+              BUILD_LIST               0
+              BUILD_LIST               0
+              LOAD_CONST               2 (('tarjeta', 'efectivo', 'fijo'))
+              BUILD_CONST_KEY_MAP      3
+              RETURN_VALUE
+
+ 52   L1:     LOAD_FAST                0 (wb)
+              LOAD_CONST               1 ('Catalogo')
+              BINARY_SUBSCR
+              STORE_FAST               1 (ws)
+
+ 53           BUILD_LIST               0
+              BUILD_LIST               0
+              BUILD_LIST               0
+              LOAD_CONST               2 (('tarjeta', 'efectivo', 'fijo'))
+              BUILD_CONST_KEY_MAP      3
+              STORE_FAST               2 (empleados)
+
+ 55           LOAD_GLOBAL              3 (range + NULL)
+              LOAD_CONST               3 (5)
+              LOAD_FAST                1 (ws)
+              LOAD_ATTR                4 (max_row)
+              LOAD_CONST               4 (1)
+              BINARY_OP                0 (+)
+              CALL                     2
+              GET_ITER
+      L2:     FOR_ITER               137 (to L8)
+              STORE_FAST               3 (r)
+
+ 56           LOAD_FAST                1 (ws)
+              LOAD_ATTR                7 (cell + NULL|self)
+              LOAD_FAST                3 (r)
+              LOAD_CONST               4 (1)
+              LOAD_CONST               5 (('row', 'column'))
+              CALL_KW                  2
+              LOAD_ATTR                8 (value)
+              STORE_FAST               4 (nombre)
+
+ 57           LOAD_FAST                4 (nombre)
+              TO_BOOL
+              POP_JUMP_IF_TRUE         2 (to L3)
+              JUMP_BACKWARD           38 (to L2)
+
+ 59   L3:     LOAD_FAST                1 (ws)
+              LOAD_ATTR                7 (cell + NULL|self)
+              LOAD_FAST                3 (r)
+              LOAD_CONST               6 (2)
+              LOAD_CONST               5 (('row', 'column'))
+              CALL_KW                  2
+              LOAD_ATTR                8 (value)
+              COPY                     1
+              TO_BOOL
+              POP_JUMP_IF_TRUE         2 (to L4)
+              POP_TOP
+              LOAD_CONST               7 ('')
+      L4:     STORE_FAST               5 (tipo_raw)
+
+ 60           LOAD_GLOBAL             11 (str + NULL)
+              LOAD_FAST                5 (tipo_raw)
+              CALL                     1
+              LOAD_ATTR               13 (lower + NULL|self)
+              CALL                     0
+              STORE_FAST               6 (tipo_str)
+
+ 62           LOAD_CONST               8 ('tarjeta')
+              LOAD_FAST                6 (tipo_str)
+              CONTAINS_OP              0
+              POP_JUMP_IF_FALSE        3 (to L5)
+              LOAD_CONST               8 ('tarjeta')
+              STORE_FAST               7 (key)
+              JUMP_FORWARD            11 (to L7)
+
+ 63   L5:     LOAD_CONST               9 ('fijo')
+              LOAD_FAST                6 (tipo_str)
+              CONTAINS_OP              0
+              POP_JUMP_IF_FALSE        3 (to L6)
+              LOAD_CONST               9 ('fijo')
+              STORE_FAST               7 (key)
+              JUMP_FORWARD             2 (to L7)
+
+ 64   L6:     LOAD_CONST              10 ('efectivo')
+              STORE_FAST               7 (key)
+
+ 66   L7:     LOAD_FAST_LOAD_FAST     39 (empleados, key)
+              BINARY_SUBSCR
+              LOAD_ATTR               15 (append + NULL|self)
+              LOAD_FAST                4 (nombre)
+              CALL                     1
+              POP_TOP
+              JUMP_BACKWARD          139 (to L2)
+
+ 55   L8:     END_FOR
+              POP_TOP
+
+ 68           LOAD_FAST                2 (empleados)
+              RETURN_VALUE
+
+Disassembly of <code object contar_semanas at 0x000001CE16141AC0, file "C:\Users\kenda\OneDrive\Escritorio\filtros\planillas\planilla.py", line 70>:
+ 70           RESUME                   0
+
+ 72           LOAD_GLOBAL              1 (sum + NULL)
+              LOAD_CONST               1 (<code object <genexpr> at 0x000001CE15E9BDF0, file "C:\Users\kenda\OneDrive\Escritorio\filtros\planillas\planilla.py", line 72>)
+              MAKE_FUNCTION
+              LOAD_FAST                0 (wb)
+              LOAD_ATTR                2 (sheetnames)
+              GET_ITER
+              CALL                     0
+              CALL                     1
+              RETURN_VALUE
+
+Disassembly of <code object <genexpr> at 0x000001CE15E9BDF0, file "C:\Users\kenda\OneDrive\Escritorio\filtros\planillas\planilla.py", line 72>:
+  72           RETURN_GENERATOR
+               POP_TOP
+       L1:     RESUME                   0
+               LOAD_FAST                0 (.0)
+       L2:     FOR_ITER                40 (to L5)
+               STORE_FAST               1 (s)
+               LOAD_GLOBAL              1 (str + NULL)
+               LOAD_FAST                1 (s)
+               CALL                     1
+               LOAD_ATTR                3 (startswith + NULL|self)
+               LOAD_CONST               0 ('Semana ')
+               CALL                     1
+               TO_BOOL
+       L3:     POP_JUMP_IF_TRUE         2 (to L4)
+               JUMP_BACKWARD           36 (to L2)
+       L4:     LOAD_CONST               1 (1)
+               YIELD_VALUE              0
+               RESUME                   5
+               POP_TOP
+               JUMP_BACKWARD           42 (to L2)
+       L5:     END_FOR
+               POP_TOP
+               RETURN_CONST             2 (None)
+
+  --   L6:     CALL_INTRINSIC_1         3 (INTRINSIC_STOPITERATION_ERROR)
+               RERAISE                  1
+ExceptionTable:
+  L1 to L3 -> L6 [0] lasti
+  L4 to L6 -> L6 [0] lasti
+
+Disassembly of <code object num_semana_anual at 0x000001CE15EA6CC0, file "C:\Users\kenda\OneDrive\Escritorio\filtros\planillas\planilla.py", line 74>:
+ 74           RESUME                   0
+
+ 76           LOAD_GLOBAL              1 (isinstance + NULL)
+              LOAD_FAST                0 (date_obj)
+              LOAD_GLOBAL              2 (str)
+              CALL                     2
+              TO_BOOL
+              POP_JUMP_IF_FALSE       37 (to L1)
+
+ 77           LOAD_GLOBAL              4 (datetime)
+              LOAD_ATTR                6 (strptime)
+              PUSH_NULL
+              LOAD_FAST                0 (date_obj)
+              LOAD_CONST               1 ('%Y-%m-%d')
+              CALL                     2
+              LOAD_ATTR                9 (date + NULL|self)
+              CALL                     0
+              STORE_FAST               0 (date_obj)
+
+ 78   L1:     LOAD_FAST                0 (date_obj)
+              LOAD_ATTR               11 (isocalendar + NULL|self)
+              CALL                     0
+              LOAD_CONST               2 (1)
+              BINARY_SUBSCR
+              RETURN_VALUE
+
+Disassembly of <code object crear_hoja_semanal at 0x000001CE1625FEB0, file "C:\Users\kenda\OneDrive\Escritorio\filtros\planillas\planilla.py", line 80>:
+ 80            RESUME                   0
+
+ 82            LOAD_GLOBAL              1 (isinstance + NULL)
+               LOAD_FAST                2 (viernes_date)
+               LOAD_GLOBAL              2 (str)
+               CALL                     2
+               TO_BOOL
+               POP_JUMP_IF_FALSE       37 (to L1)
+
+ 83            LOAD_GLOBAL              4 (datetime)
+               LOAD_ATTR                6 (strptime)
+               PUSH_NULL
+               LOAD_FAST                2 (viernes_date)
+               LOAD_CONST               1 ('%Y-%m-%d')
+               CALL                     2
+               LOAD_ATTR                9 (date + NULL|self)
+               CALL                     0
+               STORE_FAST               2 (viernes_date)
+
+ 85    L1:     LOAD_GLOBAL             11 (num_semana_anual + NULL)
+               LOAD_FAST                2 (viernes_date)
+               CALL                     1
+               STORE_FAST               5 (sem_num)
+
+ 86            LOAD_CONST               2 ('Semana ')
+               LOAD_FAST                5 (sem_num)
+               FORMAT_SIMPLE
+               BUILD_STRING             2
+               STORE_FAST               6 (sheet_name)
+
+ 87            LOAD_FAST_LOAD_FAST     96 (sheet_name, wb)
+               LOAD_ATTR               12 (sheetnames)
+               CONTAINS_OP              0
+               POP_JUMP_IF_FALSE       19 (to L2)
+
+ 88            LOAD_FAST                0 (wb)
+               LOAD_ATTR               15 (remove + NULL|self)
+               LOAD_FAST_LOAD_FAST      6 (wb, sheet_name)
+               BINARY_SUBSCR
+               CALL                     1
+               POP_TOP
+
+ 89    L2:     LOAD_FAST                0 (wb)
+               LOAD_ATTR               17 (create_sheet + NULL|self)
+               LOAD_FAST                6 (sheet_name)
+               CALL                     1
+               STORE_FAST               7 (ws)
+
+ 93            BUILD_LIST               0
+               LOAD_CONST               3 (('Colaborador', 'Detalle', 'Vie', 'Sáb', 'Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Total Hrs', 'Precio', 'Bruto', 'Adelanto', 'Prestamo', 'CCSS', 'Neto'))
+               LIST_EXTEND              1
+               STORE_FAST               8 (headers)
+
+ 94            LOAD_GLOBAL             19 (enumerate + NULL)
+               LOAD_FAST                8 (headers)
+               CALL                     1
+               GET_ITER
+       L3:     FOR_ITER                46 (to L4)
+               UNPACK_SEQUENCE          2
+               STORE_FAST_STORE_FAST  154 (i, h)
+
+ 95            LOAD_GLOBAL             21 (sc + NULL)
+               LOAD_FAST                7 (ws)
+               LOAD_CONST               4 (4)
+               LOAD_FAST                9 (i)
+               LOAD_CONST               5 (1)
+               BINARY_OP                0 (+)
+               LOAD_FAST               10 (h)
+               LOAD_GLOBAL             22 (f_header)
+               LOAD_GLOBAL             25 (PatternFill + NULL)
+               LOAD_CONST               6 ('4F81BD')
+               LOAD_CONST               7 ('solid')
+               LOAD_CONST               8 (('start_color', 'fill_type'))
+               CALL_KW                  2
+               LOAD_GLOBAL             26 (al_c)
+               LOAD_GLOBAL             28 (borde)
+               CALL                     8
+               POP_TOP
+               JUMP_BACKWARD           48 (to L3)
+
+ 94    L4:     END_FOR
+               POP_TOP
+
+103            LOAD_CONST               9 (5)
+               STORE_FAST              11 (current_row)
+
+104            LOAD_CONST              10 (('tarjeta', 'efectivo', 'fijo'))
+               GET_ITER
+       L5:     EXTENDED_ARG             1
+               FOR_ITER               478 (to L12)
+               STORE_FAST              12 (tipo)
+
+105            LOAD_FAST                3 (empleados)
+               LOAD_ATTR               31 (get + NULL|self)
+               LOAD_FAST               12 (tipo)
+               BUILD_LIST               0
+               CALL                     2
+               GET_ITER
+       L6:     EXTENDED_ARG             1
+               FOR_ITER               451 (to L11)
+               STORE_FAST              13 (emp_name)
+
+106            LOAD_GLOBAL             25 (PatternFill + NULL)
+               LOAD_CONST              11 ('E2EFDA')
+               LOAD_CONST               7 ('solid')
+               LOAD_CONST               8 (('start_color', 'fill_type'))
+               CALL_KW                  2
+               STORE_FAST              14 (fill_c)
+
+109            LOAD_GLOBAL             21 (sc + NULL)
+               LOAD_FAST_LOAD_FAST    123 (ws, current_row)
+               LOAD_CONST               5 (1)
+               LOAD_FAST               13 (emp_name)
+               LOAD_GLOBAL             32 (f_data)
+               LOAD_FAST               14 (fill_c)
+               LOAD_GLOBAL             34 (al_l)
+               LOAD_GLOBAL             28 (borde)
+               CALL                     8
+               POP_TOP
+
+110            LOAD_GLOBAL             21 (sc + NULL)
+               LOAD_FAST_LOAD_FAST    123 (ws, current_row)
+               LOAD_CONST              12 (2)
+               LOAD_CONST              13 ('Diurnas')
+               LOAD_GLOBAL             32 (f_data)
+               LOAD_FAST               14 (fill_c)
+               LOAD_GLOBAL             34 (al_l)
+               LOAD_GLOBAL             28 (borde)
+               CALL                     8
+               POP_TOP
+
+113            LOAD_GLOBAL             21 (sc + NULL)
+               LOAD_FAST_LOAD_FAST    123 (ws, current_row)
+               LOAD_CONST               5 (1)
+               BINARY_OP                0 (+)
+               LOAD_CONST               5 (1)
+               LOAD_FAST               13 (emp_name)
+               LOAD_GLOBAL             32 (f_data)
+               LOAD_FAST               14 (fill_c)
+               LOAD_GLOBAL             34 (al_l)
+               LOAD_GLOBAL             28 (borde)
+               CALL                     8
+               POP_TOP
+
+114            LOAD_GLOBAL             21 (sc + NULL)
+               LOAD_FAST_LOAD_FAST    123 (ws, current_row)
+               LOAD_CONST               5 (1)
+               BINARY_OP                0 (+)
+               LOAD_CONST              12 (2)
+               LOAD_CONST              14 ('Mixtas')
+               LOAD_GLOBAL             32 (f_data)
+               LOAD_FAST               14 (fill_c)
+               LOAD_GLOBAL             34 (al_l)
+               LOAD_GLOBAL             28 (borde)
+               CALL                     8
+               POP_TOP
+
+117            LOAD_GLOBAL             21 (sc + NULL)
+               LOAD_FAST_LOAD_FAST    123 (ws, current_row)
+               LOAD_CONST              12 (2)
+               BINARY_OP                0 (+)
+               LOAD_CONST               5 (1)
+               LOAD_FAST               13 (emp_name)
+               LOAD_GLOBAL             32 (f_data)
+               LOAD_FAST               14 (fill_c)
+               LOAD_GLOBAL             34 (al_l)
+               LOAD_GLOBAL             28 (borde)
+               CALL                     8
+               POP_TOP
+
+118            LOAD_GLOBAL             21 (sc + NULL)
+               LOAD_FAST_LOAD_FAST    123 (ws, current_row)
+               LOAD_CONST              12 (2)
+               BINARY_OP                0 (+)
+               LOAD_CONST              12 (2)
+               LOAD_CONST              15 ('Nocturnas')
+               LOAD_GLOBAL             32 (f_data)
+               LOAD_FAST               14 (fill_c)
+               LOAD_GLOBAL             34 (al_l)
+               LOAD_GLOBAL             28 (borde)
+               CALL                     8
+               POP_TOP
+
+121            LOAD_GLOBAL             21 (sc + NULL)
+               LOAD_FAST_LOAD_FAST    123 (ws, current_row)
+               LOAD_CONST              16 (3)
+               BINARY_OP                0 (+)
+               LOAD_CONST               5 (1)
+               LOAD_FAST               13 (emp_name)
+               LOAD_GLOBAL             32 (f_data)
+               LOAD_FAST               14 (fill_c)
+               LOAD_GLOBAL             34 (al_l)
+               LOAD_GLOBAL             28 (borde)
+               CALL                     8
+               POP_TOP
+
+122            LOAD_GLOBAL             21 (sc + NULL)
+               LOAD_FAST_LOAD_FAST    123 (ws, current_row)
+               LOAD_CONST              16 (3)
+               BINARY_OP                0 (+)
+               LOAD_CONST              12 (2)
+               LOAD_CONST              17 ('Extras')
+               LOAD_GLOBAL             32 (f_data)
+               LOAD_FAST               14 (fill_c)
+               LOAD_GLOBAL             34 (al_l)
+               LOAD_GLOBAL             28 (borde)
+               CALL                     8
+               POP_TOP
+
+124            LOAD_GLOBAL             37 (range + NULL)
+               LOAD_FAST_LOAD_FAST    187 (current_row, current_row)
+               LOAD_CONST               4 (4)
+               BINARY_OP                0 (+)
+               CALL                     2
+               GET_ITER
+       L7:     FOR_ITER                31 (to L8)
+               STORE_FAST              15 (r)
+
+126            LOAD_CONST              18 ('=SUM(C')
+               LOAD_FAST               15 (r)
+               FORMAT_SIMPLE
+               LOAD_CONST              19 (':I')
+               LOAD_FAST               15 (r)
+               FORMAT_SIMPLE
+               LOAD_CONST              20 (')')
+               BUILD_STRING             5
+               LOAD_FAST                7 (ws)
+               LOAD_ATTR               39 (cell + NULL|self)
+               LOAD_FAST               15 (r)
+               LOAD_CONST              21 (10)
+               LOAD_CONST              22 (('row', 'column'))
+               CALL_KW                  2
+               STORE_ATTR              20 (value)
+               JUMP_BACKWARD           33 (to L7)
+
+124    L8:     END_FOR
+               POP_TOP
+
+130            LOAD_CONST              23 ('=(J')
+               LOAD_FAST               11 (current_row)
+               FORMAT_SIMPLE
+               LOAD_CONST              24 ('*')
+               LOAD_GLOBAL             42 (TARIFA_DIURNA)
+               FORMAT_SIMPLE
+               LOAD_CONST              25 (')+(J')
+               LOAD_FAST               11 (current_row)
+               LOAD_CONST               5 (1)
+               BINARY_OP                0 (+)
+               FORMAT_SIMPLE
+               LOAD_CONST              24 ('*')
+               LOAD_GLOBAL             44 (TARIFA_MIXTA)
+               FORMAT_SIMPLE
+               LOAD_CONST              25 (')+(J')
+               LOAD_FAST               11 (current_row)
+               LOAD_CONST              12 (2)
+               BINARY_OP                0 (+)
+               FORMAT_SIMPLE
+               LOAD_CONST              24 ('*')
+               LOAD_GLOBAL             46 (TARIFA_NOCTURNA)
+               FORMAT_SIMPLE
+               LOAD_CONST              25 (')+(J')
+               LOAD_FAST               11 (current_row)
+               LOAD_CONST              16 (3)
+               BINARY_OP                0 (+)
+               FORMAT_SIMPLE
+               LOAD_CONST              24 ('*')
+               LOAD_GLOBAL             42 (TARIFA_DIURNA)
+               FORMAT_SIMPLE
+               LOAD_CONST              26 ('*1.5)')
+               BUILD_STRING            17
+               LOAD_FAST                7 (ws)
+               LOAD_ATTR               39 (cell + NULL|self)
+               LOAD_FAST               11 (current_row)
+               LOAD_CONST              27 (12)
+               LOAD_CONST              22 (('row', 'column'))
+               CALL_KW                  2
+               STORE_ATTR              20 (value)
+
+133            LOAD_FAST               12 (tipo)
+               LOAD_CONST              28 ('fijo')
+               COMPARE_OP             119 (bool(!=))
+               POP_JUMP_IF_FALSE        2 (to L9)
+               LOAD_FAST                4 (seguro)
+               JUMP_FORWARD             1 (to L10)
+       L9:     LOAD_CONST              29 (0)
+      L10:     LOAD_FAST                7 (ws)
+               LOAD_ATTR               39 (cell + NULL|self)
+               LOAD_FAST               11 (current_row)
+               LOAD_CONST              30 (15)
+               LOAD_CONST              22 (('row', 'column'))
+               CALL_KW                  2
+               STORE_ATTR              20 (value)
+
+136            LOAD_CONST              31 ('=L')
+               LOAD_FAST               11 (current_row)
+               FORMAT_SIMPLE
+               LOAD_CONST              32 ('-M')
+               LOAD_FAST               11 (current_row)
+               FORMAT_SIMPLE
+               LOAD_CONST              33 ('-N')
+               LOAD_FAST               11 (current_row)
+               FORMAT_SIMPLE
+               LOAD_CONST              34 ('-O')
+               LOAD_FAST               11 (current_row)
+               FORMAT_SIMPLE
+               BUILD_STRING             8
+               LOAD_FAST                7 (ws)
+               LOAD_ATTR               39 (cell + NULL|self)
+               LOAD_FAST               11 (current_row)
+               LOAD_CONST              35 (16)
+               LOAD_CONST              22 (('row', 'column'))
+               CALL_KW                  2
+               STORE_ATTR              20 (value)
+
+138            LOAD_FAST               11 (current_row)
+               LOAD_CONST               4 (4)
+               BINARY_OP               13 (+=)
+               STORE_FAST              11 (current_row)
+               EXTENDED_ARG             1
+               JUMP_BACKWARD          454 (to L6)
+
+105   L11:     END_FOR
+               POP_TOP
+               EXTENDED_ARG             1
+               JUMP_BACKWARD          481 (to L5)
+
+104   L12:     END_FOR
+               POP_TOP
+
+140            LOAD_CONST              36 (25)
+               LOAD_FAST                7 (ws)
+               LOAD_ATTR               48 (column_dimensions)
+               LOAD_CONST              37 ('A')
+               BINARY_SUBSCR
+               STORE_ATTR              25 (width)
+
+141            LOAD_CONST              30 (15)
+               LOAD_FAST                7 (ws)
+               LOAD_ATTR               48 (column_dimensions)
+               LOAD_CONST              38 ('B')
+               BINARY_SUBSCR
+               STORE_ATTR              25 (width)
+
+142            LOAD_FAST_LOAD_FAST    107 (sheet_name, current_row)
+               BUILD_MAP                0
+               BUILD_TUPLE              3
+               RETURN_VALUE
+
+Disassembly of <code object crear_resumen_semanal at 0x000001CE1613E6F0, file "C:\Users\kenda\OneDrive\Escritorio\filtros\planillas\planilla.py", line 144>:
+144           RESUME                   0
+
+146           LOAD_CONST               1 ('Res. Sem. ')
+              LOAD_FAST                2 (sem_num)
+              FORMAT_SIMPLE
+              BUILD_STRING             2
+              STORE_FAST               4 (sheet_name)
+
+147           LOAD_FAST_LOAD_FAST     64 (sheet_name, wb)
+              LOAD_ATTR                0 (sheetnames)
+              CONTAINS_OP              0
+              POP_JUMP_IF_FALSE       19 (to L1)
+
+148           LOAD_FAST                0 (wb)
+              LOAD_ATTR                3 (remove + NULL|self)
+              LOAD_FAST_LOAD_FAST      4 (wb, sheet_name)
+              BINARY_SUBSCR
+              CALL                     1
+              POP_TOP
+
+149   L1:     LOAD_FAST                0 (wb)
+              LOAD_ATTR                5 (create_sheet + NULL|self)
+              LOAD_FAST                4 (sheet_name)
+              CALL                     1
+              POP_TOP
+              RETURN_CONST             2 (None)
+
+Disassembly of <code object crear_resumen_mensual at 0x000001CE16155FB0, file "C:\Users\kenda\OneDrive\Escritorio\filtros\planillas\planilla.py", line 151>:
+151           RESUME                   0
+
+153           LOAD_CONST               1 ('Res. Mensual')
+              STORE_FAST               1 (sheet_name)
+
+154           LOAD_FAST_LOAD_FAST     16 (sheet_name, wb)
+              LOAD_ATTR                0 (sheetnames)
+              CONTAINS_OP              1
+              POP_JUMP_IF_FALSE       18 (to L1)
+
+155           LOAD_FAST                0 (wb)
+              LOAD_ATTR                3 (create_sheet + NULL|self)
+              LOAD_FAST                1 (sheet_name)
+              CALL                     1
+              POP_TOP
+              RETURN_CONST             2 (None)
+
+154   L1:     RETURN_CONST             2 (None)
+
+Disassembly of <code object crear_dashboard at 0x000001CE16156550, file "C:\Users\kenda\OneDrive\Escritorio\filtros\planillas\planilla.py", line 157>:
+157           RESUME                   0
+
+159           LOAD_CONST               1 ('Dashboard')
+              STORE_FAST               1 (sheet_name)
+
+160           LOAD_FAST_LOAD_FAST     16 (sheet_name, wb)
+              LOAD_ATTR                0 (sheetnames)
+              CONTAINS_OP              1
+              POP_JUMP_IF_FALSE       18 (to L1)
+
+161           LOAD_FAST                0 (wb)
+              LOAD_ATTR                3 (create_sheet + NULL|self)
+              LOAD_FAST                1 (sheet_name)
+              CALL                     1
+              POP_TOP
+              RETURN_CONST             2 (None)
+
+160   L1:     RETURN_CONST             2 (None)
+
+Disassembly of <code object vincular_resumen at 0x000001CE15EDA590, file "C:\Users\kenda\OneDrive\Escritorio\filtros\planillas\planilla.py", line 163>:
+163           RESUME                   0
+
+165           RETURN_CONST             1 (None)
