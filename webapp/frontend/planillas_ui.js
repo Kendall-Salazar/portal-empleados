@@ -1,7 +1,84 @@
 /**
- * Portal de Empleados -- Logica Frontend Unificada
- * Maneja: Mi Equipo, Vacaciones, Aguinaldo
+// ─── Toast Notification Utility ──────────────────────────────────────────────
+/**
+ * showToast(message, type)
+ * type: 'success' | 'error' | 'warning' | 'info'
+ * Renders a polished, auto-dismissing toast aligned with the design system.
  */
+function showToast(message, type = 'success') {
+    // Remove any existing toast of same type to avoid stacking
+    document.querySelectorAll('.chronos-toast').forEach(t => {
+        if (t.dataset.type === type) t.remove();
+    });
+
+    const icons = {
+        success: 'fa-circle-check',
+        error: 'fa-circle-xmark',
+        warning: 'fa-triangle-exclamation',
+        info: 'fa-circle-info',
+    };
+    const colors = {
+        success: { bg: '#10b981', shadow: 'rgba(16,185,129,0.35)' },
+        error: { bg: '#ef4444', shadow: 'rgba(239,68,68,0.35)' },
+        warning: { bg: '#f59e0b', shadow: 'rgba(245,158,11,0.35)' },
+        info: { bg: '#3b82f6', shadow: 'rgba(59,130,246,0.35)' },
+    };
+    const c = colors[type] || colors.success;
+
+    const el = document.createElement('div');
+    el.className = 'chronos-toast';
+    el.dataset.type = type;
+    el.innerHTML = `<i class="fa-solid ${icons[type] || icons.success}"></i><span>${message}</span>`;
+    Object.assign(el.style, {
+        position: 'fixed',
+        bottom: '1.5rem',
+        right: '1.5rem',
+        background: c.bg,
+        color: '#fff',
+        padding: '0.65rem 1.1rem',
+        borderRadius: '10px',
+        fontSize: '0.85rem',
+        fontWeight: '600',
+        zIndex: '9999',
+        boxShadow: `0 6px 24px ${c.shadow}`,
+        display: 'flex',
+        alignItems: 'center',
+        gap: '0.55rem',
+        animation: 'toastSlideIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) both',
+        maxWidth: '360px',
+        lineHeight: '1.3',
+    });
+
+    // Inject keyframes once
+    if (!document.getElementById('chronos-toast-keyframes')) {
+        const style = document.createElement('style');
+        style.id = 'chronos-toast-keyframes';
+        style.textContent = `
+            @keyframes toastSlideIn {
+                from { transform: translateY(20px) scale(0.95); opacity: 0; }
+                to   { transform: translateY(0) scale(1); opacity: 1; }
+            }
+            @keyframes toastSlideOut {
+                from { transform: translateY(0) scale(1); opacity: 1; }
+                to   { transform: translateY(16px) scale(0.95); opacity: 0; }
+            }
+        `;
+        document.head.appendChild(style);
+    }
+
+    document.body.appendChild(el);
+
+    // Auto-dismiss
+    const dur = type === 'error' ? 4500 : 3000;
+    setTimeout(() => {
+        el.style.animation = 'toastSlideOut 0.25s ease both';
+        setTimeout(() => el.remove(), 260);
+    }, dur);
+}
+
+//Portal de Empleados-- Logica Frontend Unificada
+//Maneja: Mi Equipo, Vacaciones, Aguinaldo
+
 
 // =============================================================================
 // NAVIGATION
@@ -728,8 +805,8 @@ async function loadAguinaldoTab() {
                         <label>Ano</label>
                         <select id="aguiAnioSelect">${opts}</select>
                     </div>
-                    <button class="portal-btn-ghost" onclick="sincronizarAguinaldo()" title="Sincronizar salarios desde el Excel actual">
-                        <i class="fa-solid fa-sync"></i> Sincronizar
+                    <button class="portal-btn-ghost" id="btnSincronizarAguinaldo" onclick="sincronizarAguinaldo()" title="Sincronizar salarios desde el Excel actual">
+                        <i class="fa-solid fa-rotate"></i> Sincronizar
                     </button>
                     <button class="portal-btn-primary" onclick="procesarAguinaldo()">
                         <i class="fa-solid fa-calculator"></i> Calcular
@@ -834,16 +911,32 @@ async function sincronizarAguinaldo() {
     const anio = document.getElementById('aguiAnioSelect').value;
     if (!confirm(`¿Sincronizar los salarios del año ${anio} desde el Excel actual?\nEsto buscará todas las hojas de semana y guardará los sueldos brutos en la base de datos.`)) return;
 
+    const btn = document.getElementById('btnSincronizarAguinaldo');
+    const originalHTML = btn ? btn.innerHTML : null;
+    if (btn) {
+        btn.classList.add('syncing');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fa-solid fa-rotate"></i> Sincronizando...';
+    }
+
     try {
         const res = await fetch(`/api/planillas/sincronizar-aguinaldo/${anio}`, { method: 'POST' });
         const data = await res.json();
         if (data.status === 'success') {
-            alert(data.message);
-            procesarAguinaldo(); // Refresh results
+            showToast(data.message || `Salarios ${anio} sincronizados`, 'success');
+            procesarAguinaldo();
         } else {
-            alert("Error: " + data.message);
+            showToast('Error: ' + data.message, 'error');
         }
-    } catch (e) { alert(e.message); }
+    } catch (e) {
+        showToast(e.message, 'error');
+    } finally {
+        if (btn) {
+            btn.classList.remove('syncing');
+            btn.disabled = false;
+            btn.innerHTML = originalHTML;
+        }
+    }
 }
 
 function toggleAguiDesglose(idx) {
@@ -960,10 +1053,10 @@ async function loadPlanillaMensualTab() {
                         <td><span class="ptable-pill" style="background: rgba(59,130,246,0.1); color: #3b82f6;">${s.viernes}</span></td>
                         <td><span class="ptable-muted">${new Date(s.fecha_agregada).toLocaleDateString()}</span></td>
                         <td>
-                            <button class="btn-action" style="padding: 0.4rem 0.6rem; font-size: 0.8rem; color: #3b82f6; border-color: rgba(59,130,246,0.3); background: rgba(59,130,246,0.05); margin-right: 5px;" onclick="abrirImportarHorarioModal(${s.id}, ${s.num_semana})">
+                            <button class="btn-action" class="btn-sm-blue" style="margin-right:5px;" onclick="abrirImportarHorarioModal(${s.id}, ${s.num_semana})">
                                 <i class="fa-solid fa-download"></i> Importar
                             </button>
-                            <button class="btn-action" style="padding: 0.4rem 0.6rem; font-size: 0.8rem; color: #ef4444; border-color: rgba(239,68,68,0.3); background: rgba(239,68,68,0.05);" onclick="eliminarSemana(${s.id}, ${s.num_semana})">
+                            <button class="btn-action" class="btn-sm-red" onclick="eliminarSemana(${s.id}, ${s.num_semana})">
                                 <i class="fa-solid fa-trash"></i> Eliminar
                             </button>
                         </td>
@@ -2004,11 +2097,11 @@ async function abrirPlanillasHistorial() {
                     <div class="hist-sem-row" id="hist-sem-${s.id}">
                         <span class="hist-sem-num"><i class="fa-solid fa-calendar-week"></i> Semana ${s.num_semana}</span>
                         <span class="ptable-pill" style="background:rgba(59,130,246,0.1);color:#3b82f6;font-size:0.8rem;">${s.viernes}</span>
-                        <button class="btn-action" style="padding:0.3rem 0.6rem;font-size:0.75rem;color:#10b981;border-color:rgba(16,185,129,0.3);background:rgba(16,185,129,0.05);white-space:nowrap;"
+                        <button class="btn-action" class="btn-sm-green"
                             onclick="abrirImportarHorarioHistorico(${m.id}, 'Semana ${s.num_semana}', '${mName} ${m.anio}')">
                             <i class="fa-solid fa-file-import"></i> Importar
                         </button>
-                        <button class="btn-action" style="padding:0.3rem 0.6rem;font-size:0.75rem;color:#ef4444;border-color:rgba(239,68,68,0.3);background:rgba(239,68,68,0.05);"
+                        <button class="btn-action" class="btn-sm-red"
                             onclick="eliminarSemanaHistorial(${s.id}, ${m.id}, '${mName} ${m.anio}')">
                             <i class="fa-solid fa-trash"></i>
                         </button>
@@ -2038,14 +2131,14 @@ async function abrirPlanillasHistorial() {
                     </div>
                     <!-- Action buttons -->
                     <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;">
-                        <button class="btn-action" style="color:#10b981;border-color:rgba(16,185,129,0.3);background:rgba(16,185,129,0.05);white-space:nowrap;font-size:0.8rem;" onclick="abrirExcelHistorico(${m.id})">
+                        <button class="btn-action" class="btn-sm-green" onclick="abrirExcelHistorico(${m.id})">
                             <i class="fa-solid fa-file-excel"></i> Abrir
                         </button>
-                        <button class="btn-action hist-toggle-btn" style="white-space:nowrap;font-size:0.8rem;" onclick="toggleHistSemanas(${m.id})">
+                        <button class="btn-action hist-toggle-btn"  onclick="toggleHistSemanas(${m.id})">
                             <i class="fa-solid fa-chevron-down" id="hist-chev-${m.id}" style="transition:transform 0.2s;"></i> Editar
                         </button>
                         ${m.cerrado ? `
-                        <button class="btn-action" style="color:#ef4444;border-color:rgba(239,68,68,0.3);background:rgba(239,68,68,0.05);white-space:nowrap;font-size:0.8rem;" onclick="eliminarMesHistorial(${m.id}, '${mName} ${m.anio}')">
+                        <button class="btn-action" class="btn-sm-red" onclick="eliminarMesHistorial(${m.id}, '${mName} ${m.anio}')">
                             <i class="fa-solid fa-trash-can"></i> Eliminar
                         </button>` : ''}
                     </div>
@@ -2105,11 +2198,11 @@ Se borrará del Excel también.`)) return;
                     <div class="hist-sem-row" id="hist-sem-${s.id}">
                         <span class="hist-sem-num"><i class="fa-solid fa-calendar-week"></i> Semana ${s.num_semana}</span>
                         <span class="ptable-pill" style="background:rgba(59,130,246,0.1);color:#3b82f6;font-size:0.8rem;">${s.viernes}</span>
-                        <button class="btn-action" style="padding:0.3rem 0.6rem;font-size:0.75rem;color:#10b981;border-color:rgba(16,185,129,0.3);background:rgba(16,185,129,0.05);white-space:nowrap;"
+                        <button class="btn-action" class="btn-sm-green"
                             onclick="abrirImportarHorarioHistorico(${mesId}, 'Semana ${s.num_semana}', '${mesNombre}')">
                             <i class="fa-solid fa-file-import"></i> Importar
                         </button>
-                        <button class="btn-action" style="padding:0.3rem 0.6rem;font-size:0.75rem;color:#ef4444;border-color:rgba(239,68,68,0.3);background:rgba(239,68,68,0.05);"
+                        <button class="btn-action" class="btn-sm-red"
                             onclick="eliminarSemanaHistorial(${s.id}, ${mesId}, '${mesNombre}')">
                             <i class="fa-solid fa-trash"></i>
                         </button>
@@ -2145,7 +2238,7 @@ async function agregarSemanaHistorial(mesId, mesNombre) {
                 <div class="hist-sem-row" id="hist-sem-${s.id}">
                     <span class="hist-sem-num"><i class="fa-solid fa-calendar-week"></i> Semana ${s.num_semana}</span>
                     <span class="ptable-pill" style="background:rgba(59,130,246,0.1);color:#3b82f6;font-size:0.8rem;">${s.viernes}</span>
-                    <button class="btn-action" style="padding:0.3rem 0.6rem;font-size:0.75rem;color:#ef4444;border-color:rgba(239,68,68,0.3);background:rgba(239,68,68,0.05);"
+                    <button class="btn-action" class="btn-sm-red"
                         onclick="eliminarSemanaHistorial(${s.id}, ${mesId}, '${mesNombre}')">
                         <i class="fa-solid fa-trash"></i>
                     </button>
@@ -2264,12 +2357,7 @@ async function ejecutarImportarHorarioHistorico(mesId, semanaNombre, mesNombre) 
 
         document.getElementById('hist-import-modal')?.remove();
         loadPlanillaMensualTab();
-        // Small success toast
-        const toast = document.createElement('div');
-        toast.textContent = `✓ ${data.message || 'Horario importado correctamente'}`;
-        toast.style.cssText = 'position:fixed;bottom:24px;right:24px;background:#10b981;color:#fff;padding:10px 18px;border-radius:8px;font-size:0.9rem;z-index:9999;box-shadow:0 4px 20px rgba(0,0,0,0.2)';
-        document.body.appendChild(toast);
-        setTimeout(() => toast.remove(), 3500);
+        showToast(data.message || 'Horario importado correctamente', 'success');
     } catch (e) {
         alert('Error al importar: ' + e.message);
         btn.disabled = false;
