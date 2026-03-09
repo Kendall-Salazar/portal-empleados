@@ -200,7 +200,7 @@ function openUnifiedEmpModal(emp = null) {
     // Load shifts into hidden selects so the old app.js script picks them up for the UI
     document.querySelectorAll('.shift-select').forEach(sel => {
         const d = sel.dataset.day;
-        sel.value = fixedShifts[d] || 'Auto';
+        sel.value = fixedShifts[d] || 'AUTO';
     });
 
     // Render the visual cards with the new values
@@ -275,9 +275,9 @@ async function guardarPlanillaEmp() {
             if (sel.value === 'OFF') shifts[d] = 'OFF';
             else if (sel.value === 'VAC') shifts[d] = 'VAC';
             else if (sel.value.startsWith('J_') || ['Lun', 'Mar', 'Mié', 'Jue', 'Vie'].includes(d)) shifts[d] = jefeVal;
-            else if (sel.value !== 'Auto') shifts[d] = sel.value;
+            else if (sel.value !== 'AUTO') shifts[d] = sel.value;
         } else {
-            if (sel.value !== 'Auto') {
+            if (sel.value !== 'AUTO') {
                 shifts[d] = sel.value;
             }
         }
@@ -2004,6 +2004,10 @@ async function abrirPlanillasHistorial() {
                     <div class="hist-sem-row" id="hist-sem-${s.id}">
                         <span class="hist-sem-num"><i class="fa-solid fa-calendar-week"></i> Semana ${s.num_semana}</span>
                         <span class="ptable-pill" style="background:rgba(59,130,246,0.1);color:#3b82f6;font-size:0.8rem;">${s.viernes}</span>
+                        <button class="btn-action" style="padding:0.3rem 0.6rem;font-size:0.75rem;color:#10b981;border-color:rgba(16,185,129,0.3);background:rgba(16,185,129,0.05);white-space:nowrap;"
+                            onclick="abrirImportarHorarioHistorico(${m.id}, 'Semana ${s.num_semana}', '${mName} ${m.anio}')">
+                            <i class="fa-solid fa-file-import"></i> Importar
+                        </button>
                         <button class="btn-action" style="padding:0.3rem 0.6rem;font-size:0.75rem;color:#ef4444;border-color:rgba(239,68,68,0.3);background:rgba(239,68,68,0.05);"
                             onclick="eliminarSemanaHistorial(${s.id}, ${m.id}, '${mName} ${m.anio}')">
                             <i class="fa-solid fa-trash"></i>
@@ -2101,6 +2105,10 @@ Se borrará del Excel también.`)) return;
                     <div class="hist-sem-row" id="hist-sem-${s.id}">
                         <span class="hist-sem-num"><i class="fa-solid fa-calendar-week"></i> Semana ${s.num_semana}</span>
                         <span class="ptable-pill" style="background:rgba(59,130,246,0.1);color:#3b82f6;font-size:0.8rem;">${s.viernes}</span>
+                        <button class="btn-action" style="padding:0.3rem 0.6rem;font-size:0.75rem;color:#10b981;border-color:rgba(16,185,129,0.3);background:rgba(16,185,129,0.05);white-space:nowrap;"
+                            onclick="abrirImportarHorarioHistorico(${mesId}, 'Semana ${s.num_semana}', '${mesNombre}')">
+                            <i class="fa-solid fa-file-import"></i> Importar
+                        </button>
                         <button class="btn-action" style="padding:0.3rem 0.6rem;font-size:0.75rem;color:#ef4444;border-color:rgba(239,68,68,0.3);background:rgba(239,68,68,0.05);"
                             onclick="eliminarSemanaHistorial(${s.id}, ${mesId}, '${mesNombre}')">
                             <i class="fa-solid fa-trash"></i>
@@ -2164,6 +2172,110 @@ Esta operación no se puede deshacer.`)) return;
         loadPlanillaMensualTab();
     } catch (e) { alert('Error al eliminar: ' + e.message); }
 }
+
+// ---------------------------------------------------------------------------
+// Importar horario del generador a una semana de planilla histórica
+// ---------------------------------------------------------------------------
+async function abrirImportarHorarioHistorico(mesId, semanaNombre, mesNombre) {
+    // Load available schedules from the generator DB
+    let horarios = [];
+    try {
+        const r = await fetch('/api/planillas/horarios-disponibles');
+        const d = await r.json();
+        horarios = d.horarios || [];
+    } catch (e) {
+        alert('Error al cargar horarios: ' + e.message);
+        return;
+    }
+
+    if (horarios.length === 0) {
+        alert('No hay horarios guardados en el generador. Genera y guarda un horario primero.');
+        return;
+    }
+
+    const options = horarios.map(h =>
+        `<option value="${h.id}">${h.name} — ${h.timestamp ? h.timestamp.substring(0, 10) : ''}</option>`
+    ).join('');
+
+    // Build a simple inline modal
+    const modalId = 'hist-import-modal';
+    let existing = document.getElementById(modalId);
+    if (existing) existing.remove();
+
+    const modal = document.createElement('div');
+    modal.id = modalId;
+    modal.className = 'modal-backdrop';
+    modal.style.zIndex = '3000';
+    modal.innerHTML = `
+        <div class="modal-dialog">
+            <div class="modal-header-simple">
+                <h3><i class="fa-solid fa-file-import"></i> Importar Horario</h3>
+                <button class="close-icon" onclick="document.getElementById('${modalId}').remove()">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <div class="modal-body-scroll">
+                <p class="helper-text-sm" style="margin-bottom:12px;">
+                    Importando a <strong>${semanaNombre}</strong> de <strong>${mesNombre}</strong>.
+                    Se rellenarán las horas en el Excel de esa planilla.
+                </p>
+                <div class="input-group">
+                    <label>Horario Generado</label>
+                    <select id="hist-import-sel" style="width:100%;padding:0.7rem;background:var(--bg-app);border:1px solid var(--border);color:var(--text-main);border-radius:8px;">
+                        ${options}
+                    </select>
+                </div>
+                <div class="input-group" style="margin-top:12px;display:flex;align-items:center;gap:10px;">
+                    <input type="checkbox" id="hist-import-sync" checked>
+                    <label for="hist-import-sync" style="margin:0;cursor:pointer;color:var(--text-muted);font-size:0.9rem;">
+                        Sincronizar nuevos empleados a planilla
+                    </label>
+                </div>
+            </div>
+            <div class="modal-actions-footer">
+                <button class="btn-text" onclick="document.getElementById('${modalId}').remove()">Cancelar</button>
+                <button class="btn-action primary" id="hist-import-btn" onclick="ejecutarImportarHorarioHistorico(${mesId}, '${semanaNombre}', '${mesNombre}')">
+                    <i class="fa-solid fa-download"></i> Importar Horas
+                </button>
+            </div>
+        </div>`;
+    document.body.appendChild(modal);
+}
+
+async function ejecutarImportarHorarioHistorico(mesId, semanaNombre, mesNombre) {
+    const horarioId = parseInt(document.getElementById('hist-import-sel').value);
+    const syncEmps = document.getElementById('hist-import-sync').checked;
+    const btn = document.getElementById('hist-import-btn');
+
+    if (!horarioId) { alert('Selecciona un horario.'); return; }
+
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Importando...';
+
+    try {
+        const url = `/api/planillas/meses/${mesId}/semanas/${encodeURIComponent(semanaNombre)}/importar`;
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ horario_id: horarioId, semana_nombre: semanaNombre, sync_empleados: syncEmps })
+        });
+        if (!res.ok) { const e = await res.json(); throw new Error(e.detail); }
+        const data = await res.json();
+
+        document.getElementById('hist-import-modal')?.remove();
+        loadPlanillaMensualTab();
+        // Small success toast
+        const toast = document.createElement('div');
+        toast.textContent = `✓ ${data.message || 'Horario importado correctamente'}`;
+        toast.style.cssText = 'position:fixed;bottom:24px;right:24px;background:#10b981;color:#fff;padding:10px 18px;border-radius:8px;font-size:0.9rem;z-index:9999;box-shadow:0 4px 20px rgba(0,0,0,0.2)';
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 3500);
+    } catch (e) {
+        alert('Error al importar: ' + e.message);
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fa-solid fa-download"></i> Importar Horas';
+    }
+}
 async function abrirExcelHistorico(mesId) {
     try {
         const res = await fetch(`/api/planillas/excel/abrir/${mesId}`);
@@ -2175,3 +2287,70 @@ async function abrirExcelHistorico(mesId) {
         alert(e.message);
     }
 }
+
+
+// =============================================================================
+// OVERRIDE: buildDayCards — actualiza tarjetas en lugar de destruir/recrear.
+// app.js hace grid.innerHTML = "" en cada selectPill(), lo que resetea el scroll.
+// Esta versión remplaza solo el contenido interno de cada card existente.
+// Como planillas_ui.js carga después de app.js, esta definición toma precedencia.
+// =============================================================================
+window.buildDayCards = function buildDayCards() {
+    const grid = document.getElementById("dayCardsGrid");
+    if (!grid) return;
+
+    const existingCards = grid.querySelectorAll(".day-card");
+
+    // Si no hay tarjetas aún, construir desde cero (primera renderización)
+    if (existingCards.length === 0) {
+        if (typeof DAYS === "undefined" || typeof getDayCardInfo === "undefined") return;
+        DAYS.forEach(d => {
+            const sel = document.querySelector(`.shift-select[data-day="${d}"]`);
+            const code = sel ? sel.value : "AUTO";
+            const info = getDayCardInfo(code);
+
+            const card = document.createElement("div");
+            card.className = `day-card ${info.cls}`;
+            card.setAttribute("data-day", d);
+            card.onclick = () => openPillPanel(d, card);
+            card.innerHTML = `
+                <span class="dc-day-label">${d}</span>
+                <i class="fa-solid ${info.icon} dc-icon"></i>
+                <span class="dc-shift-label">${info.label}</span>
+            `;
+            grid.appendChild(card);
+        });
+        return;
+    }
+
+    // Si ya existen, actualizar en lugar de recrear (preserva el scroll)
+    existingCards.forEach(card => {
+        const d = card.getAttribute("data-day");
+        const sel = document.querySelector(`.shift-select[data-day="${d}"]`);
+        const code = sel ? sel.value : "AUTO";
+        const info = getDayCardInfo(code);
+
+        // Actualizar clase sin remover el elemento del DOM
+        card.className = `day-card ${info.cls}`;
+        card.innerHTML = `
+            <span class="dc-day-label">${d}</span>
+            <i class="fa-solid ${info.icon} dc-icon"></i>
+            <span class="dc-shift-label">${info.label}</span>
+        `;
+        // Reattach onclick (se pierde al cambiar innerHTML)
+        card.onclick = () => openPillPanel(d, card);
+    });
+};
+
+
+// Override switchTab: la versión de app.js nunca activa el botón de la tab,
+// solo el contenido. Esta versión también resalta el botón correcto.
+window.switchTab = function switchTab(id) {
+    document.querySelectorAll(".m-tab-content").forEach(c => c.classList.remove("active"));
+    document.querySelectorAll(".m-tab").forEach(btn => {
+        const target = btn.getAttribute("onclick")?.match(/switchTab\('([^']+)'\)/)?.[1];
+        btn.classList.toggle("active", target === id);
+    });
+    const content = document.getElementById(id);
+    if (content) content.classList.add("active");
+};

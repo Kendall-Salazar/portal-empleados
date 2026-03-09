@@ -304,7 +304,28 @@ def solve_schedule(request: SolverRequest):
     if not isinstance(history_list, list):
         history_list = []
         
-    employees_data = [e.dict() for e in request.employees]
+    # SIEMPRE leer empleados desde SQLite, ignorando lo que manda el frontend.
+    # La variable 'employees' en app.js es un 'let' que nunca vive en window,
+    # así que planillas_ui.js no puede actualizarla. La fuente de verdad es la DB.
+    unified_emps = plan_db.get_empleados(solo_activos=True)
+    employees_data = []
+    for e in unified_emps:
+        try:
+            fixed_shifts = json.loads(e.get("turnos_fijos", "{}")) if e.get("turnos_fijos") else {}
+        except:
+            fixed_shifts = {}
+        employees_data.append({
+            "name": e.get("nombre", ""),
+            "gender": e.get("genero", "M"),
+            "can_do_night": bool(e.get("puede_nocturno", 1)),
+            "allow_no_rest": bool(e.get("allow_no_rest", 0)),
+            "forced_libres": bool(e.get("forced_libres", 0)),
+            "forced_quebrado": bool(e.get("forced_quebrado", 0)),
+            "is_jefe_pista": bool(e.get("es_jefe_pista", 0)),
+            "strict_preferences": bool(e.get("strict_preferences", 0)),
+            "fixed_shifts": fixed_shifts
+        })
+
     config_data = request.config.dict()
     
     # Instantiate Scheduler
@@ -1498,6 +1519,61 @@ def importar_horario_semana(req: PlanillaImportarHorario):
         print(f"Error saving salaries: {e}")
 
     return {"status": "success", "message": msg}
+
+@app.post("/api/planillas/meses/{mes_id}/semanas/{semana_nombre}/importar")
+def importar_horario_semana_historico(mes_id: int, semana_nombre: str, req: PlanillaImportarHorario):
+    """Importa un horario guardado a la hoja de una semana específica de CUALQUIER mes.
+    
+    A diferencia del endpoint /api/planillas/semanas/importar, este no exige que el mes
+    sea el activo, permitiendo rellenar horas en planillas históricas o cerradas.
+    """
+    meses = plan_db.get_todos_meses()
+    mes_target = next((m for m in meses if m["id"] == mes_id), None)
+    if not mes_target:
+        raise HTTPException(status_code=404, detail="Mes no encontrado")
+
+    horario = horario_db.get_horario_por_id(req.horario_id)
+    if not horario:
+        raise HTTPException(status_code=404, detail="Horario no encontrado")
+
+    if req.sync_empleados:
+        horario_db.sincronizar_empleados_a_planilla()
+
+    archivo_path = os.path.join(_planillas_dir, mes_target["archivo"])
+    if not os.path.exists(archivo_path):
+        raise HTTPException(status_code=404, detail=f"No se encontró el Excel: {mes_target['archivo']}")
+
+    ok, msg, hours_data = horario_db.rellenar_horas_en_excel(
+        archivo_path, semana_nombre, horario["horario"]
+    )
+
+    if not ok:
+        raise HTTPException(status_code=400, detail=msg)
+
+    # Guardar salarios en DB
+    try:
+        tarifas = plan_db.get_tarifas()
+        emps = plan_db.get_empleados(solo_activos=False)
+        emp_map = {e["nombre"]: e["id"] for e in emps}
+
+        try:
+            sem_num = int(semana_nombre.split(" ")[-1])
+        except:
+            sem_num = 0
+
+        for emp_nombre, h in hours_data.items():
+            if emp_nombre in emp_map:
+                bruto = (h["diurnas"] * tarifas["tarifa_diurna"]) +                         (h["mixtas"] * tarifas["tarifa_mixta"]) +                         (h["nocturnas"] * tarifas["tarifa_nocturna"]) +                         (h["extra"] * (tarifas["tarifa_diurna"] * 1.5))
+
+                plan_db.guardar_salario_semanal(
+                    emp_map[emp_nombre], emp_nombre,
+                    mes_target["anio"], mes_target["mes"], sem_num, bruto
+                )
+    except Exception as e:
+        print(f"Error al guardar salarios: {e}")
+
+    return {"status": "success", "message": msg}
+
 
 @app.post("/api/planillas/boletas/generar")
 def generar_boletas(req: PlanillaBoletasRequest):
