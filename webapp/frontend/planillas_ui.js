@@ -97,15 +97,17 @@ function switchMainTab(tabId) {
         document.getElementById(`tab-${tabId}`)?.classList.remove('hidden');
     }
 
-    if (tabId === 'planilla') loadEquipoTab();
+    if (tabId === 'gestion') loadGestionPersonalTab();
     if (tabId === 'planilla-mensual') loadPlanillaMensualTab();
-    if (tabId === 'vacaciones') loadVacacionesTab();
     if (tabId === 'aguinaldo') loadAguinaldoTab();
     if (tabId === 'utilidades') loadUtilidadesTab();
+    if (tabId === 'inventario') loadInventarioTab();
 
     const scheduleConfig = document.getElementById('scheduleConfigSidebar');
+    const weekDateConfig = document.getElementById('weekDateConfig');
     const btnGenerate = document.querySelector('.btn-generate');
     if (scheduleConfig) scheduleConfig.style.display = (tabId === 'schedule') ? 'block' : 'none';
+    if (weekDateConfig) weekDateConfig.style.display = (tabId === 'schedule') ? 'block' : 'none';
     if (btnGenerate) btnGenerate.style.display = (tabId === 'schedule') ? 'flex' : 'none';
 }
 
@@ -129,36 +131,27 @@ function _esc(s) { return s.replace(/'/g, "&#39;"); }
 function _money(n) { return n.toLocaleString('en-US', { minimumFractionDigits: 2 }); }
 
 // =============================================================================
-// TAB: MI EQUIPO
+// SUB-TAB: MI EQUIPO
 // =============================================================================
-async function loadEquipoTab() {
-    const tab = document.getElementById('tab-planilla');
-    tab.innerHTML = `
-        <div class="portal-view">
-            <div class="portal-header">
-                <div class="portal-header-left">
-                    <div class="portal-title-row">
-                        <div class="portal-icon-wrap" style="--accent: #6366f1;">
-                            <i class="fa-solid fa-users"></i>
-                        </div>
-                        <div>
-                            <h2 class="portal-title">Mi Equipo</h2>
-                            <p class="portal-subtitle">Gestion unificada de colaboradores</p>
-                        </div>
-                    </div>
-                </div>
-                <div class="portal-header-right">
-                    <div class="portal-stat-chip" id="equipoCountChip">
-                        <i class="fa-solid fa-user-group"></i> <span>--</span>
-                    </div>
-                    <button class="portal-btn-primary" onclick="openUnifiedEmpModal()">
-                        <i class="fa-solid fa-plus"></i> Nuevo Colaborador
-                    </button>
-                </div>
+async function loadVacSubEquipo() {
+    const content = document.getElementById('vacSubTabContent');
+    content.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.5rem;">
+            <div>
+                <h3 style="color:var(--text-main); margin:0;"><i class="fa-solid fa-users" style="color:var(--primary); margin-right:8px;"></i> Nómina de Colaboradores</h3>
+                <p style="color:var(--text-muted); font-size:0.85rem; margin-top:4px;">Directorio y gestión del equipo</p>
             </div>
-            <div id="equipoGrid" class="equipo-grid">
-                <div class="portal-loading"><div class="portal-spinner"></div><span>Cargando equipo...</span></div>
+            <div style="display:flex; gap:10px; align-items:center;">
+                <div class="portal-stat-chip" id="equipoCountChip">
+                    <i class="fa-solid fa-user-group"></i> <span>--</span>
+                </div>
+                <button class="portal-btn-primary" onclick="openUnifiedEmpModal()">
+                    <i class="fa-solid fa-plus"></i> Nuevo Colaborador
+                </button>
             </div>
+        </div>
+        <div id="equipoGrid" class="equipo-grid">
+            <div class="portal-loading"><div class="portal-spinner"></div><span>Cargando equipo...</span></div>
         </div>`;
 
     try {
@@ -378,7 +371,7 @@ async function guardarPlanillaEmp() {
             throw new Error(err.detail || 'Error al guardar');
         }
         closePlanillaEmpModal();
-        loadEquipoTab();
+        loadVacSubEquipo();
     } catch (e) { alert(e.message); }
 }
 
@@ -387,7 +380,7 @@ async function deletePlanillaEmp(id) {
     try {
         const res = await fetch(`/api/planillas/empleados/${id}`, { method: 'DELETE' });
         if (!res.ok) throw new Error('Error al eliminar');
-        loadEquipoTab();
+        loadVacSubEquipo();
     } catch (e) { alert(e.message); }
 }
 
@@ -403,33 +396,64 @@ function _formatDateEs(dateStr) {
     } catch { return dateStr; }
 }
 
-async function loadVacacionesTab() {
-    const tab = document.getElementById('tab-vacaciones');
+async function loadGestionPersonalTab() {
+    const tab = document.getElementById('tab-gestion');
     tab.innerHTML = `
         <div class="portal-view">
             <div class="portal-header">
                 <div class="portal-header-left">
                     <div class="portal-title-row">
-                        <div class="portal-icon-wrap" style="--accent: #10b981;">
-                            <i class="fa-solid fa-umbrella-beach"></i>
+                        <div class="portal-icon-wrap" style="--accent: #6366f1;">
+                            <i class="fa-solid fa-users-gear"></i>
                         </div>
                         <div>
-                            <h2 class="portal-title">Control de Vacaciones</h2>
-                            <p class="portal-subtitle">Gestión integral de períodos vacacionales por colaborador</p>
+                            <h2 class="portal-title">Gestión de Personal</h2>
+                            <p class="portal-subtitle">Directorio de equipo, vacaciones, permisos y préstamos</p>
                         </div>
                     </div>
                 </div>
             </div>
-            <div id="vacacionesContent">
+            <!-- SUB-TABS -->
+            <div style="display:flex; gap:0; margin-bottom:1.5rem; border-bottom: 2px solid var(--border);">
+                <button id="vst-equipo" class="vac-subtab active" onclick="switchVacSubTab('equipo')">
+                    <i class="fa-solid fa-users"></i> Mi Equipo
+                </button>
+                <button id="vst-vacaciones" class="vac-subtab" onclick="switchVacSubTab('vacaciones')">
+                    <i class="fa-solid fa-umbrella-beach"></i> Vacaciones
+                </button>
+                <button id="vst-permisos" class="vac-subtab" onclick="switchVacSubTab('permisos')">
+                    <i class="fa-solid fa-hand"></i> Permisos
+                </button>
+                <button id="vst-prestamos" class="vac-subtab" onclick="switchVacSubTab('prestamos')">
+                    <i class="fa-solid fa-hand-holding-dollar"></i> Préstamos
+                </button>
+            </div>
+            <div id="vacSubTabContent">
                 <div class="portal-loading"><div class="portal-spinner"></div><span>Cargando datos...</span></div>
             </div>
         </div>`;
 
+    // Load the default sub-tab
+    await loadVacSubEquipo();
+}
+
+function switchVacSubTab(tab) {
+    document.querySelectorAll('.vac-subtab').forEach(b => b.classList.remove('active'));
+    document.getElementById(`vst-${tab}`)?.classList.add('active');
+    if (tab === 'equipo') loadVacSubEquipo();
+    else if (tab === 'vacaciones') loadVacSubVacaciones();
+    else if (tab === 'permisos') loadVacSubPermisos();
+    else if (tab === 'prestamos') loadVacSubPrestamos();
+}
+
+// ── SUB-TAB: VACACIONES ──
+async function loadVacSubVacaciones() {
+    const content = document.getElementById('vacSubTabContent');
+    content.innerHTML = '<div class="portal-loading"><div class="portal-spinner"></div><span>Cargando...</span></div>';
+
     try {
         const res = await fetch('/api/planillas/empleados');
         const emps = await res.json();
-        const content = document.getElementById('vacacionesContent');
-
         if (emps.length === 0) {
             content.innerHTML = '<div class="portal-empty"><i class="fa-solid fa-umbrella-beach"></i><p>No hay empleados registrados.</p></div>';
             return;
@@ -439,34 +463,23 @@ async function loadVacacionesTab() {
         for (const emp of emps) {
             const vacRes = await fetch(`/api/planillas/vacaciones/${emp.id}`);
             const vacData = await vacRes.json();
-
-            let antiguedad = "--";
-            let mesesTotales = 0;
+            let antiguedad = "--", mesesTotales = 0;
             if (emp.fecha_inicio) {
                 const start = new Date(emp.fecha_inicio);
                 const hoy = new Date();
                 mesesTotales = (hoy.getFullYear() - start.getFullYear()) * 12 - start.getMonth() + hoy.getMonth();
-                if (mesesTotales >= 12) {
-                    antiguedad = `${Math.floor(mesesTotales / 12)}a ${mesesTotales % 12}m`;
-                } else {
-                    antiguedad = `${mesesTotales}m`;
-                }
+                antiguedad = mesesTotales >= 12 ? `${Math.floor(mesesTotales / 12)}a ${mesesTotales % 12}m` : `${mesesTotales}m`;
             }
-            const acum = vacData.acumulados || 0;
-            const tom = vacData.tomados || 0;
-            const disp = vacData.disponibles || 0;
-            // Period: how many days correspond to the current annual cycle (max 14)
-            const derecho = mesesTotales >= 12 ? 14 : mesesTotales;
-            vacRows.push({ emp, vacData, antiguedad, acum, tom, disp, derecho });
+            const acum = vacData.acumulados || 0, tom = vacData.tomados || 0, disp = vacData.disponibles || 0;
+            vacRows.push({ emp, vacData, antiguedad, acum, tom, disp });
         }
 
-        // ── Employee Cards Grid ──
         let html = '<div class="vac-cards-grid">';
-        vacRows.forEach(({ emp, vacData, antiguedad, acum, tom, disp, derecho }, _vIdx) => {
-            const pctUsed = derecho > 0 ? Math.min(100, Math.round((tom / acum) * 100)) : 0;
-            const pctAvail = 100 - pctUsed;
+        vacRows.forEach(({ emp, vacData, antiguedad, acum, tom, disp }, _vIdx) => {
+            const pctUsed = acum > 0 ? Math.min(100, Math.round((tom / acum) * 100)) : 0;
             const dispColor = disp > 0 ? '#10b981' : (disp < 0 ? '#ef4444' : '#94a3b8');
             const barColor = disp > 0 ? '#10b981' : '#ef4444';
+            const eName = emp.nombre.replace(/'/g, "\\'");
 
             html += `
             <div class="vac-emp-card" style="animation: slideDown 0.35s ease both; animation-delay: ${_vIdx * 0.06}s;">
@@ -477,12 +490,10 @@ async function loadVacacionesTab() {
                         <span class="vac-emp-meta"><i class="fa-solid fa-calendar-day"></i> ${emp.fecha_inicio || '—'} · <span class="vac-emp-antig">${antiguedad}</span></span>
                     </div>
                 </div>
-
                 <div class="vac-emp-hero-num">
                     <span class="vac-emp-hero-val" style="color:${dispColor};">${disp}</span>
                     <span class="vac-emp-hero-label">días disponibles</span>
                 </div>
-
                 <div class="vac-emp-bar-wrap">
                     <div class="vac-emp-bar-bg">
                         <div class="vac-emp-bar-fill" style="width:${pctUsed}%; background:${barColor};"></div>
@@ -492,12 +503,11 @@ async function loadVacacionesTab() {
                         <span><span class="vac-emp-dot" style="background:#f59e0b;"></span> Usados: ${tom}</span>
                     </div>
                 </div>
-
                 <div class="vac-emp-actions">
-                    <button class="vac-btn vac-btn-primary" onclick="openRegistrarVacacion(${emp.id}, '${emp.nombre.replace(/'/g, "\\'")}')">
+                    <button class="vac-btn vac-btn-primary" onclick="openRegistrarVacacion(${emp.id}, '${eName}')">
                         <i class="fa-solid fa-plus"></i> Registrar
                     </button>
-                    <button class="vac-btn vac-btn-ghost" onclick="openVacHistorial(${emp.id}, '${emp.nombre.replace(/'/g, "\\'")}')">
+                    <button class="vac-btn vac-btn-ghost" onclick="openVacHistorial(${emp.id}, '${eName}')">
                         <i class="fa-solid fa-clock-rotate-left"></i> Historial
                     </button>
                     <button class="vac-btn vac-btn-accent" onclick="goToVacacionesConstancia(${emp.id})" title="Generar carta de goce de vacaciones">
@@ -510,8 +520,193 @@ async function loadVacacionesTab() {
         content.innerHTML = html;
 
     } catch (e) {
-        document.getElementById('vacacionesContent').innerHTML = `<div class="portal-error"><i class="fa-solid fa-circle-exclamation"></i> ${e.message}</div>`;
+        content.innerHTML = `<div class="portal-error"><i class="fa-solid fa-circle-exclamation"></i> ${e.message}</div>`;
     }
+}
+
+// ── SUB-TAB: PERMISOS ──
+async function loadVacSubPermisos() {
+    const content = document.getElementById('vacSubTabContent');
+    content.innerHTML = '<div class="portal-loading"><div class="portal-spinner"></div><span>Cargando...</span></div>';
+
+    try {
+        const res = await fetch('/api/planillas/empleados');
+        const emps = await res.json();
+        const anio = new Date().getFullYear();
+
+        let html = `
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+            <h3 style="color:var(--text-main); margin:0;"><i class="fa-solid fa-hand" style="color:#f59e0b;"></i> Permisos ${anio}</h3>
+        </div>`;
+
+        html += '<div class="vac-cards-grid">';
+        for (const emp of emps) {
+            const permRes = await fetch(`/api/planillas/permisos/${emp.id}?anio=${anio}`);
+            const permData = await permRes.json();
+            const conteo = permData.conteo || { total: 0, descontados: 0, pendientes: 0 };
+            const permisos = permData.permisos || [];
+            const eName = emp.nombre.replace(/'/g, "\\'");
+
+            html += `
+            <div class="perm-card" style="animation: slideUpFadeIn 0.4s ease backwards; animation-delay: ${Math.min((emp.id || 0) * 0.05, 0.5)}s;">
+                <div class="perm-card-top">
+                    <div class="vac-emp-avatar" style="background:${_grad(emp.id)};">${_initials(emp.nombre)}</div>
+                    <div class="vac-emp-info">
+                        <span class="vac-emp-name">${emp.nombre}</span>
+                        <span class="vac-emp-meta">
+                            <i class="fa-solid fa-id-card"></i> ${emp.cedula || 'Sin registro'}
+                        </span>
+                    </div>
+                </div>
+
+                <div class="perm-stats-grid">
+                    <div class="perm-stat-item">
+                        <span class="perm-stat-label">Total</span>
+                        <span class="perm-stat-val perm-val-total">${conteo.total}</span>
+                    </div>
+                    <div class="perm-stat-item">
+                        <span class="perm-stat-label">Descontados</span>
+                        <span class="perm-stat-val perm-val-desc">${conteo.descontados}</span>
+                    </div>
+                    <div class="perm-stat-item">
+                        <span class="perm-stat-label">Pendientes</span>
+                        <span class="perm-stat-val perm-val-pend">${conteo.pendientes}</span>
+                    </div>
+                </div>
+
+                <div class="perm-actions">
+                    <button class="perm-btn perm-btn-primary" onclick="openRegistrarPermiso(${emp.id}, '${eName}')" title="Registrar permiso">
+                        <i class="fa-solid fa-plus"></i> Registrar
+                    </button>
+                    ${permisos.length > 0 ? `
+                    <button class="perm-btn perm-btn-ghost" onclick="openPermHistorial(${emp.id}, '${eName}', ${anio})" title="Ver historial">
+                        <i class="fa-solid fa-clock-rotate-left"></i> Historial
+                    </button>
+                    ` : ''}
+                    ${conteo.pendientes > 0 ? `
+                    <button class="perm-btn perm-btn-accent" onclick="descontarPermisos(${emp.id}, '${eName}', ${conteo.pendientes}, ${anio})" title="Descontar de vacaciones">
+                        <i class="fa-solid fa-check-to-slot"></i> Descontar (${conteo.pendientes})
+                    </button>` : ''}
+                </div>
+            </div>`;
+        }
+        html += '</div>';
+        content.innerHTML = html;
+
+    } catch (e) {
+        content.innerHTML = `<div class="portal-error"><i class="fa-solid fa-circle-exclamation"></i> ${e.message}</div>`;
+    }
+}
+
+// ── SUB-TAB: PRÉSTAMOS ──
+async function loadVacSubPrestamos() {
+    const content = document.getElementById('vacSubTabContent');
+    content.innerHTML = '<div class="portal-loading"><div class="portal-spinner"></div><span>Cargando...</span></div>';
+
+    try {
+        const empsRes = await fetch('/api/planillas/empleados');
+        const emps = await empsRes.json();
+
+        let html = `
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+            <h3 style="color:var(--text-main); margin:0;"><i class="fa-solid fa-hand-holding-dollar" style="color:#8b5cf6;"></i> Préstamos Activos</h3>
+            <button class="vac-btn vac-btn-primary" onclick="openNuevoPrestamo()">
+                <i class="fa-solid fa-plus"></i> Nuevo Préstamo
+            </button>
+        </div>`;
+
+        html += '<div class="vac-cards-grid">';
+        for (const emp of emps) {
+            const prestRes = await fetch(`/api/planillas/prestamos/${emp.id}`);
+            const prestamos = await prestRes.json();
+            if (prestamos.length === 0) continue;
+
+            const eName = emp.nombre.replace(/'/g, "\\'");
+
+            for (const p of prestamos) {
+                const progreso = p.monto_total > 0 ? Math.round(((p.monto_total - p.saldo) / p.monto_total) * 100) : 0;
+                const isLiquidado = p.estado === 'liquidado';
+                const statusColor = isLiquidado ? '#10b981' : '#8b5cf6';
+                const statusText = isLiquidado ? 'Liquidado' : 'Activo';
+                const statusBg = isLiquidado ? 'rgba(16,185,129,0.15)' : 'rgba(139,92,246,0.15)';
+
+                html += `
+                <div class="vac-emp-card" style="animation: slideDown 0.3s ease both; border-left: 3px solid ${statusColor};">
+                    <div class="vac-emp-card-top">
+                        <div class="vac-emp-avatar" style="background:${_grad(emp.id)};">${_initials(emp.nombre)}</div>
+                        <div class="vac-emp-info">
+                            <span class="vac-emp-name">${emp.nombre}</span>
+                            <span class="vac-emp-meta">
+                                <span style="background:${statusBg}; color:${statusColor}; padding:1px 8px; border-radius:6px; font-size:0.7rem; font-weight:700;">${statusText}</span>
+                                <span style="color:var(--text-muted); font-size:0.7rem;">desde ${_formatDateEs(p.fecha_inicio)}</span>
+                            </span>
+                        </div>
+                    </div>
+                    <!-- Montos -->
+                    <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:0.5rem; margin-top:0.7rem;">
+                        <div style="text-align:center;">
+                            <div style="font-size:0.65rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">Total</div>
+                            <div style="font-size:1rem; font-weight:800; color:var(--text-main);">₡${_fmtMoney(p.monto_total)}</div>
+                        </div>
+                        <div style="text-align:center;">
+                            <div style="font-size:0.65rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">Semanal</div>
+                            <div style="font-size:1rem; font-weight:800; color:#f59e0b;">₡${_fmtMoney(p.pago_semanal)}</div>
+                        </div>
+                        <div style="text-align:center;">
+                            <div style="font-size:0.65rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">Saldo</div>
+                            <div style="font-size:1rem; font-weight:800; color:${isLiquidado ? '#10b981' : '#ef4444'};">₡${_fmtMoney(p.saldo)}</div>
+                        </div>
+                    </div>
+                    <!-- Progress bar -->
+                    <div style="margin-top:0.6rem;">
+                        <div style="display:flex; justify-content:space-between; font-size:0.7rem; color:var(--text-muted); margin-bottom:3px;">
+                            <span>Progreso</span><span>${progreso}%</span>
+                        </div>
+                        <div style="height:6px; background:rgba(255,255,255,0.08); border-radius:4px; overflow:hidden;">
+                            <div style="height:100%; width:${progreso}%; background: linear-gradient(90deg, #8b5cf6, #10b981); border-radius:4px; transition: width 0.5s ease;"></div>
+                        </div>
+                    </div>
+                    ${p.notas ? `<p style="font-size:0.75rem; color:var(--text-muted); margin-top:0.5rem; font-style:italic;">${p.notas}</p>` : ''}
+                    <!-- Actions -->
+                    <div style="display:flex; gap:0.5rem; margin-top:0.7rem; flex-wrap:wrap;">
+                        <button class="vac-btn vac-btn-ghost" style="font-size:0.78rem;" onclick="verAbonosPrestamo(${p.id}, '${eName}')">
+                            <i class="fa-solid fa-list"></i> Historial
+                        </button>
+                        ${!isLiquidado ? `
+                        <button class="vac-btn vac-btn-primary" style="font-size:0.78rem; background:#8b5cf6;" onclick="registrarAbono(${p.id}, ${p.pago_semanal}, '${eName}', 'planilla')">
+                            <i class="fa-solid fa-money-bill-transfer"></i> Abono Planilla
+                        </button>
+                        <button class="vac-btn vac-btn-ghost" style="font-size:0.78rem; color:#f59e0b; border-color:rgba(245,158,11,0.3);" onclick="registrarAbono(${p.id}, 0, '${eName}', 'extraordinario')">
+                            <i class="fa-solid fa-star"></i> Extraordinario
+                        </button>` : ''}
+                        <button class="vac-btn vac-btn-ghost" style="font-size:0.75rem; color:#ef4444; border-color:rgba(239,68,68,0.2);" onclick="eliminarPrestamo(${p.id}, '${eName}')">
+                            <i class="fa-solid fa-trash-can"></i>
+                        </button>
+                    </div>
+                </div>`;
+            }
+        }
+        html += '</div>';
+
+        // If no loans exist at all
+        if (!html.includes('vac-emp-card')) {
+            html += `
+            <div class="portal-empty-box" style="padding:40px 20px; text-align:center;">
+                <i class="fa-solid fa-hand-holding-dollar" style="font-size:2.5rem; color:var(--text-muted); opacity:0.3; margin-bottom:15px;"></i>
+                <h3 style="color:var(--text-main); font-size:1rem; margin-bottom:8px;">Sin préstamos activos</h3>
+                <p style="color:var(--text-muted); font-size:0.85rem;">Registra un nuevo préstamo para comenzar el seguimiento.</p>
+            </div>`;
+        }
+
+        content.innerHTML = html;
+
+    } catch (e) {
+        content.innerHTML = `<div class="portal-error"><i class="fa-solid fa-circle-exclamation"></i> ${e.message}</div>`;
+    }
+}
+
+function _fmtMoney(n) {
+    return Number(n || 0).toLocaleString('es-CR', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 }
 
 // Quick link to Constancia de Vacaciones in Utilidades
@@ -774,6 +969,398 @@ function autoCalcVacDias() {
 }
 
 
+// =============================================================================
+// PERMISOS FUNCTIONS
+// =============================================================================
+
+async function openPermHistorial(empId, empName, anio) {
+    document.getElementById('permHistEmpId').value = empId;
+    document.getElementById('permHistEmpName').textContent = empName;
+    const content = document.getElementById('permHistContent');
+    content.innerHTML = '<div class="portal-loading"><div class="portal-spinner"></div><span>Cargando historial...</span></div>';
+    document.getElementById('permHistorialModal').classList.remove('hidden');
+
+    try {
+        const res = await fetch(`/api/planillas/permisos/${empId}?anio=${anio}`);
+        const data = await res.json();
+        const permisos = data.permisos || [];
+
+        if (permisos.length === 0) {
+            content.innerHTML = '<div class="portal-empty"><i class="fa-solid fa-hand"></i><p>No hay permisos registrados en este año.</p></div>';
+            return;
+        }
+
+        let html = '<div class="vhist-timeline">';
+        
+        permisos.forEach(p => {
+            const isDescontado = p.descontado_de_vacaciones;
+            const estadoColor = isDescontado ? '#10b981' : '#f59e0b';
+            const estadoBg = isDescontado ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)';
+            const estadoLabel = isDescontado ? 'Descontado' : 'Pendiente';
+            const estadoIcon = isDescontado ? 'fa-check-to-slot' : 'fa-hourglass-start';
+
+            html += `
+            <div class="vhist-card" id="perm-card-${p.id}">
+                <div class="vhist-card-dot" style="background:${estadoColor}; box-shadow: 0 0 0 3px ${estadoBg}; border-color:var(--bg-panel);"></div>
+                <div class="vhist-card-body">
+                    <div class="vhist-card-header">
+                        <div class="vhist-card-dates">
+                            <span class="vhist-date-range">
+                                <i class="fa-regular fa-calendar" style="color:${estadoColor};"></i>
+                                ${_formatDateEs(p.fecha)}
+                            </span>
+                            <span class="vhist-days-pill" style="color:${estadoColor}; background:${estadoBg};">
+                                <i class="fa-solid ${estadoIcon}"></i> ${estadoLabel}
+                            </span>
+                        </div>
+                        <div class="vhist-card-menu">
+                            <button class="vhist-btn-icon vhist-btn-danger" onclick="deletePermiso(${p.id}, ${isDescontado})" title="${isDescontado ? 'Eliminar y opcionalmente restaurar vacaciones' : 'Eliminar permiso'}">
+                                <i class="fa-solid fa-trash-can"></i>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div style="margin-top:0.6rem;">
+                        <span style="font-size:0.85rem; font-weight:600; color:var(--text-main);">
+                            <i class="fa-solid fa-tag" style="color:var(--text-muted); font-size:0.75rem; margin-right:4px;"></i> 
+                            ${p.motivo || 'Motivo no especificado'}
+                        </span>
+                    </div>
+
+                    ${p.notas ? `
+                    <div class="vhist-notas" style="margin-top:8px;">
+                        <i class="fa-solid fa-comment-dots" style="color:#6366f1;"></i> 
+                        <span style="white-space:pre-wrap;">${p.notas}</span>
+                    </div>` : ''}
+                </div>
+            </div>`;
+        });
+        
+        html += '</div>';
+        content.innerHTML = html;
+    } catch (e) {
+        content.innerHTML = `<div class="portal-error"><i class="fa-solid fa-circle-exclamation"></i> Error al cargar historial: ${e.message}</div>`;
+    }
+}
+
+function closePermHistorial() {
+    document.getElementById('permHistorialModal').classList.add('hidden');
+}
+
+function openRegistrarPermiso(empId, empName) {
+    document.getElementById('permEmpId').value = empId;
+    document.getElementById('permEmpName').textContent = empName;
+    document.getElementById('permFecha').value = '';
+    document.getElementById('permMotivo').value = 'Personal';
+    document.getElementById('permNotas').value = '';
+    document.getElementById('permisoModal').classList.remove('hidden');
+}
+
+function closeRegistrarPermiso() {
+    document.getElementById('permisoModal').classList.add('hidden');
+}
+
+async function guardarPermiso() {
+    const empId = document.getElementById('permEmpId').value;
+    const data = {
+        empleado_id: parseInt(empId),
+        fecha: document.getElementById('permFecha').value,
+        motivo: document.getElementById('permMotivo').value,
+        notas: document.getElementById('permNotas').value
+    };
+
+    if (!data.fecha) {
+        alert('Por favor seleccione una fecha para el permiso.');
+        return;
+    }
+
+    try {
+        const res = await fetch('/api/planillas/permisos', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error al guardar');
+        }
+        closeRegistrarPermiso();
+        loadVacSubPermisos();
+        if (typeof showToast === 'function') showToast('Permiso registrado', 'success');
+        else alert('Permiso registrado exitosamente.');
+    } catch (e) {
+        alert(e.message);
+    }
+}
+
+async function deletePermiso(permisoId, isDescontado) {
+    if (!confirm('¿Está seguro de que desea eliminar este permiso del historial?')) return;
+    
+    let restaurar = false;
+    if (isDescontado) {
+        restaurar = confirm('Este permiso fue descontado de vacaciones.\n\n¿Desea RESTAURAR los días al saldo de vacaciones del empleado?\n[Aceptar] = Sí, restaurar\n[Cancelar] = No restaurar');
+    }
+
+    try {
+        const res = await fetch(`/api/planillas/permisos/${permisoId}?restaurar=${restaurar}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error('Error al eliminar');
+        loadVacSubPermisos();
+        
+        // Refresh modal if it's currently open
+        const modal = document.getElementById('permHistorialModal');
+        if (modal && !modal.classList.contains('hidden')) {
+            const empId = document.getElementById('permHistEmpId').value;
+            const empName = document.getElementById('permHistEmpName').textContent;
+            openPermHistorial(empId, empName, new Date().getFullYear());
+        }
+
+        if (typeof showToast === 'function') showToast('Permiso eliminado (vacaciones restauradas si aplicaba)', 'success');
+    } catch (e) { alert(e.message); }
+}
+
+async function descontarPermisos(empId, empName, pendientes, anio) {
+    const cantidad = prompt(
+        `${empName}: Tiene ${pendientes} permiso(s) pendiente(s) en ${anio}.\n` +
+        `Estos dias se restaran de sus vacaciones.\n\n` +
+        `Cuantos permisos desea descontar? (max ${pendientes})`,
+        pendientes
+    );
+    if (cantidad === null) return;
+    const cant = parseInt(cantidad);
+    if (isNaN(cant) || cant <= 0 || cant > pendientes) {
+        alert('Cantidad invalida.');
+        return;
+    }
+
+    if (!confirm(`Confirmar: Descontar ${cant} dia(s) de permiso de las vacaciones de ${empName}?`)) return;
+
+    try {
+        const res = await fetch('/api/planillas/permisos/descontar-vacaciones', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ empleado_id: empId, cantidad: cant, anio })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error al descontar');
+        }
+        loadVacSubPermisos();
+        if (typeof showToast === 'function') showToast(`${cant} permiso(s) descontados de vacaciones`, 'success');
+        else alert(`${cant} permiso(s) descontados de vacaciones de ${empName}.`);
+    } catch (e) { alert(e.message); }
+}
+
+// =============================================================================
+// PRÉSTAMOS FUNCTIONS
+// =============================================================================
+
+async function openNuevoPrestamo() {
+    // Build employee select
+    const res = await fetch('/api/planillas/empleados');
+    const emps = await res.json();
+    const opts = emps.map(e => `<option value="${e.id}">${e.nombre}</option>`).join('');
+
+    const content = document.getElementById('vacSubTabContent');
+    content.innerHTML = `
+    <div style="max-width:500px; margin:0 auto;">
+        <div style="display:flex; align-items:center; gap:10px; margin-bottom:1.5rem;">
+            <button class="vac-btn vac-btn-ghost" onclick="loadVacSubPrestamos()" style="padding:6px 10px;">
+                <i class="fa-solid fa-arrow-left"></i>
+            </button>
+            <h3 style="color:var(--text-main); margin:0;"><i class="fa-solid fa-hand-holding-dollar" style="color:#8b5cf6;"></i> Nuevo Préstamo</h3>
+        </div>
+        <div class="vac-emp-card" style="padding:1.5rem;">
+            <div class="input-group" style="margin-bottom:1rem;">
+                <label style="font-size:0.8rem; color:var(--text-muted); margin-bottom:4px; display:block;">Empleado</label>
+                <select id="npEmpId" style="width:100%; padding:0.7rem; background:var(--bg-app); border:1px solid var(--border); color:var(--text-main); border-radius:8px;">
+                    ${opts}
+                </select>
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem; margin-bottom:1rem;">
+                <div class="input-group">
+                    <label style="font-size:0.8rem; color:var(--text-muted); margin-bottom:4px; display:block;">Monto Total (₡)</label>
+                    <input type="number" id="npMontoTotal" placeholder="Ej: 100000" oninput="calcNuevoPrestamo()"
+                        style="width:100%; padding:0.7rem; background:var(--bg-app); border:1px solid var(--border); color:var(--text-main); border-radius:8px;">
+                </div>
+                <div class="input-group">
+                    <label style="font-size:0.8rem; color:var(--text-muted); margin-bottom:4px; display:block;">Pago Semanal (₡)</label>
+                    <input type="number" id="npPagoSemanal" placeholder="Ej: 10000" oninput="calcNuevoPrestamo()"
+                        style="width:100%; padding:0.7rem; background:var(--bg-app); border:1px solid var(--border); color:var(--text-main); border-radius:8px;">
+                </div>
+            </div>
+            <div id="npCalcPreview" style="display:none; background:rgba(139,92,246,0.08); border-radius:8px; padding:0.8rem; margin-bottom:1rem;">
+            </div>
+            <div class="input-group" style="margin-bottom:1rem;">
+                <label style="font-size:0.8rem; color:var(--text-muted); margin-bottom:4px; display:block;">Notas (opcional)</label>
+                <textarea id="npNotas" rows="2" placeholder="Observaciones..."
+                    style="width:100%; padding:0.7rem; background:var(--bg-app); border:1px solid var(--border); color:var(--text-main); border-radius:8px; resize:vertical;"></textarea>
+            </div>
+            <div style="display:flex; gap:0.5rem;">
+                <button class="vac-btn vac-btn-primary" style="flex:1; background:#8b5cf6;" onclick="guardarNuevoPrestamo()">
+                    <i class="fa-solid fa-check"></i> Registrar Préstamo
+                </button>
+                <button class="vac-btn vac-btn-ghost" onclick="loadVacSubPrestamos()">Cancelar</button>
+            </div>
+        </div>
+    </div>`;
+}
+
+function calcNuevoPrestamo() {
+    const monto = parseFloat(document.getElementById('npMontoTotal').value) || 0;
+    const pago = parseFloat(document.getElementById('npPagoSemanal').value) || 0;
+    const box = document.getElementById('npCalcPreview');
+    if (monto > 0 && pago > 0) {
+        const semanas = Math.ceil(monto / pago);
+        box.innerHTML = `
+            <div style="display:flex; justify-content:space-between; font-size:0.85rem; color:var(--text-main);">
+                <span><i class="fa-solid fa-calendar-week" style="color:#8b5cf6; margin-right:4px;"></i> Semanas estimadas</span>
+                <strong>${semanas}</strong>
+            </div>`;
+        box.style.display = 'block';
+    } else {
+        box.style.display = 'none';
+    }
+}
+
+async function guardarNuevoPrestamo() {
+    const data = {
+        empleado_id: parseInt(document.getElementById('npEmpId').value),
+        monto_total: parseFloat(document.getElementById('npMontoTotal').value) || 0,
+        pago_semanal: parseFloat(document.getElementById('npPagoSemanal').value) || 0,
+        notas: document.getElementById('npNotas').value || null
+    };
+    if (!data.monto_total || !data.pago_semanal) return alert('Complete el monto total y pago semanal.');
+
+    try {
+        const res = await fetch('/api/planillas/prestamos', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        if (!res.ok) throw new Error('Error al registrar');
+        loadVacSubPrestamos();
+        if (typeof showToast === 'function') showToast('Préstamo registrado', 'success');
+    } catch (e) { alert(e.message); }
+}
+
+async function registrarAbono(prestamoId, montoSugerido, empName, tipo) {
+    let monto;
+    if (tipo === 'extraordinario') {
+        monto = prompt(`Abono extraordinario para ${empName}.\nIngrese el monto del abono:`);
+        if (monto === null) return;
+        monto = parseFloat(monto);
+        if (isNaN(monto) || monto <= 0) return alert('Monto inválido.');
+    } else {
+        // planilla — confirmación manual con monto pre-llenado
+        const confirmar = confirm(
+            `¿Confirmar abono de planilla para ${empName}?\n\n` +
+            `Monto: ₡${_fmtMoney(montoSugerido)}\n\n` +
+            `Este abono se registrará como rebajo de planilla.`
+        );
+        if (!confirmar) return;
+        monto = montoSugerido;
+    }
+
+    const notas = tipo === 'extraordinario' ? prompt('Nota para el abono extraordinario (opcional):') : null;
+
+    try {
+        const res = await fetch(`/api/planillas/prestamos/${prestamoId}/abono`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ monto, tipo, notas })
+        });
+        if (!res.ok) throw new Error('Error al registrar abono');
+        const result = await res.json();
+        loadVacSubPrestamos();
+        if (typeof showToast === 'function') {
+            showToast(`Abono ₡${_fmtMoney(monto)} registrado. Saldo: ₡${_fmtMoney(result.nuevo_saldo)}`, 'success');
+        }
+        if (result.estado === 'liquidado') {
+            alert(`¡Préstamo de ${empName} LIQUIDADO! 🎉`);
+        }
+    } catch (e) { alert(e.message); }
+}
+
+async function verAbonosPrestamo(prestamoId, empName) {
+    try {
+        const res = await fetch(`/api/planillas/prestamos/${prestamoId}/abonos`);
+        const data = await res.json();
+        const abonos = data.abonos || [];
+        const prest = data.prestamo;
+
+        const content = document.getElementById('vacSubTabContent');
+        let html = `
+        <div style="max-width:600px; margin:0 auto;">
+            <div style="display:flex; align-items:center; gap:10px; margin-bottom:1.5rem;">
+                <button class="vac-btn vac-btn-ghost" onclick="loadVacSubPrestamos()" style="padding:6px 10px;">
+                    <i class="fa-solid fa-arrow-left"></i>
+                </button>
+                <h3 style="color:var(--text-main); margin:0;">
+                    <i class="fa-solid fa-list" style="color:#8b5cf6;"></i> Historial de Abonos — ${empName}
+                </h3>
+            </div>
+            <div class="vac-emp-card" style="margin-bottom:1rem;">
+                <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:0.5rem;">
+                    <div style="text-align:center;">
+                        <div style="font-size:0.65rem; color:var(--text-muted); text-transform:uppercase;">Total</div>
+                        <div style="font-size:1.1rem; font-weight:800; color:var(--text-main);">₡${_fmtMoney(prest.monto_total)}</div>
+                    </div>
+                    <div style="text-align:center;">
+                        <div style="font-size:0.65rem; color:var(--text-muted); text-transform:uppercase;">Abonado</div>
+                        <div style="font-size:1.1rem; font-weight:800; color:#10b981;">₡${_fmtMoney(prest.monto_total - prest.saldo)}</div>
+                    </div>
+                    <div style="text-align:center;">
+                        <div style="font-size:0.65rem; color:var(--text-muted); text-transform:uppercase;">Saldo</div>
+                        <div style="font-size:1.1rem; font-weight:800; color:#ef4444;">₡${_fmtMoney(prest.saldo)}</div>
+                    </div>
+                </div>
+            </div>`;
+
+        if (abonos.length === 0) {
+            html += '<p style="text-align:center; color:var(--text-muted); padding:2rem;">No hay abonos registrados aún.</p>';
+        } else {
+            html += `
+            <div class="vac-emp-card" style="padding:0; overflow:hidden;">
+                <table style="width:100%; font-size:0.82rem; border-collapse:collapse;">
+                    <thead><tr style="background:rgba(255,255,255,0.03); color:var(--text-muted); font-size:0.7rem; text-transform:uppercase; letter-spacing:0.5px;">
+                        <th style="text-align:left; padding:10px 12px;">Fecha</th>
+                        <th style="text-align:right; padding:10px 12px;">Monto</th>
+                        <th style="text-align:center; padding:10px 12px;">Tipo</th>
+                        <th style="text-align:left; padding:10px 12px;">Notas</th>
+                    </tr></thead>
+                    <tbody>
+                    ${abonos.map(a => `
+                    <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
+                        <td style="padding:8px 12px; color:var(--text-main);">${_formatDateEs(a.fecha)}</td>
+                        <td style="padding:8px 12px; text-align:right; font-weight:700; color:#10b981;">₡${_fmtMoney(a.monto)}</td>
+                        <td style="padding:8px 12px; text-align:center;">
+                            ${a.tipo === 'planilla' ? 
+                                '<span style="background:rgba(139,92,246,0.15); color:#8b5cf6; padding:2px 8px; border-radius:5px; font-size:0.68rem; font-weight:600;">Planilla</span>' :
+                                '<span style="background:rgba(245,158,11,0.15); color:#f59e0b; padding:2px 8px; border-radius:5px; font-size:0.68rem; font-weight:600;">Extraordinario</span>'
+                            }
+                        </td>
+                        <td style="padding:8px 12px; color:var(--text-muted); font-size:0.75rem;">${a.notas || '—'}</td>
+                    </tr>`).join('')}
+                    </tbody>
+                </table>
+            </div>`;
+        }
+
+        html += '</div>';
+        content.innerHTML = html;
+
+    } catch (e) { alert(e.message); }
+}
+
+async function eliminarPrestamo(prestamoId, empName) {
+    if (!confirm(`¿Eliminar el préstamo de ${empName}? Se eliminarán todos los abonos registrados.`)) return;
+    try {
+        const res = await fetch(`/api/planillas/prestamos/${prestamoId}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error('Error al eliminar');
+        loadVacSubPrestamos();
+        if (typeof showToast === 'function') showToast('Préstamo eliminado', 'success');
+    } catch (e) { alert(e.message); }
+}
 
 // =============================================================================
 // TAB: AGUINALDO
@@ -2442,3 +3029,339 @@ window.switchTab = function switchTab(id) {
     const content = document.getElementById(id);
     if (content) content.classList.add("active");
 };
+
+// =============================================================================
+// TAB: INVENTARIO
+// =============================================================================
+
+async function loadInventarioTab() {
+    const tab = document.getElementById('tab-inventario');
+    tab.innerHTML = `
+        <div class="portal-view">
+            <div class="portal-header">
+                <div class="portal-header-left">
+                    <div class="portal-title-row">
+                        <div class="portal-icon-wrap" style="--accent: #8b5cf6;">
+                            <i class="fa-solid fa-boxes-stacked"></i>
+                        </div>
+                        <div>
+                            <h2 class="portal-title">Control de Inventario</h2>
+                            <p class="portal-subtitle">Seguimiento diario de existencias y consumo</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="portal-header-right">
+                    <div class="portal-stat-chip" id="invCountChip">
+                        <i class="fa-solid fa-box"></i> <span>--</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Upload Zone -->
+            <div class="inv-upload-zone" id="invUploadZone">
+                <div class="inv-upload-inner">
+                    <div class="inv-upload-icon">
+                        <i class="fa-solid fa-cloud-arrow-up"></i>
+                    </div>
+                    <h3>Subir Excel de Inventario</h3>
+                    <p>Arrastra tu archivo aquí o haz click para seleccionar</p>
+                    <p class="inv-upload-hint">Formato: columnas con Nombre, Precio, Código, Existencias</p>
+                    <input type="file" id="invFileInput" accept=".xlsx,.xls,.xlsm" style="display:none;" onchange="handleInventarioFile(this)">
+                    <button class="portal-btn-primary" onclick="document.getElementById('invFileInput').click()">
+                        <i class="fa-solid fa-file-excel"></i> Examinar Archivo
+                    </button>
+                </div>
+            </div>
+
+            <!-- Dashboard Content (loaded dynamically) -->
+            <div id="invDashboard"></div>
+
+            <!-- History Section -->
+            <div id="invHistorySection"></div>
+        </div>`;
+
+    // Drag & drop
+    const zone = document.getElementById('invUploadZone');
+    zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('inv-drag-over'); });
+    zone.addEventListener('dragleave', () => zone.classList.remove('inv-drag-over'));
+    zone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        zone.classList.remove('inv-drag-over');
+        const files = e.dataTransfer.files;
+        if (files.length > 0) uploadInventarioExcel(files[0]);
+    });
+
+    // Load current data
+    await loadInventarioDashboard();
+    await loadInventarioHistory();
+}
+
+async function loadInventarioDashboard() {
+    const dashboard = document.getElementById('invDashboard');
+    if (!dashboard) return;
+
+    try {
+        const res = await fetch('/api/inventario/diff');
+        const data = await res.json();
+
+        if (!data.carga_actual) {
+            dashboard.innerHTML = `
+                <div class="inv-empty-state">
+                    <i class="fa-solid fa-box-open"></i>
+                    <p>No hay cargas de inventario aún.</p>
+                    <p class="inv-empty-hint">Sube tu primer Excel para comenzar el seguimiento.</p>
+                </div>`;
+            document.querySelector('#invCountChip span').textContent = '0 artículos';
+            return;
+        }
+
+        const r = data.resumen || {};
+        const hasComparison = !!data.carga_anterior;
+        const arts = data.articulos || [];
+
+        document.querySelector('#invCountChip span').textContent = `${r.total_articulos || arts.length} artículos`;
+
+        let html = '';
+
+        // ── Date Header ──
+        html += `<div class="inv-date-header">
+            <div class="inv-date-current">
+                <i class="fa-solid fa-calendar-day"></i>
+                <span>Carga actual: <strong>${_formatDateEs(data.carga_actual.fecha)}</strong></span>
+                <span class="inv-date-file">${data.carga_actual.archivo_nombre || ''}</span>
+            </div>
+            ${hasComparison ? `
+            <div class="inv-date-arrow"><i class="fa-solid fa-arrow-right-arrow-left"></i></div>
+            <div class="inv-date-prev">
+                <i class="fa-regular fa-calendar"></i>
+                <span>Anterior: <strong>${_formatDateEs(data.carga_anterior.fecha)}</strong></span>
+            </div>` : '<span class="inv-date-single">Primera carga — sube otro Excel mañana para ver diferencias</span>'}
+        </div>`;
+
+        // ── Stat Cards ──
+        if (hasComparison) {
+            html += `<div class="inv-stats-grid">
+                <div class="inv-stat-card" style="--stat-color: #8b5cf6;">
+                    <div class="inv-stat-icon"><i class="fa-solid fa-boxes-stacked"></i></div>
+                    <div class="inv-stat-val">${r.total_articulos || 0}</div>
+                    <div class="inv-stat-label">Artículos Totales</div>
+                </div>
+                <div class="inv-stat-card" style="--stat-color: #ef4444;">
+                    <div class="inv-stat-icon"><i class="fa-solid fa-arrow-trend-down"></i></div>
+                    <div class="inv-stat-val">${r.total_consumidos || 0}</div>
+                    <div class="inv-stat-label">Con Consumo</div>
+                </div>
+                <div class="inv-stat-card" style="--stat-color: #10b981;">
+                    <div class="inv-stat-icon"><i class="fa-solid fa-equals"></i></div>
+                    <div class="inv-stat-val">${r.total_sin_cambio || 0}</div>
+                    <div class="inv-stat-label">Sin Cambio</div>
+                </div>
+                <div class="inv-stat-card" style="--stat-color: #3b82f6;">
+                    <div class="inv-stat-icon"><i class="fa-solid fa-arrow-trend-up"></i></div>
+                    <div class="inv-stat-val">${r.total_aumentaron || 0}</div>
+                    <div class="inv-stat-label">Aumentaron</div>
+                </div>
+            </div>`;
+
+            // ── Top 5 Most Consumed ──
+            const top5 = r.articulos_mas_consumidos || [];
+            if (top5.length > 0) {
+                const maxDelta = Math.abs(top5[0].delta || 1);
+                html += `<div class="inv-top5-section">
+                    <h3 class="inv-section-title"><i class="fa-solid fa-fire" style="color:#ef4444;"></i> Top Consumidos</h3>
+                    <div class="inv-top5-list">`;
+                top5.forEach((item, idx) => {
+                    const pct = Math.min(100, Math.round((Math.abs(item.delta) / maxDelta) * 100));
+                    html += `
+                    <div class="inv-top5-item" style="animation-delay: ${idx * 0.08}s;">
+                        <div class="inv-top5-rank">${idx + 1}</div>
+                        <div class="inv-top5-info">
+                            <span class="inv-top5-name">${item.nombre}</span>
+                            <div class="inv-top5-bar-bg">
+                                <div class="inv-top5-bar-fill" style="width:${pct}%;"></div>
+                            </div>
+                        </div>
+                        <div class="inv-top5-delta">
+                            <i class="fa-solid fa-arrow-down"></i> ${Math.abs(item.delta)}
+                        </div>
+                    </div>`;
+                });
+                html += `</div></div>`;
+            }
+        }
+
+        // ── Articles Table ──
+        html += `<div class="inv-table-section">
+            <h3 class="inv-section-title"><i class="fa-solid fa-table-list" style="color:#6366f1;"></i> Detalle de Artículos</h3>
+            <div class="inv-table-wrapper">
+                <table class="inv-table">
+                    <thead>
+                        <tr>
+                            <th>Código</th>
+                            <th>Artículo</th>
+                            <th class="inv-th-num">Precio</th>
+                            ${hasComparison ? '<th class="inv-th-num">Anterior</th>' : ''}
+                            <th class="inv-th-num">Actual</th>
+                            ${hasComparison ? '<th class="inv-th-num">Diferencia</th>' : ''}
+                        </tr>
+                    </thead>
+                    <tbody>`;
+
+        arts.forEach((a, idx) => {
+            const delta = a.delta;
+            let deltaClass = 'inv-delta-neutral';
+            let deltaIcon = '';
+            let deltaText = '—';
+            let rowClass = '';
+
+            if (delta !== null && delta !== undefined) {
+                if (delta < 0) {
+                    deltaClass = 'inv-delta-down';
+                    deltaIcon = '<i class="fa-solid fa-arrow-down"></i>';
+                    deltaText = `${deltaIcon} ${delta}`;
+                    rowClass = 'inv-row-consumed';
+                } else if (delta > 0) {
+                    deltaClass = 'inv-delta-up';
+                    deltaIcon = '<i class="fa-solid fa-arrow-up"></i>';
+                    deltaText = `${deltaIcon} +${delta}`;
+                    rowClass = 'inv-row-increased';
+                } else {
+                    deltaText = '<i class="fa-solid fa-minus"></i> 0';
+                }
+            } else if (hasComparison) {
+                deltaClass = 'inv-delta-new';
+                deltaText = '<i class="fa-solid fa-sparkles"></i> Nuevo';
+                rowClass = 'inv-row-new';
+            }
+
+            html += `
+                <tr class="${rowClass}" style="animation-delay: ${idx * 0.02}s;">
+                    <td class="inv-td-code">${a.codigo || '—'}</td>
+                    <td class="inv-td-name">${a.nombre}</td>
+                    <td class="inv-td-num">₡${_money(a.precio || 0)}</td>
+                    ${hasComparison ? `<td class="inv-td-num">${a.existencias_anterior !== null ? a.existencias_anterior : '—'}</td>` : ''}
+                    <td class="inv-td-num inv-td-current">${a.existencias_actual}</td>
+                    ${hasComparison ? `<td class="inv-td-num ${deltaClass}">${deltaText}</td>` : ''}
+                </tr>`;
+        });
+
+        html += `</tbody></table></div></div>`;
+        dashboard.innerHTML = html;
+
+        // Animate top5 bars after render
+        requestAnimationFrame(() => {
+            document.querySelectorAll('.inv-top5-bar-fill').forEach(bar => {
+                bar.style.transition = 'width 0.8s cubic-bezier(0.4, 0, 0.2, 1)';
+            });
+        });
+
+    } catch (e) {
+        dashboard.innerHTML = `<div class="portal-error"><i class="fa-solid fa-circle-exclamation"></i> ${e.message}</div>`;
+    }
+}
+
+async function loadInventarioHistory() {
+    const section = document.getElementById('invHistorySection');
+    if (!section) return;
+
+    try {
+        const res = await fetch('/api/inventario/history');
+        const history = await res.json();
+
+        if (!history || history.length === 0) {
+            section.innerHTML = '';
+            return;
+        }
+
+        let html = `<div class="inv-history-section">
+            <h3 class="inv-section-title"><i class="fa-solid fa-clock-rotate-left" style="color:#f59e0b;"></i> Historial de Cargas</h3>
+            <div class="inv-history-grid">`;
+
+        history.forEach((c, idx) => {
+            html += `
+            <div class="inv-history-card" style="animation-delay: ${idx * 0.05}s;">
+                <div class="inv-history-card-top">
+                    <div class="inv-history-date">
+                        <i class="fa-regular fa-calendar"></i> ${_formatDateEs(c.fecha)}
+                    </div>
+                    <button class="inv-history-delete" onclick="deleteInventarioCarga(${c.id})" title="Eliminar carga">
+                        <i class="fa-solid fa-trash-can"></i>
+                    </button>
+                </div>
+                <div class="inv-history-card-body">
+                    <div class="inv-history-file">
+                        <i class="fa-solid fa-file-excel" style="color:#10b981;"></i> ${c.archivo_nombre || 'Sin nombre'}
+                    </div>
+                    <div class="inv-history-count">
+                        <i class="fa-solid fa-cubes"></i> ${c.total_articulos} artículos
+                    </div>
+                </div>
+            </div>`;
+        });
+
+        html += `</div></div>`;
+        section.innerHTML = html;
+    } catch (e) {
+        section.innerHTML = '';
+    }
+}
+
+async function handleInventarioFile(input) {
+    if (input.files && input.files[0]) {
+        await uploadInventarioExcel(input.files[0]);
+        input.value = ''; // Reset so same file can be re-uploaded
+    }
+}
+
+async function uploadInventarioExcel(file) {
+    const zone = document.getElementById('invUploadZone');
+    const inner = zone.querySelector('.inv-upload-inner');
+    const originalHTML = inner.innerHTML;
+
+    // Show loading state
+    inner.innerHTML = `
+        <div class="inv-upload-loading">
+            <div class="portal-spinner"></div>
+            <p>Procesando <strong>${file.name}</strong>...</p>
+        </div>`;
+
+    try {
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const res = await fetch('/api/inventario/upload', {
+            method: 'POST',
+            body: formData
+        });
+
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Error al subir archivo');
+        }
+
+        const data = await res.json();
+        showToast(data.message || `Se cargaron ${data.total_articulos} artículos`, 'success');
+
+        // Reload dashboard
+        inner.innerHTML = originalHTML;
+        await loadInventarioDashboard();
+        await loadInventarioHistory();
+
+    } catch (e) {
+        showToast(e.message, 'error');
+        inner.innerHTML = originalHTML;
+    }
+}
+
+async function deleteInventarioCarga(cargaId) {
+    if (!confirm('¿Estás seguro de eliminar esta carga de inventario?')) return;
+    try {
+        const res = await fetch(`/api/inventario/${cargaId}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error('Error al eliminar');
+        showToast('Carga eliminada', 'success');
+        await loadInventarioDashboard();
+        await loadInventarioHistory();
+    } catch (e) {
+        showToast(e.message, 'error');
+    }
+}

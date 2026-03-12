@@ -294,6 +294,18 @@ def rellenar_horas_en_excel(excel_path, nombre_hoja, horario_dict):
     conn = db.get_conn()
     jefes = [r[0] for r in conn.execute(
         "SELECT nombre FROM horario_empleados WHERE es_jefe_pista=1").fetchall()]
+        
+    # Obtener préstamos activos para rellenar la deducción de planilla (col 13)
+    prestamos_activos = {}
+    prest_rows = conn.execute("""
+        SELECT e.nombre, p.pago_semanal 
+        FROM prestamos p
+        JOIN empleados e ON p.empleado_id = e.id
+        WHERE p.estado = 'activo'
+    """).fetchall()
+    for pr in prest_rows:
+        prestamos_activos[pr["nombre"]] = pr["pago_semanal"]
+        
     conn.close()
 
     # Procesar horas
@@ -311,6 +323,11 @@ def rellenar_horas_en_excel(excel_path, nombre_hoja, horario_dict):
 
         if emp_row is None:
             continue  # Empleado no está en esta hoja
+
+        # Inyectar abono de préstamo activo (si tiene) en la columna 13 (M)
+        pago_prestamo = prestamos_activos.get(emp_nombre)
+        if pago_prestamo:
+            ws.cell(row=emp_row, column=13).value = pago_prestamo
 
         total_emp_d = 0; total_emp_m = 0; total_emp_n = 0; total_emp_e = 0
 

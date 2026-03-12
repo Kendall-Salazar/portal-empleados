@@ -661,6 +661,23 @@ async function generateSchedule() {
     config.collision_peak_priority = document.getElementById("collisionPeakPriority")?.value || "pm";
 
     try {
+        // AUTO-SYNC: Si hay fechas de semana, sincronizar vacaciones/permisos → turnos fijos
+        const weekStart = document.getElementById("weekStartDate")?.value;
+        const weekEnd = document.getElementById("weekEndDate")?.value;
+        if (weekStart && weekEnd) {
+            status.innerHTML = '<i class="fa-solid fa-sync fa-spin"></i> Sincronizando vacaciones...';
+            const syncRes = await fetch('/api/sync_vac_fixed_shifts', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ fecha_inicio: weekStart, fecha_fin: weekEnd })
+            });
+            if (syncRes.ok) {
+                // Reload employees to get updated fixed_shifts
+                await loadEmployees();
+            }
+            status.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Generando...';
+        }
+
         const res = await fetch(`${API_URL}/solve`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1531,11 +1548,70 @@ async function editHistoryShift(empName, day, histIndex) {
 }
 
 // SAVE
-function openSaveModal() { document.getElementById("saveModal").classList.remove("hidden"); }
+function getISOWeekNumber(date) {
+    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    const dayNum = d.getUTCDay() || 7;
+    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+}
+
+function autoCalcWeekEnd() {
+    const startInput = document.getElementById("weekStartDate");
+    const endInput = document.getElementById("weekEndDate");
+    const preview = document.getElementById("weekNamePreview");
+    if (!startInput || !startInput.value) return;
+
+    const start = new Date(startInput.value + "T00:00:00");
+    // End = start + 6 days (Viernes→Jueves)
+    const end = new Date(start);
+    end.setDate(end.getDate() + 6);
+    endInput.value = end.toISOString().split("T")[0];
+
+    // Show preview of week name
+    const weekNum = getISOWeekNumber(start);
+    preview.textContent = `Semana ${weekNum}`;
+    preview.style.display = "block";
+}
+
+function getWeekDatesMap() {
+    const startInput = document.getElementById("weekStartDate");
+    if (!startInput || !startInput.value) return null;
+
+    const start = new Date(startInput.value + "T00:00:00");
+    const dayNames = ["Vie", "Sab", "Dom", "Lun", "Mar", "Mie", "Jue"];
+    // Use Spanish abbreviated day names matching the schedule
+    const dayNamesCorrect = ["Vie", "Sáb", "Dom", "Lun", "Mar", "Mié", "Jue"];
+    const dates = {};
+    for (let i = 0; i < 7; i++) {
+        const d = new Date(start);
+        d.setDate(d.getDate() + i);
+        const dd = String(d.getDate()).padStart(2, '0');
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        dates[dayNamesCorrect[i]] = `${dd}/${mm}/${d.getFullYear()}`;
+    }
+    return dates;
+}
+
+function openSaveModal() {
+    document.getElementById("saveModal").classList.remove("hidden");
+    // Auto-populate name based on week dates
+    const startInput = document.getElementById("weekStartDate");
+    const nameInput = document.getElementById("scheduleNameInput");
+    if (startInput && startInput.value && nameInput) {
+        const start = new Date(startInput.value + "T00:00:00");
+        const weekNum = getISOWeekNumber(start);
+        nameInput.value = `Semana ${weekNum}`;
+    } else {
+        nameInput.value = "";
+    }
+}
 function closeSaveModal() { document.getElementById("saveModal").classList.add("hidden"); }
 async function confirmSaveSchedule() {
     const name = document.getElementById("scheduleNameInput").value;
     if (!name) return;
+
+    const weekDates = getWeekDatesMap();
 
     await fetch('/api/history', {
         method: 'POST',
@@ -1545,7 +1621,8 @@ async function confirmSaveSchedule() {
             schedule: currentGeneratedSchedule,
             daily_tasks: currentDailyTasks,
             next_sunday_cycle_index: currentMetadata?.next_sunday_cycle_index,
-            next_sunday_rotation_queue: currentMetadata?.next_sunday_rotation_queue
+            next_sunday_rotation_queue: currentMetadata?.next_sunday_rotation_queue,
+            week_dates: weekDates
         })
     });
     alert("Guardado!");

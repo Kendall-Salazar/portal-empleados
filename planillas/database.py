@@ -103,6 +103,24 @@ def init_db():
             salario_bruto REAL NOT NULL DEFAULT 0,
             fecha_registro TEXT NOT NULL
         );
+
+        -- ══ INVENTARIO ══
+        CREATE TABLE IF NOT EXISTS inventario_cargas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fecha TEXT NOT NULL,
+            archivo_nombre TEXT,
+            total_articulos INTEGER DEFAULT 0,
+            fecha_registro TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS inventario_articulos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            carga_id INTEGER REFERENCES inventario_cargas(id) ON DELETE CASCADE,
+            codigo TEXT,
+            nombre TEXT NOT NULL,
+            precio REAL DEFAULT 0,
+            existencias REAL DEFAULT 0
+        );
     """)
 
     # Insertar tarifas por defecto si no existen
@@ -160,6 +178,42 @@ def init_db():
             fecha_reingreso TEXT,
             fecha_registro TEXT NOT NULL,
             notas TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS permisos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            empleado_id INTEGER REFERENCES empleados(id),
+            fecha TEXT NOT NULL,
+            dia_semana TEXT,
+            motivo TEXT,
+            notas TEXT,
+            anio INTEGER NOT NULL,
+            descontado_de_vacaciones INTEGER DEFAULT 0,
+            fecha_registro TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS prestamos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            empleado_id INTEGER REFERENCES empleados(id),
+            monto_total REAL NOT NULL,
+            pago_semanal REAL NOT NULL,
+            saldo REAL NOT NULL,
+            estado TEXT DEFAULT 'activo',
+            fecha_inicio TEXT NOT NULL,
+            fecha_liquidacion TEXT,
+            notas TEXT,
+            fecha_registro TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS prestamo_abonos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            prestamo_id INTEGER REFERENCES prestamos(id),
+            monto REAL NOT NULL,
+            tipo TEXT DEFAULT 'planilla',
+            fecha TEXT NOT NULL,
+            semana_planilla TEXT,
+            notas TEXT,
+            fecha_registro TEXT NOT NULL
         );
     """)
     conn.commit()
@@ -402,6 +456,357 @@ def total_dias_vacaciones_tomados(empleado_id):
     return row["total"] if row else 0
 
 
+# ── PERMISOS ─────────────────────────────────────────────────────────────────
+
+def add_permiso(empleado_id, fecha, motivo=None, notas=None):
+    """Registra un permiso para un empleado en una fecha específica."""
+    from datetime import date as _date
+    try:
+        dt = datetime.strptime(fecha, "%Y-%m-%d")
+        anio = dt.year
+        dias_semana_map = {
+            0: "Lun", 1: "Mar", 2: "Mié", 3: "Jue",
+            4: "Vie", 5: "Sáb", 6: "Dom"
+        }
+        dia_semana = dias_semana_map.get(dt.weekday(), "")
+    except:
+        anio = _date.today().year
+        dia_semana = ""
+
+    conn = get_conn()
+    conn.execute(
+        """INSERT INTO permisos 
+           (empleado_id, fecha, dia_semana, motivo, notas, anio, descontado_de_vacaciones, fecha_registro)
+           VALUES (?, ?, ?, ?, ?, ?, 0, ?)""",
+        (empleado_id, fecha, dia_semana, motivo, notas, anio, datetime.now().isoformat())
+    )
+    conn.commit()
+    permiso_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    conn.close()
+    return permiso_id
+
+
+def get_permisos_empleado(empleado_id, anio=None):
+    """Obtiene permisos de un empleado, opcionalmente filtrado por año."""
+    conn = get_conn()
+    if anio:
+        rows = conn.execute(
+            "SELECT * FROM permisos WHERE empleado_id=? AND anio=? ORDER BY fecha DESC",
+            (empleado_id, anio)
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM permisos WHERE empleado_id=? ORDER BY fecha DESC",
+            (empleado_id,)
+        ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_todos_permisos(anio=None):
+    """Obtiene todos los permisos, opcionalmente filtrados por año."""
+    conn = get_conn()
+    if anio:
+        rows = conn.execute(
+            """SELECT p.*, e.nombre FROM permisos p 
+               JOIN empleados e ON p.empleado_id = e.id 
+               WHERE p.anio=? ORDER BY p.fecha DESC""",
+            (anio,)
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """SELECT p.*, e.nombre FROM permisos p 
+               JOIN empleados e ON p.empleado_id = e.id 
+               ORDER BY p.fecha DESC"""
+        ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_conteo_permisos_anio(empleado_id, anio):
+    """Retorna el conteo de permisos en un año y cuántos ya fueron descontados."""
+    conn = get_conn()
+    row = conn.execute(
+        """SELECT COUNT(*) as total, 
+           COALESCE(SUM(CASE WHEN descontado_de_vacaciones=1 THEN 1 ELSE 0 END), 0) as descontados
+           FROM permisos WHERE empleado_id=? AND anio=?""",
+        (empleado_id, anio)
+    ).fetchone()
+    conn.close()
+    return {"total": row["total"], "descontados": row["descontados"],
+            "pendientes": row["total"] - row["descontados"]}
+
+
+def delete_permiso(permiso_id, restaurar_vacaciones=True):
+    """Elimina un permiso. Si estaba descontado de vacaciones y restaurar=True, restaura los días."""
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM permisos WHERE id=?", (permiso_id,)).fetchone()
+    if restaurar_vacaciones and row and row["descontado_de_vacaciones"] == 1:
+        # Restaurar: buscar el registro de vacación por descuento y restar 1 día
+        emp_id = row["empleado_id"]
+        anio = row["anio"]
+        vac_row = conn.execute(
+            """SELECT id, dias FROM vacaciones 
+               WHERE empleado_id=? AND notas LIKE ? ORDER BY id DESC LIMIT 1""",
+            (emp_id, f"%Descuento por%permiso%{anio}%")
+        ).fetchone()
+        if vac_row:
+            new_dias = vac_row["dias"] - 1
+            if new_dias <= 0:
+                conn.execute("DELETE FROM vacaciones WHERE id=?", (vac_row["id"],))
+            else:
+                conn.execute("UPDATE vacaciones SET dias=? WHERE id=?", (new_dias, vac_row["id"]))
+    conn.execute("DELETE FROM permisos WHERE id=?", (permiso_id,))
+    conn.commit()
+    conn.close()
+
+
+def descontar_permisos_de_vacaciones(empleado_id, cantidad, anio):
+    """Descuenta permisos de los días de vacaciones creando un registro de vacación negativo.
+    
+    Marca los permisos como 'descontados' y crea un registro de vacación con
+    los días negativos correspondientes.
+    
+    Returns: (success: bool, message: str)
+    """
+    conn = get_conn()
+    # Verificar que hay suficientes permisos pendientes
+    pendientes = conn.execute(
+        """SELECT id FROM permisos 
+           WHERE empleado_id=? AND anio=? AND descontado_de_vacaciones=0
+           ORDER BY fecha""",
+        (empleado_id, anio)
+    ).fetchall()
+    
+    if len(pendientes) < cantidad:
+        conn.close()
+        return False, f"Solo hay {len(pendientes)} permisos pendientes para descontar"
+    
+    # Marcar los primeros N permisos como descontados
+    for i in range(cantidad):
+        conn.execute(
+            "UPDATE permisos SET descontado_de_vacaciones=1 WHERE id=?",
+            (pendientes[i]["id"],)
+        )
+    
+    # Crear registro de vacación con los días descontados (como "Descuento por permisos")
+    conn.execute(
+        """INSERT INTO vacaciones 
+           (empleado_id, fecha_inicio, fecha_fin, dias, fecha_reingreso, fecha_registro, notas) 
+           VALUES (?, ?, ?, ?, NULL, ?, ?)""",
+        (empleado_id, f"{anio}-01-01", f"{anio}-12-31", cantidad,
+         datetime.now().isoformat(),
+         f"Descuento por {cantidad} permiso(s) del año {anio}")
+    )
+    
+    conn.commit()
+    conn.close()
+    return True, f"{cantidad} permiso(s) descontados de vacaciones"
+
+
+# ── SINCRONIZACIÓN VACACIONES/PERMISOS → HORARIO ─────────────────────────────
+
+def sync_vac_perm_to_fixed_shifts(empleado_nombre, fecha_inicio_semana, fecha_fin_semana):
+    """Sincroniza vacaciones y permisos activos con los turnos fijos del horario.
+    
+    Dado un rango de fechas (viernes a jueves), verifica si el empleado tiene
+    vacaciones o permisos en esos días y actualiza sus turnos_fijos.
+    
+    Args:
+        empleado_nombre: nombre del empleado
+        fecha_inicio_semana: fecha del viernes (inicio de semana laboral)
+        fecha_fin_semana: fecha del jueves (fin de semana laboral)
+    
+    Returns: dict con los turnos_fijos actualizados
+    """
+    import json
+    from datetime import timedelta
+    
+    conn = get_conn()
+    
+    # Obtener empleado_id
+    emp = conn.execute("SELECT id FROM empleados WHERE nombre=?", (empleado_nombre,)).fetchone()
+    if not emp:
+        conn.close()
+        return {}
+    emp_id = emp["id"]
+    
+    # Obtener turnos_fijos actuales
+    h_row = conn.execute(
+        "SELECT turnos_fijos FROM horario_empleados WHERE nombre=?", (empleado_nombre,)
+    ).fetchone()
+    current_shifts = {}
+    if h_row and h_row["turnos_fijos"]:
+        try:
+            current_shifts = json.loads(h_row["turnos_fijos"])
+        except:
+            current_shifts = {}
+    
+    # Mapear fecha → día de la semana (Vie, Sáb, Dom, Lun, Mar, Mié, Jue)
+    try:
+        start = datetime.strptime(fecha_inicio_semana, "%Y-%m-%d").date()
+        end = datetime.strptime(fecha_fin_semana, "%Y-%m-%d").date()
+    except:
+        conn.close()
+        return current_shifts
+    
+    dia_map = {
+        4: "Vie", 5: "Sáb", 6: "Dom", 0: "Lun", 1: "Mar", 2: "Mié", 3: "Jue"
+    }
+    
+    # Iterar cada día de la semana
+    current_date = start
+    while current_date <= end:
+        dia_nombre = dia_map.get(current_date.weekday(), "")
+        fecha_str = current_date.strftime("%Y-%m-%d")
+        
+        if dia_nombre:
+            # Verificar si hay vacación activa este día
+            vac = conn.execute(
+                """SELECT id FROM vacaciones 
+                   WHERE empleado_id=? AND fecha_inicio <= ? AND fecha_fin >= ?""",
+                (emp_id, fecha_str, fecha_str)
+            ).fetchone()
+            
+            if vac:
+                current_shifts[dia_nombre] = "VAC"
+            else:
+                # Verificar si hay permiso este día
+                perm = conn.execute(
+                    "SELECT id FROM permisos WHERE empleado_id=? AND fecha=?",
+                    (emp_id, fecha_str)
+                ).fetchone()
+                if perm:
+                    current_shifts[dia_nombre] = "PERM"
+                else:
+                    # Si había VAC o PERM antes y ya no aplica, quitar
+                    if current_shifts.get(dia_nombre) in ["VAC", "PERM"]:
+                        del current_shifts[dia_nombre]
+        
+        current_date += timedelta(days=1)
+    
+    # Guardar los turnos actualizados
+    conn.execute(
+        "UPDATE horario_empleados SET turnos_fijos=? WHERE nombre=?",
+        (json.dumps(current_shifts, ensure_ascii=False), empleado_nombre)
+    )
+    conn.commit()
+    conn.close()
+    
+    return current_shifts
+
+
+# ── PRÉSTAMOS ─────────────────────────────────────────────────────────────────
+
+def add_prestamo(empleado_id, monto_total, pago_semanal, notas=None):
+    """Crea un nuevo préstamo para un empleado."""
+    conn = get_conn()
+    fecha = datetime.now().strftime("%Y-%m-%d")
+    conn.execute(
+        """INSERT INTO prestamos 
+           (empleado_id, monto_total, pago_semanal, saldo, estado, fecha_inicio, notas, fecha_registro)
+           VALUES (?, ?, ?, ?, 'activo', ?, ?, ?)""",
+        (empleado_id, monto_total, pago_semanal, monto_total, fecha, notas, datetime.now().isoformat())
+    )
+    conn.commit()
+    pid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    conn.close()
+    return pid
+
+
+def get_prestamos_empleado(empleado_id, solo_activos=False):
+    conn = get_conn()
+    if solo_activos:
+        rows = conn.execute(
+            "SELECT * FROM prestamos WHERE empleado_id=? AND estado='activo' ORDER BY fecha_inicio DESC",
+            (empleado_id,)
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM prestamos WHERE empleado_id=? ORDER BY fecha_inicio DESC",
+            (empleado_id,)
+        ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_todos_prestamos_activos():
+    conn = get_conn()
+    rows = conn.execute(
+        """SELECT p.*, e.nombre FROM prestamos p
+           JOIN empleados e ON p.empleado_id = e.id
+           WHERE p.estado='activo' ORDER BY e.nombre"""
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_prestamo(prestamo_id):
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM prestamos WHERE id=?", (prestamo_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def add_abono(prestamo_id, monto, tipo='planilla', semana_planilla=None, notas=None):
+    """Registra un abono a un préstamo y actualiza el saldo."""
+    conn = get_conn()
+    fecha = datetime.now().strftime("%Y-%m-%d")
+    conn.execute(
+        """INSERT INTO prestamo_abonos
+           (prestamo_id, monto, tipo, fecha, semana_planilla, notas, fecha_registro)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (prestamo_id, monto, tipo, fecha, semana_planilla, notas, datetime.now().isoformat())
+    )
+    # Actualizar saldo
+    conn.execute(
+        "UPDATE prestamos SET saldo = saldo - ? WHERE id=?",
+        (monto, prestamo_id)
+    )
+    # Si saldo <= 0, marcar como liquidado
+    prest = conn.execute("SELECT saldo FROM prestamos WHERE id=?", (prestamo_id,)).fetchone()
+    if prest and prest["saldo"] <= 0:
+        conn.execute(
+            "UPDATE prestamos SET estado='liquidado', saldo=0, fecha_liquidacion=? WHERE id=?",
+            (fecha, prestamo_id)
+        )
+    conn.commit()
+    abono_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    conn.close()
+    return abono_id
+
+
+def get_abonos(prestamo_id):
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM prestamo_abonos WHERE prestamo_id=? ORDER BY fecha DESC",
+        (prestamo_id,)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def delete_prestamo(prestamo_id):
+    conn = get_conn()
+    conn.execute("DELETE FROM prestamo_abonos WHERE prestamo_id=?", (prestamo_id,))
+    conn.execute("DELETE FROM prestamos WHERE id=?", (prestamo_id,))
+    conn.commit()
+    conn.close()
+
+
+def get_rebajo_prestamo_empleado(empleado_id):
+    """Retorna el monto de rebajo semanal para un empleado con préstamo activo."""
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT pago_semanal, saldo FROM prestamos WHERE empleado_id=? AND estado='activo' LIMIT 1",
+        (empleado_id,)
+    ).fetchone()
+    conn.close()
+    if row:
+        return min(row["pago_semanal"], row["saldo"])
+    return 0
+
+
 # ── TARIFAS ──────────────────────────────────────────────────────────────────
 
 def get_tarifas():
@@ -579,6 +984,104 @@ def get_salarios_anio_desglose(anio):
         GROUP BY empleado_id, mes
         ORDER BY empleado_nombre, mes
     """, (anio,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+# ── INVENTARIO ───────────────────────────────────────────────────────────────
+
+def guardar_carga_inventario(fecha, archivo_nombre, articulos_list):
+    """Guarda una carga de inventario con sus artículos.
+    
+    articulos_list: lista de dicts con keys: codigo, nombre, precio, existencias
+    """
+    conn = get_conn()
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute(
+        "INSERT INTO inventario_cargas (fecha, archivo_nombre, total_articulos, fecha_registro) VALUES (?, ?, ?, ?)",
+        (fecha, archivo_nombre, len(articulos_list), datetime.now().isoformat())
+    )
+    carga_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    for art in articulos_list:
+        conn.execute(
+            "INSERT INTO inventario_articulos (carga_id, codigo, nombre, precio, existencias) VALUES (?, ?, ?, ?, ?)",
+            (carga_id, art.get('codigo', ''), art.get('nombre', ''), art.get('precio', 0), art.get('existencias', 0))
+        )
+    conn.commit()
+    conn.close()
+    return carga_id
+
+
+def get_ultima_carga():
+    """Devuelve la carga más reciente con sus artículos."""
+    conn = get_conn()
+    carga = conn.execute("SELECT * FROM inventario_cargas ORDER BY id DESC LIMIT 1").fetchone()
+    if not carga:
+        conn.close()
+        return None
+    articulos = conn.execute(
+        "SELECT * FROM inventario_articulos WHERE carga_id=? ORDER BY nombre", (carga['id'],)
+    ).fetchall()
+    conn.close()
+    return {'carga': dict(carga), 'articulos': [dict(a) for a in articulos]}
+
+
+def get_carga_por_id(carga_id):
+    """Devuelve una carga específica con sus artículos."""
+    conn = get_conn()
+    carga = conn.execute("SELECT * FROM inventario_cargas WHERE id=?", (carga_id,)).fetchone()
+    if not carga:
+        conn.close()
+        return None
+    articulos = conn.execute(
+        "SELECT * FROM inventario_articulos WHERE carga_id=? ORDER BY nombre", (carga_id,)
+    ).fetchall()
+    conn.close()
+    return {'carga': dict(carga), 'articulos': [dict(a) for a in articulos]}
+
+
+def get_carga_anterior(carga_id):
+    """Devuelve la carga inmediatamente anterior a carga_id."""
+    conn = get_conn()
+    carga = conn.execute(
+        "SELECT * FROM inventario_cargas WHERE id < ? ORDER BY id DESC LIMIT 1", (carga_id,)
+    ).fetchone()
+    if not carga:
+        conn.close()
+        return None
+    articulos = conn.execute(
+        "SELECT * FROM inventario_articulos WHERE carga_id=? ORDER BY nombre", (carga['id'],)
+    ).fetchall()
+    conn.close()
+    return {'carga': dict(carga), 'articulos': [dict(a) for a in articulos]}
+
+
+def get_historial_cargas(limit=30):
+    """Lista de cargas recientes sin artículos."""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM inventario_cargas ORDER BY id DESC LIMIT ?", (limit,)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def delete_carga_inventario(carga_id):
+    """Elimina una carga y sus artículos (ON DELETE CASCADE)."""
+    conn = get_conn()
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("DELETE FROM inventario_articulos WHERE carga_id=?", (carga_id,))
+    conn.execute("DELETE FROM inventario_cargas WHERE id=?", (carga_id,))
+    conn.commit()
+    conn.close()
+
+
+def get_articulos_carga(carga_id):
+    """Artículos de una carga específica."""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM inventario_articulos WHERE carga_id=? ORDER BY nombre", (carga_id,)
+    ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 

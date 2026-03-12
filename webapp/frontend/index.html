@@ -31,20 +31,20 @@
             <div class="sidebar-content">
                 <div class="sidebar-menu">
                     <!-- PORTAL SECTION -->
-                    <button id="nav-planilla" class="nav-btn active" onclick="switchMainTab('planilla')">
-                        <i class="fa-solid fa-users"></i> Mi Equipo
+                    <button id="nav-gestion" class="nav-btn active" onclick="switchMainTab('gestion')">
+                        <i class="fa-solid fa-users-gear"></i> Gestión de Personal
                     </button>
                     <button id="nav-planilla-mensual" class="nav-btn" onclick="switchMainTab('planilla-mensual')">
                         <i class="fa-solid fa-file-invoice-dollar"></i> Planilla de Pago
-                    </button>
-                    <button id="nav-vacaciones" class="nav-btn" onclick="switchMainTab('vacaciones')">
-                        <i class="fa-solid fa-umbrella-beach"></i> Vacaciones
                     </button>
                     <button id="nav-aguinaldo" class="nav-btn" onclick="switchMainTab('aguinaldo')">
                         <i class="fa-solid fa-gift"></i> Aguinaldo
                     </button>
                     <button id="nav-utilidades" class="nav-btn" onclick="switchMainTab('utilidades')">
                         <i class="fa-solid fa-toolbox"></i> Utilidades
+                    </button>
+                    <button id="nav-inventario" class="nav-btn" onclick="switchMainTab('inventario')">
+                        <i class="fa-solid fa-boxes-stacked"></i> Inventario
                     </button>
 
                     <div class="menu-divider" style="height: 1px; background: var(--border); margin: 10px 0;"></div>
@@ -177,6 +177,25 @@
                     </div>
                 </div> <!-- END scheduleConfigSidebar -->
 
+                <!-- WEEK DATE RANGE CONFIG -->
+                <div id="weekDateConfig" style="display: none;">
+                    <div class="config-section" style="border-top: 1px solid var(--border); padding-top: 1rem; margin-top: 0.5rem;">
+                        <h3><i class="fa-solid fa-calendar-week"></i> Rango de Semana</h3>
+                        <p class="helper-text-sm" style="margin-top:-5px; margin-bottom: 10px;">Selecciona el viernes de inicio para auto-calcular la semana.</p>
+                        <div class="input-group" style="margin-bottom: 0.5rem;">
+                            <label style="font-size: 0.8rem; color: var(--text-muted);">Viernes (inicio)</label>
+                            <input type="date" id="weekStartDate" class="custom-input" onchange="autoCalcWeekEnd()"
+                                style="width: 100%; padding: 0.5rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px; font-size: 0.85rem;">
+                        </div>
+                        <div class="input-group" style="margin-bottom: 0.5rem;">
+                            <label style="font-size: 0.8rem; color: var(--text-muted);">Jueves (fin)</label>
+                            <input type="date" id="weekEndDate" class="custom-input" readonly
+                                style="width: 100%; padding: 0.5rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px; font-size: 0.85rem; opacity: 0.7;">
+                        </div>
+                        <div id="weekNamePreview" style="font-size: 0.8rem; color: var(--primary); font-weight: 600; text-align: center; padding: 4px; display: none;"></div>
+                    </div>
+                </div>
+
             </div>
 
             <div class="sidebar-footer">
@@ -287,18 +306,13 @@
                 </div>
             </div>
 
-            <!-- TAB: PLANILLA / MI EQUIPO -->
-            <section id="tab-planilla" class="schedule-view hidden" data-main-tab>
+            <!-- TAB: GESTIÓN DE PERSONAL -->
+            <section id="tab-gestion" class="schedule-view hidden" data-main-tab>
                 <!-- Content rendered by JS -->
             </section>
 
             <!-- TAB: PLANILLA MENSUAL -->
             <section id="tab-planilla-mensual" class="schedule-view hidden" data-main-tab>
-                <!-- Content rendered by JS -->
-            </section>
-
-            <!-- TAB: VACACIONES -->
-            <section id="tab-vacaciones" class="schedule-view hidden" data-main-tab>
                 <!-- Content rendered by JS -->
             </section>
 
@@ -309,6 +323,11 @@
 
             <!-- TAB: UTILIDADES -->
             <section id="tab-utilidades" class="hidden" data-main-tab>
+                <!-- Content rendered by JS -->
+            </section>
+
+            <!-- TAB: INVENTARIO -->
+            <section id="tab-inventario" class="schedule-view hidden" data-main-tab>
                 <!-- Content rendered by JS -->
             </section>
 
@@ -694,7 +713,51 @@
         </div>
     </div>
 
+    <!-- REGISTRAR PERMISO MODAL -->
+    <div id="permisoModal" class="modal-backdrop hidden">
+        <div class="modal-dialog">
+            <div class="modal-header-simple">
+                <h3>Registrar Permiso: <span id="permEmpName" style="color: var(--primary);"></span></h3>
+                <button class="close-icon" onclick="closeRegistrarPermiso()"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-body-scroll">
+                <input type="hidden" id="permEmpId" value="">
+                <div class="input-row">
+                    <div class="input-group">
+                        <label>Fecha del Permiso</label>
+                        <input type="date" id="permFecha" class="custom-input"
+                            style="width: 100%; padding: 0.7rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px;">
+                    </div>
+                </div>
+                <div class="input-group">
+                    <label>Motivo</label>
+                    <input type="text" id="permMotivo" placeholder="Ej. Cita médica, trámite personal...">
+                </div>
+                <div class="input-group">
+                    <label>Notas Adicionales</label>
+                    <textarea id="permNotas" placeholder="Opcional" rows="2" style="width:100%; padding:0.7rem; background:var(--bg-app); border:1px solid var(--border); color:var(--text-main); border-radius:8px; resize:vertical;"></textarea>
+                </div>
+            </div>
+            <div class="modal-actions-footer">
+                <button class="btn-text" onclick="closeRegistrarPermiso()">Cancelar</button>
+                <button class="btn-action primary" onclick="guardarPermiso()">Guardar Permiso</button>
+            </div>
+        </div>
     </div>
+    </div>
+
+    <!-- HISTORIAL PERMISOS MODAL -->
+    <div id="permHistorialModal" class="modal-backdrop hidden">
+        <div class="modal-dialog" style="max-width: 800px; width: 95%;">
+            <div class="modal-header-simple">
+                <h3>Historial de Permisos: <span id="permHistEmpName" style="color: var(--primary);"></span></h3>
+                <button class="close-icon" onclick="closePermHistorial()"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-body-scroll" style="max-height:600px; overflow-y:auto; padding-bottom: 2rem;">
+                <input type="hidden" id="permHistEmpId" value="">
+                <div id="permHistContent"></div>
+            </div>
+        </div>
     </div>
 
     <!-- MODAL: TARIFAS & CONFIG -->

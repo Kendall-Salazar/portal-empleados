@@ -275,17 +275,21 @@ class ShiftScheduler:
                 model.Add(sum(x[(e, d, s)] for s in SHIFT_NAMES) == 1)
 
         # CORE: OFF Day Limit (Standard = 1 per week)
+        # NOTA: PERM es una ausencia EXENTA — no cuenta como día libre.
+        # El empleado con PERM aún recibe su OFF normal por separado.
+        # Si el empleado tiene N días de VAC forzados, el constraint es
+        # OFF+VAC == 1+N (su día libre normal + los N días de vacación forzados).
         for e in self.employees:
             if self.emp_data[e].get('is_refuerzo'): continue
+            fs = self.emp_data[e].get('fixed_shifts', {}) or {}
+            forced_vac = sum(1 for d in DAYS if fs.get(d) == 'VAC')
             if self.emp_data[e].get('is_jefe_pista'):
-                # Jefe must have exactly 1 OFF
-                model.Add(sum(x[(e, d, "OFF")] + x[(e, d, "VAC")] + x[(e, d, "PERM")] for d in DAYS) == 1)
+                model.Add(sum(x[(e, d, "OFF")] + x[(e, d, "VAC")] for d in DAYS) == 1 + forced_vac)
             elif self.config.get('fixed_night_person') == e:
                 # Night person already handled in LOGICA NIGHT / ELIGIO
                 pass
             else:
-                # General employees (including Steven/forced_libres): exactly 1 OFF
-                model.Add(sum(x[(e, d, "OFF")] + x[(e, d, "VAC")] + x[(e, d, "PERM")] for d in DAYS) == 1)
+                model.Add(sum(x[(e, d, "OFF")] + x[(e, d, "VAC")] for d in DAYS) == 1 + forced_vac)
 
         # Variables para sistema de LIBRES
         persona_hace_libres = {}

@@ -495,9 +495,22 @@ def _write_fijo_section(ws, start_row, fijo_list, wb_catalog):
         c.number_format = MONEY
 
         # M-P — Deducciones ingresables
+        # Obtener préstamo si existe
+        import database as db
+        conn = db.get_conn()
+        prestamo_row = conn.execute("""
+            SELECT p.pago_semanal 
+            FROM prestamos p
+            JOIN empleados e ON p.empleado_id = e.id
+            WHERE e.nombre = ? AND p.estado = 'activo'
+        """, (emp,)).fetchone()
+        conn.close()
+        
+        prest_val = prestamo_row["pago_semanal"] if prestamo_row else None
+
         for col in range(13, 17):
             c2 = ws.cell(row=r, column=col)
-            c2.value        = None
+            c2.value        = prest_val if col == 13 else None
             c2.fill         = _fill(C_DED_CELL)
             c2.alignment    = al_c
             c2.border       = B_DATA

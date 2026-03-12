@@ -241,12 +241,28 @@ class SolverRequest(BaseModel):
     employees: List[Employee]
     config: Config
 
+class PlanillaPermiso(BaseModel):
+    empleado_id: int
+    fecha: str
+    motivo: Optional[str] = None
+    notas: Optional[str] = None
+
+class DescontarPermisosRequest(BaseModel):
+    empleado_id: int
+    cantidad: int
+    anio: int
+
+class SyncVacPermRequest(BaseModel):
+    fecha_inicio: str
+    fecha_fin: str
+
 class HistoryEntry(BaseModel):
     name: str
     schedule: Dict[str, Dict[str, str]]
     daily_tasks: Dict[str, Dict[str, Optional[str]]] = {}
     next_sunday_cycle_index: Optional[int] = None  # Legacy
     next_sunday_rotation_queue: Optional[List[str]] = None
+    week_dates: Optional[Dict[str, str]] = None
     timestamp: str = "" 
 
 # ENDPOINTS
@@ -355,6 +371,12 @@ def save_history(entry: HistoryEntry):
     new_record = entry.dict()
     if not new_record.get("timestamp"):
         new_record["timestamp"] = datetime.datetime.now().isoformat()
+    # Preserve week_dates in metadata
+    if entry.week_dates:
+        if "metadata" not in new_record:
+            new_record["metadata"] = {}
+        # Store week_dates if entry has it from solve
+        new_record["week_dates"] = entry.week_dates
         
     history_list.append(new_record)
     
@@ -592,6 +614,38 @@ def export_excel(history_index: Optional[int] = None):
     # ========================
     # SHEET 1: HORARIO PRINCIPAL
     # ========================
+    # ========================
+    # DATE ROW (above headers) — if week_dates available
+    # ========================
+    week_dates = None
+    if history_index is not None:
+        history_list = db.get("history_log", [])
+        if 0 <= history_index < len(history_list):
+            entry = history_list[history_index]
+            week_dates = entry.get("week_dates")
+            if not week_dates:
+                meta = entry.get("metadata", {})
+                if isinstance(meta, str):
+                    import json as _json
+                    try: meta = _json.loads(meta)
+                    except: meta = {}
+                week_dates = meta.get("week_dates")
+    
+    if week_dates:
+        date_row = [""]
+        for d in DAYS:
+            date_row.append(week_dates.get(d, ""))
+        date_row.append("")  # Hours column empty
+        ws.append(date_row)
+        # Style date row
+        date_fill = PatternFill(start_color="D6E4F0", end_color="D6E4F0", fill_type="solid")
+        date_font = Font(bold=True, color="2F5496", size=10)
+        for cell in ws[ws.max_row]:
+            cell.fill = date_fill
+            cell.font = date_font
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.border = thin_border
+    
     headers = ["Colaborador"] + DAYS + ["Horas"]
     ws.append(headers)
     
@@ -906,6 +960,106 @@ def update_planilla_vacacion(vac_id: int, vac: PlanillaVacacion):
         fecha_reingreso=vac.fecha_reingreso, notas=vac.notas
     )
     return {"status": "success"}
+
+# ------------------------------------------------------------------------------
+# PERMISOS API
+# ------------------------------------------------------------------------------
+@app.get("/api/planillas/permisos/{emp_id}")
+def get_planillas_permisos(emp_id: int, anio: Optional[int] = None):
+    permisos = plan_db.get_permisos_empleado(emp_id, anio=anio)
+    if anio:
+        conteo = plan_db.get_conteo_permisos_anio(emp_id, anio)
+    else:
+        conteo = plan_db.get_conteo_permisos_anio(emp_id, datetime.datetime.now().year)
+    return {"permisos": permisos, "conteo": conteo}
+
+@app.post("/api/planillas/permisos")
+def add_planilla_permiso(perm: PlanillaPermiso):
+    permiso_id = plan_db.add_permiso(
+        perm.empleado_id, perm.fecha, motivo=perm.motivo, notas=perm.notas
+    )
+    return {"status": "success", "id": permiso_id}
+
+@app.delete("/api/planillas/permisos/{permiso_id}")
+def delete_planilla_permiso(permiso_id: int, restaurar: bool = True):
+    plan_db.delete_permiso(permiso_id, restaurar_vacaciones=restaurar)
+    return {"status": "success"}
+
+@app.post("/api/planillas/permisos/descontar-vacaciones")
+def descontar_permisos_vacaciones(req: DescontarPermisosRequest):
+    ok, msg = plan_db.descontar_permisos_de_vacaciones(
+        req.empleado_id, req.cantidad, req.anio
+    )
+    if not ok:
+        raise HTTPException(status_code=400, detail=msg)
+    return {"status": "success", "message": msg}
+
+# ------------------------------------------------------------------------------
+# SYNC VACACIONES/PERMISOS → HORARIO (Fixed Shifts)
+# ------------------------------------------------------------------------------
+@app.post("/api/sync_vac_fixed_shifts")
+def sync_vac_fixed_shifts(req: SyncVacPermRequest):
+    """Sincroniza vacaciones y permisos activos con los turnos fijos de todos los empleados."""
+    emps = plan_db.get_empleados(solo_activos=True)
+    updated = []
+    for emp in emps:
+        shifts = plan_db.sync_vac_perm_to_fixed_shifts(
+            emp["nombre"], req.fecha_inicio, req.fecha_fin
+        )
+        updated.append({"nombre": emp["nombre"], "turnos_fijos": shifts})
+    return {"status": "success", "updated": updated}
+
+# ------------------------------------------------------------------------------
+# PRÉSTAMOS API
+# ------------------------------------------------------------------------------
+class PlanillaPrestamo(BaseModel):
+    empleado_id: int
+    monto_total: float
+    pago_semanal: float
+    notas: Optional[str] = None
+
+class PrestamoAbono(BaseModel):
+    monto: float
+    tipo: str = "planilla"
+    semana_planilla: Optional[str] = None
+    notas: Optional[str] = None
+
+@app.get("/api/planillas/prestamos")
+def get_all_prestamos_activos():
+    prestamos = plan_db.get_todos_prestamos_activos()
+    return prestamos
+
+@app.get("/api/planillas/prestamos/{emp_id}")
+def get_prestamos_emp(emp_id: int, solo_activos: bool = False):
+    prestamos = plan_db.get_prestamos_empleado(emp_id, solo_activos=solo_activos)
+    return prestamos
+
+@app.post("/api/planillas/prestamos")
+def add_prestamo(req: PlanillaPrestamo):
+    pid = plan_db.add_prestamo(
+        req.empleado_id, req.monto_total, req.pago_semanal, notas=req.notas
+    )
+    return {"status": "success", "id": pid}
+
+@app.delete("/api/planillas/prestamos/{prestamo_id}")
+def delete_prestamo(prestamo_id: int):
+    plan_db.delete_prestamo(prestamo_id)
+    return {"status": "success"}
+
+@app.get("/api/planillas/prestamos/{prestamo_id}/abonos")
+def get_abonos_prestamo(prestamo_id: int):
+    abonos = plan_db.get_abonos(prestamo_id)
+    prestamo = plan_db.get_prestamo(prestamo_id)
+    return {"abonos": abonos, "prestamo": prestamo}
+
+@app.post("/api/planillas/prestamos/{prestamo_id}/abono")
+def add_abono_prestamo(prestamo_id: int, req: PrestamoAbono):
+    abono_id = plan_db.add_abono(
+        prestamo_id, req.monto, tipo=req.tipo,
+        semana_planilla=req.semana_planilla, notas=req.notas
+    )
+    prestamo = plan_db.get_prestamo(prestamo_id)
+    return {"status": "success", "id": abono_id, "nuevo_saldo": prestamo["saldo"], "estado": prestamo["estado"]}
 
 # ------------------------------------------------------------------------------
 # LIQUIDACIÓN — Cálculo automático según Ley Costarricense
@@ -1723,6 +1877,214 @@ def generar_doc_recomendacion(req: DocRecomendacion):
     base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../")
     path = docx_generator.generar_recomendacion(nombre, cedula, req.puesto, fecha_inicio, req.texto_adicional, logo, base)
     return {"status": "success", "path": path}
+
+# ==============================================================================
+# INVENTARIO API ENDPOINTS
+# ==============================================================================
+from fastapi import UploadFile, File
+
+@app.post("/api/inventario/upload")
+async def upload_inventario(file: UploadFile = File(...)):
+    """Sube un Excel de inventario, parsea artículos y guarda en DB."""
+    if not file.filename.endswith(('.xlsx', '.xls', '.xlsm')):
+        raise HTTPException(status_code=400, detail="Solo se aceptan archivos Excel (.xlsx, .xls, .xlsm)")
+
+    # Save to temp file
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
+    content = await file.read()
+    tmp.write(content)
+    tmp.close()
+
+    try:
+        wb = openpyxl.load_workbook(tmp.name, data_only=True)
+        ws = wb.active
+
+        # Find header row — scan first 10 rows for column names
+        header_map = {}  # col_index -> field_name
+        header_row = None
+        target_fields = {
+            'nombre': ['nombre', 'articulo', 'producto', 'descripcion', 'item', 'descripción'],
+            'precio': ['precio', 'costo', 'price', 'valor'],
+            'codigo': ['codigo', 'código', 'code', 'cod', 'sku', 'ref', 'referencia'],
+            'existencias': ['existencias', 'existencia', 'stock', 'cantidad', 'cant', 'inventario', 'qty'],
+        }
+
+        for row_idx in range(1, min(ws.max_row + 1, 11)):
+            for col_idx in range(1, min(ws.max_column + 1, 30)):
+                cell_val = ws.cell(row=row_idx, column=col_idx).value
+                if cell_val and isinstance(cell_val, str):
+                    cell_lower = cell_val.strip().lower()
+                    for field, aliases in target_fields.items():
+                        if any(alias in cell_lower for alias in aliases):
+                            if field not in header_map.values():
+                                header_map[col_idx] = field
+                                header_row = row_idx
+            if len(header_map) >= 2:  # At minimum nombre + existencias
+                break
+
+        if not header_row or 'nombre' not in header_map.values():
+            wb.close()
+            raise HTTPException(status_code=400, detail="No se encontró encabezado con columna de nombre de artículo. Asegúrese de que el Excel tenga encabezados: Nombre, Precio, Código, Existencias.")
+
+        # Parse articles
+        articulos = []
+        for row_idx in range(header_row + 1, ws.max_row + 1):
+            art = {'codigo': '', 'nombre': '', 'precio': 0, 'existencias': 0}
+            has_name = False
+            for col_idx, field in header_map.items():
+                val = ws.cell(row=row_idx, column=col_idx).value
+                if val is None:
+                    continue
+                if field == 'nombre':
+                    if isinstance(val, str) and val.strip():
+                        art['nombre'] = val.strip()
+                        has_name = True
+                elif field == 'codigo':
+                    art['codigo'] = str(val).strip()
+                elif field in ('precio', 'existencias'):
+                    try:
+                        art[field] = float(val)
+                    except (ValueError, TypeError):
+                        art[field] = 0
+            if has_name:
+                articulos.append(art)
+
+        wb.close()
+
+        if not articulos:
+            raise HTTPException(status_code=400, detail="No se encontraron artículos en el Excel.")
+
+        # Save to DB
+        today = datetime.datetime.now().strftime('%Y-%m-%d')
+        carga_id = plan_db.guardar_carga_inventario(today, file.filename, articulos)
+
+        return {
+            "status": "success",
+            "carga_id": carga_id,
+            "total_articulos": len(articulos),
+            "message": f"Se cargaron {len(articulos)} artículos exitosamente."
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al procesar el Excel: {str(e)}")
+    finally:
+        os.unlink(tmp.name)
+
+@app.get("/api/inventario/latest")
+def get_inventario_latest():
+    """Devuelve la carga más reciente con sus artículos."""
+    data = plan_db.get_ultima_carga()
+    if not data:
+        return {"carga": None, "articulos": []}
+    return data
+
+@app.get("/api/inventario/diff")
+def get_inventario_diff():
+    """Calcula diferencias entre las 2 últimas cargas de inventario."""
+    ultima = plan_db.get_ultima_carga()
+    if not ultima:
+        return {"carga_actual": None, "carga_anterior": None, "articulos": [], "resumen": {}}
+
+    anterior = plan_db.get_carga_anterior(ultima['carga']['id'])
+    if not anterior:
+        # Solo hay una carga, no hay diferencia — devolver datos actuales sin delta
+        arts_out = []
+        for a in ultima['articulos']:
+            arts_out.append({
+                'nombre': a['nombre'],
+                'codigo': a.get('codigo', ''),
+                'precio': a.get('precio', 0),
+                'existencias_anterior': None,
+                'existencias_actual': a['existencias'],
+                'delta': None
+            })
+        return {
+            "carga_actual": ultima['carga'],
+            "carga_anterior": None,
+            "articulos": arts_out,
+            "resumen": {
+                "total_articulos": len(arts_out),
+                "total_consumidos": 0,
+                "total_sin_cambio": 0,
+                "total_aumentaron": 0,
+                "total_nuevos": len(arts_out),
+                "articulos_mas_consumidos": []
+            }
+        }
+
+    # Build lookup by nombre for anterior
+    ant_by_name = {}
+    for a in anterior['articulos']:
+        ant_by_name[a['nombre'].strip().lower()] = a
+
+    arts_out = []
+    consumidos = 0
+    sin_cambio = 0
+    aumentaron = 0
+    nuevos = 0
+
+    for a in ultima['articulos']:
+        key = a['nombre'].strip().lower()
+        ant = ant_by_name.pop(key, None)
+        if ant:
+            delta = a['existencias'] - ant['existencias']
+            arts_out.append({
+                'nombre': a['nombre'],
+                'codigo': a.get('codigo', '') or ant.get('codigo', ''),
+                'precio': a.get('precio', 0),
+                'existencias_anterior': ant['existencias'],
+                'existencias_actual': a['existencias'],
+                'delta': delta
+            })
+            if delta < 0:
+                consumidos += 1
+            elif delta == 0:
+                sin_cambio += 1
+            else:
+                aumentaron += 1
+        else:
+            arts_out.append({
+                'nombre': a['nombre'],
+                'codigo': a.get('codigo', ''),
+                'precio': a.get('precio', 0),
+                'existencias_anterior': None,
+                'existencias_actual': a['existencias'],
+                'delta': None
+            })
+            nuevos += 1
+
+    # Sort by delta ascending (most consumed first)
+    arts_sorted = sorted(
+        [a for a in arts_out if a['delta'] is not None and a['delta'] < 0],
+        key=lambda x: x['delta']
+    )
+    top5 = arts_sorted[:5]
+
+    return {
+        "carga_actual": ultima['carga'],
+        "carga_anterior": anterior['carga'],
+        "articulos": arts_out,
+        "resumen": {
+            "total_articulos": len(arts_out),
+            "total_consumidos": consumidos,
+            "total_sin_cambio": sin_cambio,
+            "total_aumentaron": aumentaron,
+            "total_nuevos": nuevos,
+            "articulos_mas_consumidos": top5
+        }
+    }
+
+@app.get("/api/inventario/history")
+def get_inventario_history():
+    """Historial de cargas de inventario."""
+    return plan_db.get_historial_cargas(limit=30)
+
+@app.delete("/api/inventario/{carga_id}")
+def delete_inventario_carga(carga_id: int):
+    """Elimina una carga de inventario."""
+    plan_db.delete_carga_inventario(carga_id)
+    return {"status": "success"}
 
 # ==============================================================================
 # Serve Frontend
