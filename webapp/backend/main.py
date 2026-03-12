@@ -224,6 +224,7 @@ class Employee(BaseModel):
     forced_quebrado: bool = False
     is_jefe_pista: bool = False
     strict_preferences: bool = False
+    activo: bool = True
     fixed_shifts: Dict[str, str] = {} 
 
 class Config(BaseModel):
@@ -267,9 +268,9 @@ class HistoryEntry(BaseModel):
 
 # ENDPOINTS
 @app.get("/api/employees")
-def get_employees():
+def get_employees(include_inactive: bool = False):
     # Map from the unified Planilla Database format to the legacy generator format
-    unified_emps = plan_db.get_empleados(solo_activos=True)
+    unified_emps = plan_db.get_empleados(solo_activos=not include_inactive)
     legacy_emps = []
     
     for e in unified_emps:
@@ -287,6 +288,7 @@ def get_employees():
             "forced_quebrado": bool(e.get("forced_quebrado", 0)),
             "is_jefe_pista": bool(e.get("es_jefe_pista", 0)),
             "strict_preferences": bool(e.get("strict_preferences", 0)),
+            "activo": bool(e.get("activo", 1)),
             "fixed_shifts": fixed_shifts
         })
         
@@ -294,9 +296,46 @@ def get_employees():
 
 @app.post("/api/employees")
 def update_employees(employees: List[Employee]):
-    db = load_db()
-    db["employees"] = [e.dict() for e in employees]
-    save_db(db)
+    # This endpoint gets triggered by the legacy layout on app.js when saving config.
+    # Instead of wiping the DB, we just update or reactivate properties.
+    for e in employees:
+        exist = plan_db.get_conn().execute("SELECT id, activo FROM empleados WHERE nombre=?", (e.name,)).fetchone()
+        if exist:
+            if e.activo and exist["activo"] == 0:
+                plan_db.reactivar_empleado(exist["id"])
+            elif not e.activo and exist["activo"] == 1:
+                plan_db.remove_empleado(exist["id"])
+            
+            # Update basic settings
+            plan_db.update_empleado(
+                exist["id"], 
+                genero=e.gender,
+                puede_nocturno=1 if e.can_do_night else 0,
+                forced_libres=1 if e.forced_libres else 0,
+                forced_quebrado=1 if e.forced_quebrado else 0,
+                allow_no_rest=1 if e.allow_no_rest else 0,
+                es_jefe_pista=1 if e.is_jefe_pista else 0,
+                strict_preferences=1 if e.strict_preferences else 0,
+                turnos_fijos=json.dumps(e.fixed_shifts)
+            )
+        else:
+            plan_db.add_empleado(
+                nombre=e.name,
+                tipo_pago="efectivo",
+                genero=e.gender,
+                puede_nocturno=1 if e.can_do_night else 0,
+                forced_libres=1 if e.forced_libres else 0,
+                forced_quebrado=1 if e.forced_quebrado else 0,
+                allow_no_rest=1 if e.allow_no_rest else 0,
+                es_jefe_pista=1 if e.is_jefe_pista else 0,
+                strict_preferences=1 if e.strict_preferences else 0,
+                turnos_fijos=json.dumps(e.fixed_shifts)
+            )
+            # Fetch new ID in case it was created without activo
+            if not e.activo:
+                added = plan_db.get_conn().execute("SELECT id FROM empleados WHERE nombre=?", (e.name,)).fetchone()
+                if added:
+                    plan_db.remove_empleado(added["id"])
     return {"status": "Updated"}
 
 @app.get("/api/config")
@@ -360,6 +399,57 @@ def solve_schedule(request: SolverRequest):
 def get_history():
     db = load_db()
     return db.get("history_log", [])
+
+@app.get("/api/rotacion-domingos")
+def get_sunday_rotation():
+    """Devuelve la cola de rotación para los domingos basándose en el historial."""
+    db = load_db()
+    history_list = db.get("history_log", [])
+    
+    unified_emps = plan_db.get_empleados(solo_activos=True)
+    eligible = []
+    for e in unified_emps:
+        name = e.get("nombre", "")
+        # Filter out Jefe de Pista as they don't rotate on Sundays normally
+        if not e.get("es_jefe_pista", False):
+            eligible.append(name)
+        
+    last_sunday_off = {}
+    for idx, entry in enumerate(history_list):
+        sched = entry.get('schedule', {})
+        if isinstance(sched, str):
+            try: sched = json.loads(sched)
+            except: sched = {}
+            
+        for emp_name, days in sched.items():
+            if isinstance(days, dict) and days.get('Dom') in ['OFF', 'VAC', 'PERM'] and emp_name in eligible:
+                last_sunday_off[emp_name] = idx
+
+    # Sort: workers who had Sunday OFF least recently go first. (-1 means never had it off)
+    # The first person in the queue is the one who *most deserves* to have Sunday OFF this week.
+    # The last people are the ones who *must work* this Sunday.
+    rotation_queue = sorted(eligible, key=lambda e: last_sunday_off.get(e, -1))
+    
+    result = []
+    for emp_name in rotation_queue:
+        weeks_since_off = "Sin registrar"
+        if emp_name in last_sunday_off:
+            weeks_ago = len(history_list) - 1 - last_sunday_off[emp_name]
+            weeks_since_off = f"Hace {weeks_ago} sem" if weeks_ago > 0 else "La sem pasada"
+            
+        result.append({
+            "name": emp_name,
+            "last_off": weeks_since_off,
+            "priority": "Alta (Libre Próximo)" if result == [] else "En cola" # simple tag
+        })
+        
+    # Let's fix priority tagging
+    for i, res in enumerate(result):
+        if i == 0: res["priority"] = "Próximo a descansar"
+        elif i < 3: res["priority"] = "En Espera Corta"
+        else: res["priority"] = "Le toca trabajar"
+        
+    return result
 
 @app.post("/api/history")
 def save_history(entry: HistoryEntry):
@@ -853,6 +943,7 @@ class PlanillaEmpleado(BaseModel):
     allow_no_rest: Optional[int] = 0
     es_jefe_pista: Optional[int] = 0
     strict_preferences: Optional[int] = 0
+    activo: Optional[int] = 1
     turnos_fijos: Optional[str] = "{}"
 
 class PlanillaVacacion(BaseModel):
@@ -917,6 +1008,17 @@ def update_planilla_empleado(emp_id: int, emp: PlanillaEmpleado):
         allow_no_rest=emp.allow_no_rest, es_jefe_pista=emp.es_jefe_pista,
         strict_preferences=emp.strict_preferences, turnos_fijos=emp.turnos_fijos
     )
+    
+    # Check if the active status changed
+    exist = plan_db.get_conn().execute("SELECT activo FROM empleados WHERE id=?", (emp_id,)).fetchone()
+    if exist:
+        current_state = exist["activo"]
+        new_state = 1 if emp.activo else 0
+        if current_state == 1 and new_state == 0:
+            plan_db.remove_empleado(emp_id)
+        elif current_state == 0 and new_state == 1:
+            plan_db.reactivar_empleado(emp_id)
+
     return {"status": "success"}
 
 @app.delete("/api/planillas/empleados/{emp_id}")

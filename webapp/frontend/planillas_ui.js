@@ -240,6 +240,10 @@ function openUnifiedEmpModal(emp = null) {
     document.getElementById('planEmpSalarioFijo').value = isEdit ? (emp.salario_fijo || '') : '';
     document.getElementById('planEmpSeguro').checked = isEdit ? !!emp.aplica_seguro : true;
     document.getElementById('planEmpNocturno').checked = isEdit ? !!emp.puede_nocturno : true;
+    
+    // Activo mapping
+    const activeCb = document.getElementById('empActiveStatus');
+    if (activeCb) activeCb.checked = isEdit ? !!(emp.activo !== 0 && emp.activo !== false) : true;
 
     const genderVal = isEdit ? (emp.genero || 'M') : 'M';
     document.getElementById('planEmpGenero').value = genderVal;
@@ -323,6 +327,7 @@ async function guardarPlanillaEmp() {
         allow_no_rest: document.getElementById('empNoRest').checked ? 1 : 0,
         es_jefe_pista: document.getElementById('empJefePista').checked ? 1 : 0,
         strict_preferences: document.getElementById('empStrictPreferences').checked ? 1 : 0,
+        activo: document.getElementById('empActiveStatus') ? (document.getElementById('empActiveStatus').checked ? 1 : 0) : 1,
         turnos_fijos: '{}'
     };
 

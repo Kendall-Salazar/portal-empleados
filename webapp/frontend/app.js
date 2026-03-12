@@ -63,7 +63,7 @@ function updateSidebarActive(id) {
 async function loadData() {
     try {
         const [empRes, cfgRes, rulesRes] = await Promise.all([
-            fetch(`${API_URL}/employees`),
+            fetch(`${API_URL}/employees?include_inactive=true`),
             fetch(`${API_URL}/config`),
             fetch(`${API_URL}/validation_rules`)
         ]);
@@ -78,6 +78,14 @@ async function loadData() {
         renderConfig();
         populateShiftSelects();
     } catch (e) { console.error(e); }
+}
+
+async function loadEmployees() {
+    try {
+        const empRes = await fetch(`${API_URL}/employees?include_inactive=true`);
+        employees = await empRes.json();
+        renderEmployees();
+    } catch (e) { console.error("Error reloading employees:", e); }
 }
 
 function renderEmployees() {
@@ -104,10 +112,13 @@ function renderEmployees() {
 
         const fixedCount = Object.keys(emp.fixed_shifts || {}).length;
 
+        const isInactive = emp.activo === false;
+        
         card.innerHTML = `
             <div class="emp-info">
-                <h4>${emp.name}</h4>
+                <h4>${emp.name} ${isInactive ? '<span style="color:#ef4444; font-size: 0.8em;">(Inactivo)</span>' : ''}</h4>
                 <div class="tags">
+                    ${isInactive ? '<span class="tag inactive" style="background:#fee2e2;color:#ef4444;" title="Usuario Inactivo"><i class="fa-solid fa-ban"></i> Inactivo</span>' : ''}
                     ${emp.is_jefe_pista ? '<span class="tag success" title="Jefe de Pista"><i class="fa-solid fa-star"></i> Jefe</span>' : ''}
                     ${emp.can_do_night ? '<span class="tag night" title="Turno Noche"><i class="fa-solid fa-moon"></i> Noche</span>' : ''}
                     ${emp.forced_libres ? '<span class="tag forced" title="Forzar Libres"><i class="fa-solid fa-thumbtack"></i> Libres</span>' : ''}
@@ -122,9 +133,14 @@ function renderEmployees() {
                 <button class="btn-icon delete" onclick="deleteEmployee(${index})"><i class="fa-solid fa-trash"></i></button>
             </div>
         `;
+        // Apply grayscale to inactive cards
+        if (isInactive) {
+            card.style.filter = "grayscale(100%)";
+            card.style.opacity = "0.7";
+        }
         grid.appendChild(card);
 
-        if (emp.can_do_night) {
+        if (emp.can_do_night && !isInactive) {
             const npCard = document.createElement("div");
             npCard.className = `night-person-card ${emp.name === currentVal ? 'selected' : ''}`;
             const initials = emp.name.split(' ').map(w => w[0]).join('').substring(0, 2);
@@ -278,6 +294,10 @@ function openAddModal() {
     document.getElementById("empNoRest").checked = false;
     document.getElementById("empJefePista").checked = false;
     document.getElementById("empStrictPreferences").checked = false;
+    
+    // Activo by default
+    const empActiveStatus = document.getElementById("empActiveStatus");
+    if(empActiveStatus) empActiveStatus.checked = true;
 
     // Reset fixed shifts
     document.querySelectorAll(".shift-select").forEach(s => s.value = "AUTO");
@@ -289,7 +309,7 @@ function openAddModal() {
 
     switchTab("tab-general");
     buildDayCards();
-    document.getElementById("employeeModal").classList.remove("hidden");
+    document.getElementById("planillaEmpModal").classList.remove("hidden");
 }
 
 function openEditModal(index) {
@@ -314,6 +334,10 @@ function openEditModal(index) {
     document.getElementById("empNoRest").checked = emp.allow_no_rest || false;
     document.getElementById("empJefePista").checked = emp.is_jefe_pista || false;
     document.getElementById("empStrictPreferences").checked = emp.strict_preferences || false;
+    
+    // Activo flag mapping
+    const empActiveStatus = document.getElementById("empActiveStatus");
+    if(empActiveStatus) empActiveStatus.checked = (emp.activo !== false);
 
     const fixed = emp.fixed_shifts || {};
     document.querySelectorAll(".shift-select").forEach(sel => {
@@ -340,7 +364,7 @@ function openEditModal(index) {
 
     switchTab("tab-general");
     buildDayCards();
-    document.getElementById("employeeModal").classList.remove("hidden");
+    document.getElementById("planillaEmpModal").classList.remove("hidden");
 }
 
 function toggleJefeShiftSelect() {
@@ -591,6 +615,7 @@ async function saveEmployee() {
         forced_quebrado: document.getElementById("empForcedQuebrado").checked,
         allow_no_rest: document.getElementById("empNoRest").checked,
         strict_preferences: document.getElementById("empStrictPreferences").checked,
+        activo: document.getElementById("empActiveStatus") ? document.getElementById("empActiveStatus").checked : true,
         fixed_shifts: {}
     };
 
@@ -695,7 +720,9 @@ async function generateSchedule() {
             if (isValidationOn) applyValidationUI(); // apply validation immediately if enabled
 
             document.getElementById("btnSaveSchedule").classList.remove("hidden");
-            document.getElementById("scheduleMeta").textContent = result.metadata?.libres_person ? `Libres: ${result.metadata.libres_person}` : "Éxito";
+            const libresText = result.metadata?.libres_person ? `Libres: ${result.metadata.libres_person}` : "Éxito";
+            const solutionsCount = result.metadata?.solutions_found ? ` | Óptimos procesados: ${result.metadata.solutions_found}` : "";
+            document.getElementById("scheduleMeta").textContent = libresText + solutionsCount;
         } else {
             console.error("Solver Status:", result.status);
             if (result.status === "Infeasible") {
@@ -1910,6 +1937,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             // Update Icon
+            // Update Icon
             const icon = th.querySelector('i');
             if (icon) {
                 icon.className = (currentSortMode === 'time')
@@ -1919,3 +1947,80 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 });
+
+// ============================================
+// SUNDAY ROTATION VIEWER
+// ============================================
+
+function openSundayRotationModal() {
+    const modal = document.getElementById('sundayRotationModal');
+    if (modal) modal.classList.remove('hidden');
+    loadSundayRotation();
+}
+
+function closeSundayRotationModal() {
+    const modal = document.getElementById('sundayRotationModal');
+    if (modal) modal.classList.add('hidden');
+}
+
+async function loadSundayRotation() {
+    const container = document.getElementById('sundayRotationContent');
+    if (!container) return;
+    
+    container.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--text-muted);"><i class="fa-solid fa-circle-notch fa-spin"></i> Cargando...</div>';
+    
+    try {
+        const res = await fetch(`${API_URL}/rotacion-domingos`);
+        const data = await res.json();
+        
+        if (!data || data.length === 0) {
+            container.innerHTML = '<div style="padding: 1rem; text-align: center; color: var(--text-muted);">No hay historial o empleados elegibles.</div>';
+            return;
+        }
+        
+        container.innerHTML = '';
+        data.forEach((emp, index) => {
+            let colorCls = "var(--text-main)";
+            let bgCls = "var(--bg-panel)";
+            let icon = "fa-user";
+            
+            if (index === 0) {
+                colorCls = "#10b981"; // green (Priority 1)
+                bgCls = "rgba(16, 185, 129, 0.1)";
+                icon = "fa-star";
+            } else if (index < 3) {
+                colorCls = "#3b82f6"; // blue
+                bgCls = "rgba(59, 130, 246, 0.1)";
+                icon = "fa-arrow-up";
+            } else {
+                colorCls = "#ef4444"; // red (Must work)
+                bgCls = "rgba(239, 68, 68, 0.05)";
+                icon = "fa-briefcase";
+            }
+            
+            const row = document.createElement('div');
+            row.style.cssText = `display: flex; justify-content: space-between; align-items: center; padding: 0.75rem; background: ${bgCls}; border-radius: 6px; border: 1px solid rgba(255,255,255,0.05); transition: transform 0.2s;`;
+            row.className = "hover-glow";
+            
+            row.innerHTML = `
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <div style="width: 28px; height: 28px; border-radius: 50%; background: ${colorCls}; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 0.75rem; font-weight: bold; box-shadow: 0 2px 5px rgba(0,0,0,0.2);">
+                        ${index + 1}
+                    </div>
+                    <div>
+                        <div style="font-weight: 600; font-size: 0.95rem; color: var(--text-main); margin-bottom: 2px;">${emp.name}</div>
+                        <div style="font-size: 0.7rem; color: var(--text-muted);"><i class="fa-solid ${icon}" style="color:${colorCls};"></i> ${emp.priority}</div>
+                    </div>
+                </div>
+                <div style="text-align: right;">
+                    <span style="font-size: 0.75rem; font-weight: 600; color: ${colorCls}; background: var(--bg-app); padding: 4px 8px; border-radius: 12px; border: 1px solid var(--border); box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);"><i class="fa-solid fa-clock-rotate-left"></i> ${emp.last_off}</span>
+                </div>
+            `;
+            container.appendChild(row);
+        });
+        
+    } catch (e) {
+        console.error(e);
+        container.innerHTML = '<div style="padding: 1rem; text-align: center; color: #ef4444;"><i class="fa-solid fa-triangle-exclamation"></i> Error cargando rotación. Verifica la conexión con el servidor.</div>';
+    }
+}
