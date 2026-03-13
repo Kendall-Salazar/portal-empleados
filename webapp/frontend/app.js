@@ -1155,8 +1155,59 @@ async function deleteHistory(i, event) {
     loadHistory();
 }
 
+async function downloadExcel(url) {
+    const status = document.getElementById("statusMessage");
+    const previousStatus = status ? status.innerHTML : "";
+
+    if (status) {
+        status.innerHTML = '<i class="fa-solid fa-file-excel"></i> Exportando Excel...';
+    }
+
+    try {
+        const res = await fetch(url);
+
+        if (!res.ok) {
+            let detail = "No se pudo exportar el horario.";
+            try {
+                const err = await res.json();
+                detail = err.detail || detail;
+            } catch (_) {}
+            throw new Error(detail);
+        }
+
+        const blob = await res.blob();
+        const downloadUrl = window.URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        const contentDisposition = res.headers.get("content-disposition") || "";
+        const match = contentDisposition.match(/filename="?([^";]+)"?/i);
+
+        link.href = downloadUrl;
+        link.download = match ? match[1] : "horario.xlsx";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(downloadUrl);
+
+        if (status) {
+            status.innerHTML = '<i class="fa-solid fa-check"></i> Exportación completada';
+        }
+    } catch (e) {
+        if (status) {
+            status.innerHTML = `<span class="error"><i class="fa-solid fa-circle-xmark"></i> ${e.message}</span>`;
+        } else {
+            alert(e.message);
+        }
+    } finally {
+        if (status) {
+            setTimeout(() => {
+                status.innerHTML = previousStatus;
+            }, 4000);
+        }
+    }
+}
+
 function exportToExcel() {
-    window.location.href = "/api/export_excel";
+    downloadExcel("/api/export_excel");
 }
 
 function exportToImage() {
@@ -1490,7 +1541,7 @@ function reopenValidatorOverlay() {
 
 function exportHistoryExcel(index, event) {
     if (event) event.stopPropagation();
-    window.location.href = `/api/export_excel?history_index=${index}`;
+    downloadExcel(`/api/export_excel?history_index=${index}`);
 }
 
 window.validateHistory = async function (index, event) {
