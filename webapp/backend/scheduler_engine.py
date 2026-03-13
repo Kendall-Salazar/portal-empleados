@@ -2,6 +2,8 @@
 # EXACT PORT OF FUNCIONA.PY LOGIC
 
 from ortools.sat.python import cp_model
+import json
+import logging
 
 class SolutionCounter(cp_model.CpSolverSolutionCallback):
     def __init__(self):
@@ -11,6 +13,8 @@ class SolutionCounter(cp_model.CpSolverSolutionCallback):
         self.solution_count += 1
 from datetime import datetime
 import os
+
+logger = logging.getLogger(__name__)
 
 # CONSTANTS
 DAYS = ["Vie", "Sáb", "Dom", "Lun", "Mar", "Mié", "Jue"]
@@ -228,7 +232,78 @@ class ShiftScheduler:
 
     def solve(self):
         model = cp_model.CpModel()
-        
+
+        employee_name_map = {}
+        for emp in self.employees:
+            normalized_name = emp.strip().lower()
+            if normalized_name:
+                employee_name_map[normalized_name] = emp
+
+        def normalize_history_schedule(schedule_data, source_label="history"):
+            """Normaliza schedule histórico (dict o JSON str) a nombres/días confiables."""
+            parsed_schedule = schedule_data
+            if isinstance(schedule_data, str):
+                try:
+                    parsed_schedule = json.loads(schedule_data)
+                except json.JSONDecodeError:
+                    logger.warning("No se pudo parsear schedule JSON en %s", source_label)
+                    return {}
+
+            if not isinstance(parsed_schedule, dict):
+                logger.warning("Schedule inválido en %s: se esperaba dict/JSON", source_label)
+                return {}
+
+            normalized_schedule = {}
+            for raw_emp_name, day_assignments in parsed_schedule.items():
+                if not isinstance(raw_emp_name, str):
+                    continue
+                canonical_emp = employee_name_map.get(raw_emp_name.strip().lower())
+                if not canonical_emp or not isinstance(day_assignments, dict):
+                    continue
+
+                if canonical_emp not in normalized_schedule:
+                    normalized_schedule[canonical_emp] = {}
+
+                for raw_day, shift_name in day_assignments.items():
+                    if raw_day not in DAYS:
+                        logger.warning(
+                            "Día histórico inválido '%s' en %s para %s",
+                            raw_day,
+                            source_label,
+                            canonical_emp,
+                        )
+                        continue
+                    normalized_schedule[canonical_emp][raw_day] = shift_name
+
+            return normalized_schedule
+
+        def normalize_history_entries(history_obj):
+            entries = []
+            if isinstance(history_obj, list):
+                for idx, entry in enumerate(history_obj):
+                    if not isinstance(entry, dict):
+                        continue
+                    schedule_obj = entry.get("schedule", {})
+                    normalized = normalize_history_schedule(schedule_obj, f"history[{idx}]")
+                    entries.append({"schedule": normalized})
+            elif isinstance(history_obj, dict) and history_obj:
+                normalized = normalize_history_schedule(history_obj, "history[dict]")
+                entries.append({"schedule": normalized})
+            return entries
+
+        history_entries = normalize_history_entries(self.history)
+        most_recent_schedule = history_entries[-1].get("schedule", {}) if history_entries else {}
+
+        known_last_night_employee = set()
+        for entry in reversed(history_entries):
+            sched = entry.get("schedule", {})
+            for e in self.employees:
+                if e in known_last_night_employee:
+                    continue
+                e_sched = sched.get(e, {})
+                if any(e_sched.get(d) == "N_22-05" for d in DAYS):
+                    known_last_night_employee.add(e)
+
         # Precomputar propiedades de turnos para evitar llamadas repetidas en loops
         SHIFT_MIN_HOUR = {}
         SHIFT_MAX_HOUR = {}
@@ -244,6 +319,13 @@ class ShiftScheduler:
                 SHIFT_MAX_HOUR[_s] = None
                 SHIFT_IS_WORKING[_s] = False
         
+        explicit_night_to_morning_blocks = {
+            s_name for s_name in SHIFT_NAMES
+            if SHIFT_IS_WORKING.get(s_name, False)
+            and SHIFT_MIN_HOUR.get(s_name) is not None
+            and SHIFT_MIN_HOUR[s_name] < 13
+        }
+
         # Precomputar pares de turnos incompatibles por descanso mínimo
         # 12h para empleados normales, 8h para la persona de libres
         _min_rest_normal = 12
@@ -747,15 +829,25 @@ class ShiftScheduler:
         #   - 8H pairs: SIEMPRE prohibidos para TODOS
         #   - ONLY_12H pairs: prohibidos SOLO si NO eres la persona de libres
         
-        most_recent_schedule = {}
-        if isinstance(self.history, list) and self.history:
-            most_recent_schedule = self.history[-1].get("schedule", {})
-        elif isinstance(self.history, dict) and self.history:
-            most_recent_schedule = self.history
-            
         for e in self.employees:
             # 1. CROSS-WEEK BOUNDARY: Thursday (History) -> Friday (Current)
             last_jue_shift = most_recent_schedule.get(e, {}).get("Jue", "OFF")
+            if last_jue_shift not in SHIFT_NAMES:
+                last_jue_shift = "OFF"
+
+            # Hard block independiente: N_22-05 (Jue) -> turnos tempranos (Vie)
+            if last_jue_shift == "N_22-05":
+                for s2 in explicit_night_to_morning_blocks:
+                    model.Add(x[(e, "Vie", s2)] == 0)
+            elif "Jue" not in most_recent_schedule.get(e, {}):
+                if e in known_last_night_employee:
+                    logger.warning(
+                        "Historial no confiable para Jue de %s; se aplica fallback conservador por último nocturno conocido",
+                        e,
+                    )
+                    for s2 in explicit_night_to_morning_blocks:
+                        model.Add(x[(e, "Vie", s2)] == 0)
+
             if last_jue_shift in SHIFT_NAMES and SHIFT_IS_WORKING.get(last_jue_shift):
                 s1 = last_jue_shift
                 d2 = "Vie"
@@ -1684,12 +1776,6 @@ class ShiftScheduler:
         # O11. HISTORIAL / ROTACION
         # =========================
         
-        history_entries = []
-        if isinstance(self.history, list):
-            history_entries = self.history
-        elif isinstance(self.history, dict) and self.history:
-             history_entries = [{"schedule": self.history}]
-             
         # 1. EVITAR REPETICION DE HORARIOS (General)
         # HARD CONSTRAINT: No 3-peat — if employee had shift S on day D for the last 
         # 2 consecutive weeks, BLOCK it this week.
@@ -1795,19 +1881,11 @@ class ShiftScheduler:
         last_sunday_off = {}  # employee -> history_index (higher = more recent)
         
         # We need to look at historical schedules to figure out who had Sunday OFF
-        if isinstance(self.history, list):
-            for idx, entry in enumerate(self.history):
-                 sched = entry.get('schedule', {})
-                 if isinstance(sched, str):
-                     import json
-                     try:
-                         sched = json.loads(sched)
-                     except:
-                         sched = {}
-                         
-                 for emp_name, days in sched.items():
-                     if isinstance(days, dict) and days.get('Dom') in ['OFF', 'VAC', 'PERM'] and emp_name in eligible:
-                         last_sunday_off[emp_name] = idx  # overwrite = keep most recent
+        for idx, entry in enumerate(history_entries):
+            sched = entry.get('schedule', {})
+            for emp_name, days in sched.items():
+                if isinstance(days, dict) and days.get('Dom') in ['OFF', 'VAC', 'PERM'] and emp_name in eligible:
+                    last_sunday_off[emp_name] = idx  # overwrite = keep most recent
         
         # Build queue: sort by last_sunday_off ascending (least recent first)
         # Employees who NEVER had Sunday OFF get -1 → they go to the very front
@@ -1855,12 +1933,6 @@ class ShiftScheduler:
         # O6. Sunday Rotation (Historial Compatibility)
         # Verify if they worked last Sunday.
         # We need the MOST RECENT schedule for this.
-        most_recent_schedule = {}
-        if history_entries:
-            # history_entries is ordered [oldest, ..., newest] usually? 
-            # In update_history it uses append. So -1 is newest.
-            most_recent_schedule = history_entries[-1].get("schedule", {})
-            
         if most_recent_schedule:
             for e in self.employees:
                 last_sched = most_recent_schedule.get(e, {})
