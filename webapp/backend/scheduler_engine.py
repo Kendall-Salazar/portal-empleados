@@ -1832,12 +1832,17 @@ class ShiftScheduler:
                         fixed_same_block_days += 1
 
                 # Reservar días OFF/VAC obligatorios que aún no estén fijados en fixed_shifts.
-                # El core impone OFF+VAC == base_off + forced_vac (base_off >= 1 para personal normal),
-                # así que debemos descontar esos días no laborables para no sobreestimar días opuestos factibles.
-                base_off = max(1, fixed_off_days)
-                required_off_vac_days = base_off + fixed_vac_days
-                fixed_off_vac_days = fixed_off_days + fixed_vac_days
-                pending_required_off_vac_days = max(0, required_off_vac_days - fixed_off_vac_days)
+                # El core impone OFF+VAC == base_off + forced_vac para personal normal,
+                # donde base_off = max(1, forced_off). Si no descontamos este "OFF mínimo"
+                # pendiente, se sobreestima cuántos días de bloque opuesto pueden existir.
+                forced_vac = fixed_vac_days
+                forced_off = fixed_off_days
+                required_off_vac_days = max(1, forced_off) + forced_vac
+                already_fixed_off_vac_days = forced_off + forced_vac
+                pending_required_off_vac_days = max(
+                    0,
+                    required_off_vac_days - already_fixed_off_vac_days
+                )
 
                 max_possible_opposite = (
                     len(DAYS)
