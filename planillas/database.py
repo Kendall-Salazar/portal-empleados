@@ -137,8 +137,8 @@ def init_db():
     try:
         conn.execute("ALTER TABLE empleados ADD COLUMN cedula TEXT")
         conn.commit()
-    except Exception:
-        pass  # Column already exists
+    except sqlite3.OperationalError:
+        print("init_db: columna empleados.cedula ya existe, se omite migración")
     conn.close()
     
     # Migration: add strict_preferences column if it doesn't exist
@@ -146,8 +146,8 @@ def init_db():
     try:
         conn.execute("ALTER TABLE horario_empleados ADD COLUMN strict_preferences INTEGER DEFAULT 0")
         conn.commit()
-    except Exception:
-        pass  # Column already exists
+    except sqlite3.OperationalError:
+        print("init_db: columna horario_empleados.strict_preferences ya existe, se omite migración")
     conn.close()
 
     # Migration: add correo, telefono, fecha_inicio, aplica_seguro columns
@@ -162,8 +162,8 @@ def init_db():
         try:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
             conn.commit()
-        except Exception:
-            pass
+        except sqlite3.OperationalError:
+            print(f"init_db: columna {table}.{col} ya existe, se omite migración")
         conn.close()
 
     # Create vacaciones table
@@ -490,7 +490,8 @@ def add_permiso(empleado_id, fecha, motivo=None, notas=None):
             4: "Vie", 5: "Sáb", 6: "Dom"
         }
         dia_semana = dias_semana_map.get(dt.weekday(), "")
-    except:
+    except ValueError:
+        print(f"add_permiso: fecha inválida '{fecha}', usando año actual sin día de semana")
         anio = _date.today().year
         dia_semana = ""
 
@@ -660,14 +661,16 @@ def sync_vac_perm_to_fixed_shifts(empleado_nombre, fecha_inicio_semana, fecha_fi
     if h_row and h_row["turnos_fijos"]:
         try:
             current_shifts = json.loads(h_row["turnos_fijos"])
-        except:
+        except json.JSONDecodeError:
+            print(f"sync_vac_perm_to_fixed_shifts: turnos_fijos JSON inválido para {empleado_nombre}")
             current_shifts = {}
     
     # Mapear fecha → día de la semana (Vie, Sáb, Dom, Lun, Mar, Mié, Jue)
     try:
         start = datetime.strptime(fecha_inicio_semana, "%Y-%m-%d").date()
         end = datetime.strptime(fecha_fin_semana, "%Y-%m-%d").date()
-    except:
+    except ValueError:
+        print(f"sync_vac_perm_to_fixed_shifts: rango de fechas inválido inicio={fecha_inicio_semana}, fin={fecha_fin_semana}")
         conn.close()
         return current_shifts
     

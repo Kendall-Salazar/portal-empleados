@@ -282,7 +282,8 @@ def get_employees(include_inactive: bool = False):
     for e in unified_emps:
         try:
             fixed_shifts = json.loads(e.get("turnos_fijos", "{}")) if e.get("turnos_fijos") else {}
-        except:
+        except (json.JSONDecodeError, TypeError):
+            print(f"/api/employees: turnos_fijos inválido para {e.get('nombre', '<sin_nombre>')}")
             fixed_shifts = {}
             
         legacy_emps.append({
@@ -373,7 +374,8 @@ def solve_schedule(request: SolverRequest):
     for e in unified_emps:
         try:
             fixed_shifts = json.loads(e.get("turnos_fijos", "{}")) if e.get("turnos_fijos") else {}
-        except:
+        except (json.JSONDecodeError, TypeError):
+            print(f"/api/solve: turnos_fijos inválido para {e.get('nombre', '<sin_nombre>')}")
             fixed_shifts = {}
         employees_data.append({
             "name": e.get("nombre", ""),
@@ -425,7 +427,9 @@ def get_sunday_rotation():
         sched = entry.get('schedule', {})
         if isinstance(sched, str):
             try: sched = json.loads(sched)
-            except: sched = {}
+            except json.JSONDecodeError:
+                print(f"/api/rotacion-domingos: schedule JSON inválido en historial idx={idx}")
+                sched = {}
             
         for emp_name, days in sched.items():
             if isinstance(days, dict) and days.get('Dom') in ['OFF', 'VAC', 'PERM'] and emp_name in eligible:
@@ -559,7 +563,7 @@ def _format_time_range(time_range: str) -> str:
         end_str = end_dt.strftime("%I:%M %p")
         
         return f"{start_str} - {end_str}"
-    except:
+    except (ValueError, TypeError, AttributeError):
         return time_range
 
 @app.get("/api/validation_rules")
@@ -723,8 +727,11 @@ def export_excel(history_index: Optional[int] = None):
                 meta = entry.get("metadata", {})
                 if isinstance(meta, str):
                     import json as _json
-                    try: meta = _json.loads(meta)
-                    except: meta = {}
+                    try:
+                        meta = _json.loads(meta)
+                    except _json.JSONDecodeError:
+                        print(f"export_excel: metadata JSON inválido en history_index={history_index}")
+                        meta = {}
                 week_dates = meta.get("week_dates")
     
     if week_dates:
@@ -1234,8 +1241,8 @@ def calcular_liquidacion(emp_id: int):
             inicio = datetime.strptime(fi, "%Y-%m-%d").date()
             antiguedad_dias = (date.today() - inicio).days
             antiguedad_anios = antiguedad_dias / 365.25
-        except:
-            pass
+        except (ValueError, TypeError):
+            print(f"liquidacion_preview: fecha_inicio inválida para empleado_id={emp_id}: {fi}")
 
     # ── 3. SALARIO PROMEDIO MENSUAL (de planillas reales) ──
     anio_actual = date.today().year
@@ -1271,8 +1278,8 @@ def calcular_liquidacion(emp_id: int):
                                             semanas_con_datos += 1
                                         break
                 wb.close()
-            except:
-                pass
+            except (OSError, ValueError, KeyError):
+                print(f"liquidacion_preview: no se pudo leer archivo de planilla {archivo}")
 
     # Promedio mensual = total / meses con datos (aprox 4 semanas = 1 mes)
     meses_con_datos = max(1, semanas_con_datos / 4.33)
@@ -1486,7 +1493,8 @@ def sincronizar_aguinaldo_anio(anio: int):
                 if sheet_name.startswith("Semana "):
                     try:
                         sem_num = int(sheet_name.split(" ")[-1])
-                    except:
+                    except (ValueError, IndexError):
+                        print(f"sync_salarios_historicos: nombre de hoja no estándar '{sheet_name}' en {mes['archivo']}")
                         continue
                     
                     ws = wb[sheet_name]
@@ -1790,7 +1798,8 @@ def importar_horario_semana(req: PlanillaImportarHorario):
         # Get week number from semantic name "Semana X"
         try:
             sem_num = int(req.semana_nombre.split(" ")[-1])
-        except:
+        except (ValueError, IndexError):
+            print(f"importar_horario_semana: semana_nombre no parseable '{req.semana_nombre}', usando 0")
             sem_num = 0
 
         for emp_nombre, h in hours_data.items():
@@ -1805,7 +1814,7 @@ def importar_horario_semana(req: PlanillaImportarHorario):
                     mes_activo["anio"], mes_activo["mes"], sem_num, bruto
                 )
     except Exception as e:
-        print(f"Error saving salaries: {e}")
+        raise HTTPException(status_code=500, detail=f"Error guardando salarios semanales: {e}")
 
     return {"status": "success", "message": msg}
 
@@ -1847,7 +1856,8 @@ def importar_horario_semana_historico(mes_id: int, semana_nombre: str, req: Plan
 
         try:
             sem_num = int(semana_nombre.split(" ")[-1])
-        except:
+        except (ValueError, IndexError):
+            print(f"importar_horario_semana_historico: semana_nombre no parseable '{semana_nombre}', usando 0")
             sem_num = 0
 
         for emp_nombre, h in hours_data.items():
@@ -1859,7 +1869,7 @@ def importar_horario_semana_historico(mes_id: int, semana_nombre: str, req: Plan
                     mes_target["anio"], mes_target["mes"], sem_num, bruto
                 )
     except Exception as e:
-        print(f"Error al guardar salarios: {e}")
+        raise HTTPException(status_code=500, detail=f"Error al guardar salarios semanales: {e}")
 
     return {"status": "success", "message": msg}
 
