@@ -735,7 +735,16 @@ class ShiftScheduler:
                 for s_shared in SHIFT_NAMES:
                     if s_shared in ["OFF", "VAC", "PERM"]: continue
                     both_on_same_s = model.NewBoolVar(f"both_on_same_{s_shared}_{d}")
-                    model.AddBoolAnd([x[(w1, d, s_shared)], x[(w2, d, s_shared)], not_collision]).OnlyEnforceIf(both_on_same_s)
+                    model.AddBoolAnd([
+                        x[(w1, d, s_shared)],
+                        x[(w2, d, s_shared)],
+                        not_collision,
+                    ]).OnlyEnforceIf(both_on_same_s)
+                    model.AddBoolOr([
+                        x[(w1, d, s_shared)].Not(),
+                        x[(w2, d, s_shared)].Not(),
+                        not_collision.Not(),
+                    ]).OnlyEnforceIf(both_on_same_s.Not())
                     penalties.append(300000 * both_on_same_s)
 
         # =========================
