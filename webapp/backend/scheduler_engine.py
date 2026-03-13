@@ -1740,47 +1740,129 @@ class ShiftScheduler:
 
         # 1.5 GLOBAL AM/PM ROTATION
         # =========================
-        # If an employee worked mostly AM last week, penalize assigning them an AM
-        # turno_principal this week, and vice versa. This creates organic N=2 cyclical rotation.
+        # Normalizamos la semana previa por empleado en categorías AM/PM,
+        # ignorando OFF/VAC/PERM. Con mayoría clara en semana-1, empujamos
+        # alternancia real en semana actual, no solo por turno_principal.
         if most_recent_schedule:
-            AM_SHIFTS = [s for s in SHIFT_NAMES if s not in ["OFF", "VAC", "PERM"] and SHIFTS.get(s) and min(SHIFTS[s]) < 12]
-            PM_SHIFTS = [s for s in SHIFT_NAMES if s not in ["OFF", "VAC", "PERM"] and SHIFTS.get(s) and min(SHIFTS[s]) >= 12]
-            
+            def shift_block(shift_name):
+                if shift_name in ["OFF", "VAC", "PERM"]:
+                    return None
+                hours = SHIFTS.get(shift_name, set())
+                if not hours:
+                    return None
+                return "AM" if min(hours) < 12 else "PM"
+
+            AM_SHIFTS = [s for s in SHIFT_NAMES if shift_block(s) == "AM"]
+            PM_SHIFTS = [s for s in SHIFT_NAMES if shift_block(s) == "PM"]
+            weekdays = DAYS[:-2]  # Vie..Mié (sin Jue)
+            collision_or_critical_mode = bool(self.config.get('allow_collision_quebrado', False))
+
             for e in self.employees:
+                # Excepciones históricas mantenidas: night person, jefe y refuerzo.
+                # Impacto: estos perfiles no reciben obligación de alternancia semanal,
+                # por lo que su patrón AM/PM puede permanecer estable por diseño.
                 if e == night_person_name or self.emp_data[e].get('is_jefe_pista', False) or self.emp_data[e].get('is_refuerzo', False):
                     continue
-                    
-                # Calculate majority group last week
+
                 last_sched = most_recent_schedule.get(e, {})
-                am_count = 0
-                pm_count = 0
+                normalized_prev_week = []
                 for d in DAYS:
-                    s_prev = last_sched.get(d)
-                    if s_prev in AM_SHIFTS: am_count += 1
-                    elif s_prev in PM_SHIFTS: pm_count += 1
-                
-                if am_count == 0 and pm_count == 0:
+                    block = shift_block(last_sched.get(d))
+                    if block:
+                        normalized_prev_week.append(block)
+
+                am_count = sum(1 for b in normalized_prev_week if b == "AM")
+                pm_count = sum(1 for b in normalized_prev_week if b == "PM")
+                prev_total = am_count + pm_count
+                if prev_total == 0:
                     continue
-                    
-                was_am_majority = am_count > pm_count  # strictly greater to avoid oscillating evenly split weeks unnecessarily 
+
+                was_am_majority = am_count > pm_count
                 was_pm_majority = pm_count > am_count
-                
+                majority_count = max(am_count, pm_count)
+                clear_majority = abs(am_count - pm_count) >= 2 and majority_count >= 4
+                if not clear_majority:
+                    continue
+
+                same_block_shifts = AM_SHIFTS if was_am_majority else PM_SHIFTS
+                opposite_block_shifts = PM_SHIFTS if was_am_majority else AM_SHIFTS
+
+                # 1) Señal base por turno_principal para preservar comportamiento anterior.
                 if e in turno_principal and turno_principal[e]:
-                    ROTATION_PENALTY = 200000  # High enough to force rotation
+                    ROTATION_PENALTY = 200000
                     for s, var in turno_principal[e].items():
-                        if was_am_majority and s in AM_SHIFTS:
+                        if s in same_block_shifts:
                             penalties.append(ROTATION_PENALTY * var)
-                        elif was_pm_majority and s in PM_SHIFTS:
-                            penalties.append(ROTATION_PENALTY * var)
-                    
-                    # Extra penalty for Women repeating majority type
-                    if self.emp_data[e].get('gender') == 'F':
-                        GENDER_ROTATION_PENALTY = 500000
-                        for s, var in turno_principal[e].items():
-                            if was_am_majority and s in AM_SHIFTS:
-                                penalties.append(GENDER_ROTATION_PENALTY * var)
-                            elif was_pm_majority and s in PM_SHIFTS:
-                                penalties.append(GENDER_ROTATION_PENALTY * var)
+
+                # 2) Restricción fuerte por días reales del bloque (no solo principal).
+                same_block_days = []
+                opposite_block_days = []
+                for d in DAYS:
+                    same_day = model.NewBoolVar(f"same_block_day_{e}_{d}")
+                    opp_day = model.NewBoolVar(f"opp_block_day_{e}_{d}")
+                    model.AddMaxEquality(same_day, [x[(e, d, s)] for s in same_block_shifts])
+                    model.AddMaxEquality(opp_day, [x[(e, d, s)] for s in opposite_block_shifts])
+                    same_block_days.append(same_day)
+                    opposite_block_days.append(opp_day)
+
+                same_block_count = sum(same_block_days)
+                opposite_block_count = sum(opposite_block_days)
+
+                fixed_map = self.emp_data[e].get('fixed_shifts', {})
+                fixed_has_work_shift = any(
+                    fixed_map.get(d) not in [None, "", "OFF", "VAC", "PERM"]
+                    for d in DAYS
+                )
+
+                # Factibilidad aproximada del hard-min opuesto considerando solo días fijos.
+                fixed_same_block_days = 0
+                fixed_absent_days = 0
+                for d in DAYS:
+                    fixed_s = fixed_map.get(d)
+                    fixed_b = shift_block(fixed_s)
+                    if fixed_b is None and fixed_s in ["OFF", "VAC", "PERM"]:
+                        fixed_absent_days += 1
+                    elif fixed_b == ("AM" if was_am_majority else "PM"):
+                        fixed_same_block_days += 1
+
+                max_possible_opposite = len(DAYS) - fixed_absent_days - fixed_same_block_days
+                min_opposite_target = 2
+
+                if max_possible_opposite >= min_opposite_target:
+                    model.Add(opposite_block_count >= min_opposite_target)
+                else:
+                    # Fallback: penalización escalonada por repetir bloque mayoritario.
+                    for threshold, weight in [(3, 60000), (4, 120000), (5, 220000), (6, 350000)]:
+                        over_repeat = model.NewBoolVar(f"repeat_{e}_{threshold}")
+                        model.Add(same_block_count >= threshold).OnlyEnforceIf(over_repeat)
+                        model.Add(same_block_count <= threshold - 1).OnlyEnforceIf(over_repeat.Not())
+                        penalties.append(weight * over_repeat)
+
+                # 3) Regla específica mujeres: alternancia semanal reforzada,
+                # con excepción explícita en fixed_shifts o modo colisión/cobertura crítica.
+                if self.emp_data[e].get('gender') == 'F':
+                    gender_exception = fixed_has_work_shift or collision_or_critical_mode
+                    if not gender_exception:
+                        # Enfoque fuerte: exigir al menos 3 días del bloque opuesto
+                        # para forzar alternancia semanal observable.
+                        if max_possible_opposite >= 3:
+                            model.Add(opposite_block_count >= 3)
+                        else:
+                            # Si no es factible, reforzar aún más la penalización escalonada.
+                            for threshold, weight in [(3, 150000), (4, 300000), (5, 450000), (6, 700000)]:
+                                over_repeat_f = model.NewBoolVar(f"repeat_f_{e}_{threshold}")
+                                model.Add(same_block_count >= threshold).OnlyEnforceIf(over_repeat_f)
+                                model.Add(same_block_count <= threshold - 1).OnlyEnforceIf(over_repeat_f.Not())
+                                penalties.append(weight * over_repeat_f)
+
+                # Penalidad suave adicional para proteger weekdays de repetición excesiva.
+                weekday_same_terms = []
+                for d in weekdays:
+                    weekday_same = model.NewBoolVar(f"weekday_same_block_{e}_{d}")
+                    model.AddMaxEquality(weekday_same, [x[(e, d, s)] for s in same_block_shifts])
+                    weekday_same_terms.append(weekday_same)
+                if weekday_same_terms:
+                    penalties.append(25000 * sum(weekday_same_terms))
 
         # 2. SUNDAY ROTATION (History-based queue)
         # Build rotation queue by analyzing history: who had Sunday OFF least recently goes first
