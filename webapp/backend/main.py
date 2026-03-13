@@ -744,12 +744,13 @@ def export_excel(history_index: Optional[int] = None):
     
     headers = ["Colaborador"] + DAYS + ["Horas"]
     ws.append(headers)
+    header_row_idx = ws.max_row
     
     # Header Style
     header_fill = PatternFill(start_color="2F5496", end_color="2F5496", fill_type="solid")
     header_font = Font(bold=True, color="FFFFFF", size=11)
     
-    for cell in ws[1]:
+    for cell in ws[header_row_idx]:
         cell.fill = header_fill
         cell.font = header_font
         cell.alignment = Alignment(horizontal="center", vertical="center")
@@ -826,7 +827,7 @@ def export_excel(history_index: Optional[int] = None):
     formato_col = 11  # Column K
     
     # Header
-    fmt_header = ws.cell(row=1, column=formato_col, value="FORMATO")
+    fmt_header = ws.cell(row=header_row_idx, column=formato_col, value="FORMATO")
     fmt_header.fill = PatternFill(start_color="2F5496", end_color="2F5496", fill_type="solid")
     fmt_header.font = Font(bold=True, color="FFFFFF", size=11)
     fmt_header.alignment = Alignment(horizontal="center", vertical="center")
@@ -834,7 +835,7 @@ def export_excel(history_index: Optional[int] = None):
     
     # One cell per employee with the same format as their row in both tables
     for idx, name in enumerate(emp_names):
-        fmt_row = idx + 2  # Row 2 onwards (row 1 is header)
+        fmt_row = idx + header_row_idx + 1  # Data rows start right after the header row
         color = emp_colors[name]
         fmt_cell = ws.cell(row=fmt_row, column=formato_col, value=name)
         fmt_cell.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
@@ -843,7 +844,7 @@ def export_excel(history_index: Optional[int] = None):
         fmt_cell.border = thin_border
     
     # LIBRE format entry (after all employees)
-    libre_row = len(emp_names) + 2
+    libre_row = len(emp_names) + header_row_idx + 1
     libre_cell = ws.cell(row=libre_row, column=formato_col, value="LIBRE")
     libre_cell.fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
     libre_cell.font = Font(color="999999", italic=True, size=11)
