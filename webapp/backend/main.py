@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
 import json
 import os
@@ -227,7 +227,7 @@ class Employee(BaseModel):
     is_jefe_pista: bool = False
     strict_preferences: bool = False
     activo: bool = True
-    fixed_shifts: Dict[str, str] = {} 
+    fixed_shifts: Dict[str, str] = Field(default_factory=dict)
 
 class Config(BaseModel):
     night_mode: str = "rotation"
@@ -262,7 +262,7 @@ class SyncVacPermRequest(BaseModel):
 class HistoryEntry(BaseModel):
     name: str
     schedule: Dict[str, Dict[str, str]]
-    daily_tasks: Dict[str, Dict[str, Optional[str]]] = {}
+    daily_tasks: Dict[str, Dict[str, Optional[str]]] = Field(default_factory=dict)
     next_sunday_cycle_index: Optional[int] = None  # Legacy
     next_sunday_rotation_queue: Optional[List[str]] = None
     week_dates: Optional[Dict[str, str]] = None
@@ -1930,7 +1930,7 @@ class AmoDatoItem(BaseModel):
 class DocAmonestacion(BaseModel):
     emp_id: int
     tipo: str  # "faltantes", "tardanzas", "conductas"
-    datos: List[AmoDatoItem] = []
+    datos: List[AmoDatoItem] = Field(default_factory=list)
 
 class DocVacacionesReq(BaseModel):
     emp_id: int
