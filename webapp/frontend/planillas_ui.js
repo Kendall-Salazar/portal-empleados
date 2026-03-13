@@ -188,6 +188,8 @@ async function loadVacSubEquipo() {
             const tb = tipoBadgeMap[emp.tipo_pago] || { icon: 'fa-circle-question', color: '#6b7280', bg: 'rgba(107,114,128,0.1)', label: emp.tipo_pago || '--' };
             const tipoBadgeHtml = `<span class="ecard-tipo-badge" style="color:${tb.color};background:${tb.bg};"><i class="fa-solid ${tb.icon}"></i>${tb.label}</span>`;
 
+            const statusBadge = ''; // Only actives here
+
             const card = document.createElement('div');
             card.className = 'ecard';
             card.style.animationDelay = `${idx * 0.04}s`;
@@ -195,7 +197,7 @@ async function loadVacSubEquipo() {
                 <div class="ecard-top">
                     <div class="ecard-avatar" style="background:${gradient};">${initials}</div>
                     <div class="ecard-id-col">
-                        <h4 class="ecard-name">${emp.nombre}</h4>
+                        <h4 class="ecard-name" style="display: flex; align-items: center;">${emp.nombre}</h4>
                         <div class="ecard-meta">
                             <i class="fa-solid ${gI}" style="color:${gC};"></i>
                             ${tipoBadgeHtml}
@@ -203,7 +205,6 @@ async function loadVacSubEquipo() {
                     </div>
                     <div class="ecard-actions">
                         <button class="ecard-btn" onclick='openUnifiedEmpModal(${_esc(JSON.stringify(emp))})' title="Editar"><i class="fa-solid fa-pen-to-square"></i></button>
-                        <button class="ecard-btn ecard-btn-danger" onclick="deletePlanillaEmp(${emp.id})" title="Eliminar"><i class="fa-solid fa-trash-can"></i></button>
                     </div>
                 </div>
                 <div class="ecard-divider"></div>
@@ -215,6 +216,76 @@ async function loadVacSubEquipo() {
                         ${emp.puede_nocturno ? '<span class="ebadge ebadge-night"><i class="fa-solid fa-moon"></i>Nocturno</span>' : ''}
                     </div>
                     ${chips.length > 0 ? `<div class="ecard-chips">${chips.join('')}</div>` : ''}
+                </div>`;
+            grid.appendChild(card);
+        });
+
+    } catch (e) {
+        document.getElementById('equipoGrid').innerHTML = `<div class="portal-error"><i class="fa-solid fa-circle-exclamation"></i> ${e.message}</div>`;
+    }
+}
+
+async function loadVacSubInactivos() {
+    const content = document.getElementById('vacSubTabContent');
+    content.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.5rem;">
+            <div>
+                <h3 style="color:var(--text-main); margin:0;"><i class="fa-solid fa-user-slash" style="color:#ef4444; margin-right:8px;"></i> Papelera de Inactivos</h3>
+                <p style="color:var(--text-muted); font-size:0.85rem; margin-top:4px;">Colaboradores desactivados y opción de eliminación total</p>
+            </div>
+            <div style="display:flex; gap:10px; align-items:center;">
+                <div class="portal-stat-chip" id="equipoCountChip">
+                    <i class="fa-solid fa-ban" style="color: #ef4444;"></i> <span>--</span>
+                </div>
+            </div>
+        </div>
+        <div id="equipoGrid" class="equipo-grid">
+            <div class="portal-loading"><div class="portal-spinner"></div><span>Cargando inactivos...</span></div>
+        </div>`;
+
+    try {
+        const res = await fetch('/api/planillas/empleados?solo_activos=false');
+        const allEmps = await res.json();
+        const emps = allEmps.filter(e => e.activo === 0 || e.activo === false);
+        const grid = document.getElementById('equipoGrid');
+        document.querySelector('#equipoCountChip span').textContent = `${emps.length} inactivos`;
+        grid.innerHTML = '';
+
+        if (emps.length === 0) {
+            grid.innerHTML = '<div class="portal-empty"><i class="fa-solid fa-user-slash"></i><p>No hay colaboradores inactivos en la papelera.</p></div>';
+            return;
+        }
+
+        emps.forEach((emp, idx) => {
+            const initials = _initials(emp.nombre);
+            const gradient = _grad(emp.id);
+            const gI = emp.genero === 'F' ? 'fa-venus' : 'fa-mars';
+            const gC = emp.genero === 'F' ? '#ec4899' : '#3b82f6';
+            const statusBadge = '<span style="color: #ef4444; font-size: 0.75rem; border: 1px solid #ef4444; background: rgba(239, 68, 68, 0.1); padding: 2px 6px; border-radius: 4px; margin-left: 8px; vertical-align: middle;">Inactivo</span>';
+
+            const card = document.createElement('div');
+            card.className = 'ecard';
+            card.style.animationDelay = `${idx * 0.04}s`;
+            card.style.opacity = '0.6';
+            card.style.border = '1px solid rgba(239, 68, 68, 0.3)';
+            
+            card.innerHTML = `
+                <div class="ecard-top">
+                    <div class="ecard-avatar" style="background:${gradient}; filter: grayscale(100%);">${initials}</div>
+                    <div class="ecard-id-col">
+                        <h4 class="ecard-name" style="display: flex; align-items: center; color: #9ca3af;">${emp.nombre} ${statusBadge}</h4>
+                        <div class="ecard-meta" style="filter: grayscale(100%);">
+                            <i class="fa-solid ${gI}" style="color:${gC};"></i>
+                        </div>
+                    </div>
+                    <div class="ecard-actions">
+                        <button class="ecard-btn" onclick='openUnifiedEmpModal(${_esc(JSON.stringify(emp))})' title="Reactivar / Editar"><i class="fa-solid fa-rotate-left"></i></button>
+                        <button class="ecard-btn ecard-btn-danger" style="background: rgba(239, 68, 68, 0.15);" onclick="deletePlanillaEmp(${emp.id})" title="Borrado Permanente"><i class="fa-solid fa-trash-can"></i></button>
+                    </div>
+                </div>
+                <div class="ecard-divider"></div>
+                <div class="ecard-bottom" style="filter: grayscale(100%); opacity: 0.8;">
+                    <span style="font-size: 0.8rem; color: #9ca3af;"><i class="fa-solid fa-triangle-exclamation"></i> Borrar aquí elimina todo su historial para siempre</span>
                 </div>`;
             grid.appendChild(card);
         });
@@ -381,11 +452,12 @@ async function guardarPlanillaEmp() {
 }
 
 async function deletePlanillaEmp(id) {
-    if (!confirm('Seguro que deseas eliminar este colaborador?')) return;
+    if (!confirm('¡ATENCIÓN! La eliminación borrará permanentemente a este empleado, su historial de horarios, vacaciones y préstamos. ¿Estás absolutamente seguro de que deseas eliminarlo del sistema?')) return;
     try {
         const res = await fetch(`/api/planillas/empleados/${id}`, { method: 'DELETE' });
         if (!res.ok) throw new Error('Error al eliminar');
-        loadVacSubEquipo();
+        // Because they are in the inactivos tab to be deleted:
+        loadVacSubInactivos();
     } catch (e) { alert(e.message); }
 }
 
@@ -432,6 +504,9 @@ async function loadGestionPersonalTab() {
                 <button id="vst-prestamos" class="vac-subtab" onclick="switchVacSubTab('prestamos')">
                     <i class="fa-solid fa-hand-holding-dollar"></i> Préstamos
                 </button>
+                <button id="vst-inactivos" class="vac-subtab" onclick="switchVacSubTab('inactivos')" style="margin-left: auto;">
+                    <i class="fa-solid fa-user-slash"></i> Inactivos
+                </button>
             </div>
             <div id="vacSubTabContent">
                 <div class="portal-loading"><div class="portal-spinner"></div><span>Cargando datos...</span></div>
@@ -449,6 +524,7 @@ function switchVacSubTab(tab) {
     else if (tab === 'vacaciones') loadVacSubVacaciones();
     else if (tab === 'permisos') loadVacSubPermisos();
     else if (tab === 'prestamos') loadVacSubPrestamos();
+    else if (tab === 'inactivos') loadVacSubInactivos();
 }
 
 // ── SUB-TAB: VACACIONES ──

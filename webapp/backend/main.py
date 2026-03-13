@@ -29,6 +29,8 @@ if os.path.exists(_planillas_dir):
     import horario_db
 
 DB_FILE_LEGACY = "database.json"  # JSON original, kept for migration reference
+EXPORT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../export_horarios")
+os.makedirs(EXPORT_DIR, exist_ok=True)
 
 def _get_conn():
     """Get connection to the shared planilla.db"""
@@ -265,6 +267,10 @@ class HistoryEntry(BaseModel):
     next_sunday_rotation_queue: Optional[List[str]] = None
     week_dates: Optional[Dict[str, str]] = None
     timestamp: str = "" 
+
+class ImageExportRequest(BaseModel):
+    image_data: str  # Base64 string
+    filename: str = "horario.png"
 
 # ENDPOINTS
 @app.get("/api/employees")
@@ -917,11 +923,37 @@ def export_excel(history_index: Optional[int] = None):
     # Save to temp
     suffix = ".xlsm" if use_vba else ".xlsx"
     filename = "horario" + suffix
+    
+    # Save a local backup to EXPORT_DIR
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    local_filename = f"horario_{timestamp}{suffix}"
+    local_path = os.path.join(EXPORT_DIR, local_filename)
+    wb.save(local_path)
+    
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
     wb.save(tmp.name)
     tmp.close()
     
     return FileResponse(tmp.name, filename=filename)
+
+@app.post("/api/export_image")
+def export_image(req: ImageExportRequest):
+    import base64
+    try:
+        # data:image/png;base64,...
+        header, encoded = req.image_data.split(",", 1)
+        data = base64.b64decode(encoded)
+        
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"horario_{timestamp}.png"
+        file_path = os.path.join(EXPORT_DIR, filename)
+        
+        with open(file_path, "wb") as f:
+            f.write(data)
+            
+        return {"status": "success", "file": filename, "path": file_path}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ==============================================================================
 # PLANILLAS API ENDPOINTS (Shared with new unified Web UI)

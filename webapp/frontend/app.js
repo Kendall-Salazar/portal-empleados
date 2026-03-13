@@ -116,16 +116,16 @@ function renderEmployees() {
         
         card.innerHTML = `
             <div class="emp-info">
-                <h4>${emp.name} ${isInactive ? '<span style="color:#ef4444; font-size: 0.8em;">(Inactivo)</span>' : ''}</h4>
+                <h4 style="${isInactive ? 'filter: grayscale(100%); opacity: 0.8;' : ''}">${emp.name}</h4>
                 <div class="tags">
                     ${isInactive ? '<span class="tag inactive" style="background:#fee2e2;color:#ef4444;" title="Usuario Inactivo"><i class="fa-solid fa-ban"></i> Inactivo</span>' : ''}
-                    ${emp.is_jefe_pista ? '<span class="tag success" title="Jefe de Pista"><i class="fa-solid fa-star"></i> Jefe</span>' : ''}
-                    ${emp.can_do_night ? '<span class="tag night" title="Turno Noche"><i class="fa-solid fa-moon"></i> Noche</span>' : ''}
-                    ${emp.forced_libres ? '<span class="tag forced" title="Forzar Libres"><i class="fa-solid fa-thumbtack"></i> Libres</span>' : ''}
-                    ${emp.forced_quebrado ? '<span class="tag" style="background:#ede9fe;color:#7c3aed;" title="Forzar Quebrado"><i class="fa-solid fa-bolt"></i> Q (6d)</span>' : ''}
-                    ${emp.allow_no_rest ? '<span class="tag" style="background:#fef3c7;color:#f59e0b;" title="Sin Descanso"><i class="fa-solid fa-fire"></i> 7d</span>' : ''}
-                    ${emp.strict_preferences ? '<span class="tag" style="background:#fef2f2;color:#ef4444;"><i class="fa-solid fa-lock"></i> Estricto</span>' : ''}
-                    ${fixedCount > 0 ? `<span class="tag fixed"><i class="fa-solid fa-lock-open"></i> ${fixedCount}</span>` : ''}
+                    ${emp.is_jefe_pista ? `<span class="tag success" style="${isInactive ? 'filter: grayscale(100%);' : ''}" title="Jefe de Pista"><i class="fa-solid fa-star"></i> Jefe</span>` : ''}
+                    ${emp.can_do_night ? `<span class="tag night" style="${isInactive ? 'filter: grayscale(100%);' : ''}" title="Turno Noche"><i class="fa-solid fa-moon"></i> Noche</span>` : ''}
+                    ${emp.forced_libres ? `<span class="tag forced" style="${isInactive ? 'filter: grayscale(100%);' : ''}" title="Forzar Libres"><i class="fa-solid fa-thumbtack"></i> Libres</span>` : ''}
+                    ${emp.forced_quebrado ? `<span class="tag" style="background:#ede9fe;color:#7c3aed;${isInactive ? 'filter: grayscale(100%);' : ''}" title="Forzar Quebrado"><i class="fa-solid fa-bolt"></i> Q (6d)</span>` : ''}
+                    ${emp.allow_no_rest ? `<span class="tag" style="background:#fef3c7;color:#f59e0b;${isInactive ? 'filter: grayscale(100%);' : ''}" title="Sin Descanso"><i class="fa-solid fa-fire"></i> 7d</span>` : ''}
+                    ${emp.strict_preferences ? `<span class="tag" style="background:#fef2f2;color:#ef4444;${isInactive ? 'filter: grayscale(100%);' : ''}"><i class="fa-solid fa-lock"></i> Estricto</span>` : ''}
+                    ${fixedCount > 0 ? `<span class="tag fixed" style="${isInactive ? 'filter: grayscale(100%);' : ''}"><i class="fa-solid fa-lock-open"></i> ${fixedCount}</span>` : ''}
                 </div>
             </div>
             <div class="emp-actions">
@@ -133,10 +133,10 @@ function renderEmployees() {
                 <button class="btn-icon delete" onclick="deleteEmployee(${index})"><i class="fa-solid fa-trash"></i></button>
             </div>
         `;
-        // Apply grayscale to inactive cards
+        // Apply UI style to inactive cards
         if (isInactive) {
-            card.style.filter = "grayscale(100%)";
             card.style.opacity = "0.7";
+            card.style.border = "1px solid rgba(239, 68, 68, 0.3)";
         }
         grid.appendChild(card);
 
@@ -1186,8 +1186,17 @@ function exportToImage() {
 
         const link = document.createElement('a');
         link.download = 'horario_completo.png';
-        link.href = canvas.toDataURL("image/png");
+        const imgData = canvas.toDataURL("image/png");
+        link.href = imgData;
         link.click();
+
+        // Backup to server
+        fetch(`${API_URL}/export_image`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image_data: imgData, filename: 'horario_completo.png' })
+        }).catch(err => console.error("Server backup failed:", err));
+
     }).catch(err => {
         console.error("Capture failed:", err);
         // Restore in case of error

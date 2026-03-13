@@ -287,8 +287,29 @@ def remove_empleado(emp_id):
 
 
 def delete_empleado(emp_id):
-    """Alias for remove_empleado (soft delete)."""
-    remove_empleado(emp_id)
+    """Hard delete empleado de todas las tablas."""
+    conn = get_conn()
+    row = conn.execute("SELECT nombre FROM empleados WHERE id=?", (emp_id,)).fetchone()
+    if not row:
+        conn.close()
+        return
+
+    nombre = row["nombre"]
+
+    # Eliminar registros asociados
+    conn.execute("DELETE FROM vacaciones WHERE empleado_id=?", (emp_id,))
+    conn.execute("DELETE FROM permisos WHERE empleado_id=?", (emp_id,))
+    
+    prestamos = conn.execute("SELECT id FROM prestamos WHERE empleado_id=?", (emp_id,)).fetchall()
+    for p in prestamos:
+        conn.execute("DELETE FROM prestamo_abonos WHERE prestamo_id=?", (p["id"],))
+    conn.execute("DELETE FROM prestamos WHERE empleado_id=?", (emp_id,))
+
+    conn.execute("DELETE FROM horario_empleados WHERE nombre=?", (nombre,))
+    conn.execute("DELETE FROM empleados WHERE id=?", (emp_id,))
+
+    conn.commit()
+    conn.close()
 
 
 def reactivar_empleado(emp_id):

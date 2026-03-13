@@ -92,12 +92,12 @@ def coverage_bounds(h: int, day: str = None, standard_mode: bool = False, num_em
             if 7 <= h <= 16: return (3, N)
             if 17 <= h <= 19: return (3, N)  # Hard min 3 + soft target 4 (peak crítico)
             if 20 <= h <= 21: return (2, 2)    # Exactamente 2 (10pm leaver + 11pm leaver)
-            if h == 22: return (2, 2)          # Exactamente 2 (nocturno + 11pm leaver)
+            if h == 22: return (1, 2)          # Relaxed: 1 or 2 (night + optional 11pm leaver)
             if 23 <= h <= 28: return (1, 1)    # Solo nocturno
             return (3, N)
     
     # Weekdays (Lun-Sáb)
-    if h == 5: return (2, 2)          # Exactamente 2
+    if h == 5: return (1, 2)          # Relaxed to min 1 (soft target 2 handled via penalty)
     if h == 6: return (2, N)          # Hard min 2 (soft target 3, J_07-17 compatibility)
     if 7 <= h <= 10: return (3, N)    # Hard min 3 (soft target 4 via 500k penalty)
     if h == 11: return (3, N)         # Mínimo 3
@@ -496,48 +496,87 @@ class ShiftScheduler:
                     if s not in ["OFF", "VAC", "PERM", "N_22-05"]:
                         model.Add(x[(primary_night, d, s)] == 0)
             
-            # b) Exactamente el número de libres asignados por base o fijos
-            if not any((primary_night, d) in fixed_constraints for d in DAYS):
-                 # OFF, VAC, or PERM counts as free
-                 model.Add(sum(x[(primary_night, d, "OFF")] + x[(primary_night, d, "VAC")] + x[(primary_night, d, "PERM")] for d in DAYS) == 1)
+            # b) Exactamente el número de libres asignados por base o fijos.
+            # Siempre se aplica este límite — incluso si hay fixed_constraints para algún día.
+            # Usamos el mismo cálculo que el resto de empleados: base = max(1, forced_off).
+            _night_fs = self.emp_data[primary_night].get('fixed_shifts', {}) or {}
+            _night_forced_off = sum(1 for d in DAYS if _night_fs.get(d) == 'OFF')
+            _night_forced_vac = sum(1 for d in DAYS if _night_fs.get(d) == 'VAC')
+            _night_base_off = max(1, _night_forced_off)
+            model.Add(sum(
+                x[(primary_night, d, "OFF")] + x[(primary_night, d, "VAC")] + x[(primary_night, d, "PERM")]
+                for d in DAYS
+            ) == _night_base_off + _night_forced_vac)
 
-            # c) Reemplazo nocturno: solo la persona de libres cubre a Primary
+            # c) Reemplazo nocturno: solo la persona de libres cubre a Primary,
+            #    EXCEPTO cuando hay un empleado con fixed_shift N_22-05 ese día
+            #    (cobertura manual explícita → la persona de libres queda libre).
             for d in DAYS:
+                # Detectar si algún otro empleado tiene N_22-05 fijado manualmente ese día
+                manual_night_cover_d = any(
+                    emp != primary_night
+                    and self.emp_data[emp].get('fixed_shifts', {}).get(d) == "N_22-05"
+                    for emp in self.employees
+                )
+
                 # Primary is OFF logic includes VAC and PERM
                 primary_off_var = model.NewBoolVar(f"primary_off_{d}")
                 model.Add(x[(primary_night, d, "OFF")] + x[(primary_night, d, "VAC")] + x[(primary_night, d, "PERM")] == 1).OnlyEnforceIf(primary_off_var)
                 model.Add(x[(primary_night, d, "OFF")] + x[(primary_night, d, "VAC")] + x[(primary_night, d, "PERM")] == 0).OnlyEnforceIf(primary_off_var.Not())
-                
-                for e in self.night_replacements:
-                    if e == primary_night: continue
-                    
-                    if e not in persona_hace_libres:
-                        # Ensures if they are not in the libres dict, they can't do it
-                        pass
-                    else:
-                        is_libres = persona_hace_libres[e]
-                        # Logic from script:
-                        # Si ES persona de libres Y Primary OFF → debe hacer N_22-05
-                        model.Add(x[(e, d, "N_22-05")] == 1).OnlyEnforceIf([is_libres, primary_off_var])
-                        # Si ES persona de libres Y Primary trabaja → no hace N_22-05
-                        model.Add(x[(e, d, "N_22-05")] == 0).OnlyEnforceIf([is_libres, primary_off_var.Not()])
 
-            # Bloquear N_22-05 para quienes no pueden 
-            # (AND for everyone else who is not Primary and not the active Libres person)
+                # Requirement: If Primary is OFF, EXACTLY one other night-eligible person MUST do N_22-05
+                # This handles all "special cases" naturally.
+                model.Add(sum(x[(e, d, "N_22-05")] for e in self.night_replacements if e != primary_night) == 1).OnlyEnforceIf(primary_off_var)
+                model.Add(sum(x[(e, d, "N_22-05")] for e in self.night_replacements if e != primary_night) == 0).OnlyEnforceIf(primary_off_var.Not())
+
+                # Preference: The assigned "persona_hace_libres" is the STRONGLY preferred candidate
+                for e_repl in self.night_replacements:
+                    if e_repl == primary_night or e_repl not in persona_hace_libres: continue
+                    
+                    is_libres = persona_hace_libres[e_repl]
+                    libres_is_off_d = model.NewBoolVar(f"libres_is_off_{e_repl}_{d}")
+                    model.Add(x[(e_repl, d, "OFF")] + x[(e_repl, d, "VAC")] + x[(e_repl, d, "PERM")] == 1).OnlyEnforceIf(libres_is_off_d)
+                    model.Add(x[(e_repl, d, "OFF")] + x[(e_repl, d, "VAC")] + x[(e_repl, d, "PERM")] == 0).OnlyEnforceIf(libres_is_off_d.Not())
+                    
+                    # If e is the Libres person and primary is off, they MUST cover UNLESS they are also OFF
+                    # If they are OFF, the sum constraint above will pick someone else.
+                    should_cover = model.NewBoolVar(f"should_cover_{e_repl}_{d}")
+                    model.AddBoolAnd([is_libres, primary_off_var, libres_is_off_d.Not()]).OnlyEnforceIf(should_cover)
+                    model.AddBoolOr([is_libres.Not(), primary_off_var.Not(), libres_is_off_d]).OnlyEnforceIf(should_cover.Not())
+                    
+                    # 1M penalty if the ideal replacement doesn't cover (allows fallback to others)
+                    penalties.append(1000000 * should_cover.Not())
+                    # model.Add(x[(e_repl, d, "N_22-05")] == 1).OnlyEnforceIf(should_cover) # Too aggressive
+                    # Instead of hard Add, use another soft penalty to prefer the libres person
+                    penalties.append(2000000 * should_cover.Not())
+
+            # Bloquear N_22-05 para quienes no pueden
+            # EXCEPCIÓN: empleados con fixed_shift N_22-05 en ese día específico
+            # (cobertura manual → se les permite hacer la noche puntualmente).
             for e in self.employees:
                 if e == primary_night: continue
                 
                 if e not in self.night_replacements:
-                     for d in DAYS: model.Add(x[(e, d, "N_22-05")] == 0)
+                    for d in DAYS:
+                        # Permitir si tiene fijado manualmente N_22-05 ese día
+                        if self.emp_data[e].get('fixed_shifts', {}).get(d) == "N_22-05":
+                            continue
+                        model.Add(x[(e, d, "N_22-05")] == 0)
                 else:
-                     if e in persona_hace_libres:
-                         is_libres = persona_hace_libres[e] 
-                         for d in DAYS:
-                             model.Add(x[(e, d, "N_22-05")] == 0).OnlyEnforceIf(is_libres.Not())
-                     else:
-                         # e in replacements but not in flexibles? (e.g. Jefe de Pista if can_do_night=True)
-                         # Then he cannot be 'persona_hace_libres', so he cannot do night replacement here.
-                         for d in DAYS: model.Add(x[(e, d, "N_22-05")] == 0)
+                    if e in persona_hace_libres:
+                        is_libres = persona_hace_libres[e]
+                        for d in DAYS:
+                            # Permitir si tiene fijado manualmente N_22-05 ese día
+                            if self.emp_data[e].get('fixed_shifts', {}).get(d) == "N_22-05":
+                                continue
+                            model.Add(x[(e, d, "N_22-05")] == 0).OnlyEnforceIf(is_libres.Not())
+                    else:
+                        # e in replacements but not in flexibles? (e.g. Jefe de Pista if can_do_night=True)
+                        # Then he cannot be 'persona_hace_libres', so he cannot do night replacement here.
+                        for d in DAYS:
+                            if self.emp_data[e].get('fixed_shifts', {}).get(d) == "N_22-05":
+                                continue
+                            model.Add(x[(e, d, "N_22-05")] == 0)
 
         else:
             # NO Primary Night Person (Generic Rotation)
@@ -551,9 +590,35 @@ class ShiftScheduler:
             for d in DAYS:
                 model.Add(sum(x[(e, d, s)] for s in SHIFT_NAMES) == 1)
 
-        # Jensy e Ileana solo hasta 8pm (Touches Night)
+        # RESTRICCIONES ESPECÍFICAS PARA MUJERES (Ileana, Jensy)
+        # Solo trabajan 5am-1pm o 1pm-8pm (Días normales)
+        # Domingos pueden hacer también 6-2 o 7-3.
+        ALLOWED_WOMEN_WEEK = ["T1_05-13", "T8_13-20", "OFF", "VAC", "PERM"]
+        ALLOWED_WOMEN_SAT = ["T1_05-13", "T8_13-20", "T3_07-15", "OFF", "VAC", "PERM"] # Agregado T3_07-15
+        ALLOWED_WOMEN_SUN = ["T1_05-13", "T8_13-20", "T2_06-14", "T3_07-15", "OFF", "VAC", "PERM"]
         for e in self.employees:
-            if not self.emp_data[e].get('can_do_night', True):
+            is_woman = self.emp_data[e].get('gender') == 'F'
+            cannot_night = not self.emp_data[e].get('can_do_night', True)
+
+            if is_woman:
+                # RELAXED: Use high penalty instead of hard Add(x == 0) to prevent Infeasible.
+                # Penalty (6M) is higher than coverage (5M), so it only breaks if strictly necessary.
+                INVALID_SHIFT_PENALTY = 6000000
+                for d in DAYS:
+                    # Lógica de selección de lista permitida
+                    if d == "Dom":
+                        allowed = ALLOWED_WOMEN_SUN
+                    elif d == "Sáb":
+                        allowed = ALLOWED_WOMEN_SAT 
+                    else:
+                        allowed = ALLOWED_WOMEN_WEEK
+                        
+                    for s in SHIFT_NAMES:
+                        if s not in allowed:
+                            penalties.append(INVALID_SHIFT_PENALTY * x[(e, d, s)])
+
+            if cannot_night and not is_woman:
+                # Fallback genérico para otros que no puedan hacer noche
                 for d in DAYS:
                     for s in SHIFT_NAMES:
                         if touches_night(s):
@@ -660,8 +725,18 @@ class ShiftScheduler:
                 model.AddBoolOr([both_pm.Not(), not_collision.Not()]).OnlyEnforceIf(penalized_pm_overlap.Not())
                 
                 # Huge penalty for violation, ensuring it's respected unless mathematically impossible
-                penalties.append(1000000 * penalized_am_overlap)
-                penalties.append(1000000 * penalized_pm_overlap)
+                # Relaxed: Lower penalties for violation to allow "brief overlaps" as requested
+                # ensuring it's avoided if possible but not at the cost of feasibility.
+                penalties.append(200000 * penalized_am_overlap)
+                penalties.append(200000 * penalized_pm_overlap)
+
+                # --- NEW: Same Shift Guard for Women ---
+                # If they share the exact same shift code, add moderate penalty
+                for s_shared in SHIFT_NAMES:
+                    if s_shared in ["OFF", "VAC", "PERM"]: continue
+                    both_on_same_s = model.NewBoolVar(f"both_on_same_{s_shared}_{d}")
+                    model.AddBoolAnd([x[(w1, d, s_shared)], x[(w2, d, s_shared)], not_collision]).OnlyEnforceIf(both_on_same_s)
+                    penalties.append(300000 * both_on_same_s)
 
         # =========================
         # RESTRICCIÓN: DESCANSO MÍNIMO (12h normal, 8h libres)
@@ -777,6 +852,9 @@ class ShiftScheduler:
             peak_penalties.append(200000 * below_3_h6)
         
         # SOFT: Prefer 4+ people during peak hours (Lun-Sáb, h7-10 and h16-19)
+        # AM peak (h7-h10) has a much higher penalty than PM — losing AM coverage can NEVER
+        # be compensated by stacking PM shifts. 5M per hour ensures the solver always
+        # prioritizes AM coverage over any PM combination.
         for d in DAYS:
             if d == "Dom":
                 continue
@@ -785,7 +863,9 @@ class ShiftScheduler:
                 below_4 = model.NewBoolVar(f"below4_{d}_{h}")
                 model.Add(cov < 4).OnlyEnforceIf(below_4)
                 model.Add(cov >= 4).OnlyEnforceIf(below_4.Not())
-                peak_penalties.append(500000 * below_4)
+                # AM hours get 5M penalty (uncrossable), PM hours keep 500k
+                am_penalty = 5000000 if h in [7, 8, 9, 10] else 500000
+                peak_penalties.append(am_penalty * below_4)
                 
         # SOFT: Prefer 4+ people during off-peak hours as well (Lun-Sáb, h11-15)
         # But this penalty is much lower, so solver drops these hours first if short-staffed
@@ -887,6 +967,19 @@ class ShiftScheduler:
         forced_collision_days = [d for d in weekdays if mandatory_absent[d] >= 2]
         elective_days = [d for d in weekdays if d not in forced_collision_days]
         
+        # Detect "Sáb+Dom only" employees: those with fixed OFF on every weekday (Lun-Vie).
+        # They always work Sunday and should never appear in the Sunday OFF count.
+        sat_dom_only = set(
+            e for e in self.employees
+            if not self.emp_data[e].get('is_refuerzo', False)
+            and e != primary_night
+            and not self.emp_data[e].get('is_jefe_pista', False)
+            and all(
+                self.emp_data[e].get('fixed_shifts', {}).get(d) in ['OFF', 'VAC', 'PERM']
+                for d in ["Lun", "Mar", "Mié", "Jue", "Vie"]
+            )
+        )
+
         for d in DAYS:
             flex_off_per_day[d] = sum(
                 x[(e, d, "OFF")] + x[(e, d, "VAC")] + x[(e, d, "PERM")]
@@ -894,16 +987,29 @@ class ShiftScheduler:
                 if not self.emp_data[e].get('is_refuerzo', False)
                 and e != primary_night
                 and not self.emp_data[e].get('is_jefe_pista', False)
+                and (d != "Dom" or e not in sat_dom_only)  # exclude sat_dom_only from Sunday count
             )
-        
-        # HARD: Sunday allows up to 2 flex OFFs
-        model.Add(flex_off_per_day["Dom"] <= 2)
+
+        # HARD: Sunday allows up to 2 elective flex OFFs + any mandatory fixed DOM OFFs.
+        # Fixed DOM OFFs are guaranteed by hard constraints elsewhere and don't consume
+        # an elective slot — the cap only limits truly discretionary Sunday absences.
+        mandatory_dom_off_count = sum(
+            1 for e in self.employees
+            if not self.emp_data[e].get('is_refuerzo', False)
+            and e != primary_night
+            and not self.emp_data[e].get('is_jefe_pista', False)
+            and e not in sat_dom_only
+            and self.emp_data[e].get('fixed_shifts', {}).get('Dom') in ['OFF', 'VAC', 'PERM']
+        )
+        model.Add(flex_off_per_day["Dom"] <= 3 + mandatory_dom_off_count)
         
         # =========================
         # HARD CONSTRAINT: D4_13-22 on Sunday
         # =========================
         # Force at least 1 eligible person to use D4_13-22 (1pm-10pm) on Sunday.
         # Eligible: can_do_night (D4 touches night hours 20-21), not jefe, not night person, not refuerzo.
+        # EXCEPCIÓN: empleados con fixed_shift N_22-05 el domingo también se excluyen
+        # (ya están cubriendo la noche manualmente, no pueden hacer D4 al mismo tiempo).
         d4_sunday_eligible = []
         for e in self.employees:
             if self.emp_data[e].get('is_jefe_pista', False):
@@ -913,6 +1019,9 @@ class ShiftScheduler:
             if not self.emp_data[e].get('can_do_night', True):
                 continue
             if self.emp_data[e].get('is_refuerzo', False):
+                continue
+            # Excluir a quien tiene N_22-05 fijado el domingo
+            if self.emp_data[e].get('fixed_shifts', {}).get('Dom') == "N_22-05":
                 continue
             # Skip employees with hard-fixed Sunday shifts that aren't D4
             if (e, "Dom") in fixed_constraints and fixed_constraints[(e, "Dom")] != "D4_13-22":
@@ -967,7 +1076,13 @@ class ShiftScheduler:
         # so the libres person is free to work a day shift (extra body)
         if primary_night:
             for d in weekdays:
-                model.Add(x[(primary_night, d, "N_22-05")] == 1).OnlyEnforceIf(collision_vars[d])
+                # RELAXED: Soft constraint instead of hard Add
+                # Penalize if night person is NOT working on a collision day
+                is_working_night = x[(primary_night, d, "N_22-05")]
+                night_not_on_collision = model.NewBoolVar(f"night_not_on_collision_{d}")
+                model.AddBoolAnd([collision_vars[d], is_working_night.Not()]).OnlyEnforceIf(night_not_on_collision)
+                model.AddBoolOr([collision_vars[d].Not(), is_working_night]).OnlyEnforceIf(night_not_on_collision.Not())
+                penalties.append(1000000 * night_not_on_collision)
         
         # =========================
         # COLLISION DAY CONFIG
@@ -1059,7 +1174,7 @@ class ShiftScheduler:
                 elif ref_type == 'diurno':
                     allowed_shifts_refuerzo.extend([
                         "R1_07-11", "T1_05-13", "T16_05-14", "T2_06-14", "D1_05-13",
-                        "T3_07-15", "T4_08-16", "T5_09-17",
+                        "T3_07-15", "T5_09-17",
                         "T8_13-20", "T13_16-22", "D2_14-22"
                     ])
                 else: # automatico
@@ -1067,7 +1182,7 @@ class ShiftScheduler:
                     allowed_shifts_refuerzo.extend([
                         "R1_07-11", "R2_16-20",
                         "T1_05-13", "T16_05-14", "T2_06-14", "D1_05-13",
-                        "T3_07-15", "T4_08-16", "T5_09-17", "T17_16-23",
+                        "T3_07-15", "T5_09-17", "T17_16-23",
                         "T8_13-20", "T13_16-22", "T12_14-22", "D2_14-22", "D3_15-23", 
                         "N_22-05", "Q3_05-11+17-22"
                     ])
@@ -1213,14 +1328,14 @@ class ShiftScheduler:
                 q1_penalty = 999999
                 q2_penalty = 999999
             # In standard mode, boost PM shift rewards to give solver clear alternatives:
-            t8_reward = -1500    # T8_13-20 (7h) covers h13-h19 peak perfectly
+            t8_reward = 0        # T8_13-20: sin preferencia — el solver lo elige solo si cubre la cobertura
             t12_reward = -1200   # T12_14-22 (8h) covers h14-h21 — strong PM coverage
             t9_reward = -800     # T9_14-21 (7h) covers h14-h20
         else:
             # Short-staffed: Q shifts are needed for peak coverage (low penalty)
             q1_penalty = 50
             q2_penalty = 25
-            t8_reward = -500
+            t8_reward = 0
             t12_reward = -400
             t9_reward = -300
         
@@ -1360,14 +1475,31 @@ class ShiftScheduler:
                         # unless coverage needs are absolutely desperate.
                         penalties.append(3000 * x[("Refuerzo", d, s)])
 
-        # O7. Preferencia T8 (1pm-8pm) como turno PM principal
-        # T11 (12pm-8pm) bloqueado en standard_mode; solo recompensado en short-staffed mode
-        # Also T12 (14-22) and T9 (14-21) — strong PM alternatives when Q eliminated
+        # O7. T8_13-20 (1pm-8pm): sin preferencia activa.
+        # HARD CAP dinámico: el límite de personas en T8 escala con el tamaño de la plantilla.
+        #   <=10 empleados activos → máximo 2 en T8
+        #   11-12 empleados activos → máximo 3 en T8
+        #   13+ empleados activos  → máximo 4 en T8
+        # Esto evita que una plantilla grande se vea artificialmente restringida,
+        # pero impide que una plantilla pequeña sacrifique cobertura AM por acumular PM.
+        if active_count <= 10:
+            t8_max = 2
+        elif active_count <= 12:
+            t8_max = 3
+        else:
+            t8_max = 4
+
+        for d_t8 in DAYS:
+            if d_t8 == "Dom": continue
+            model.Add(sum(x[(e, d_t8, "T8_13-20")] for e in self.employees) <= t8_max)
+
         for e in self.employees:
              for d in DAYS:
                  if not standard_mode:
                      penalties.append(-1500 * x[(e, d, "T11_12-20")])
-                 penalties.append(t8_reward * x[(e, d, "T8_13-20")])
+                 # Recompensar T2_06-14 el sábado para incentivar cobertura AM
+                 if d == "Sáb":
+                     penalties.append(-2000 * x[(e, d, "T2_06-14")])
         
         # O8. HEAVY EXTENDED SHIFTS - HARD BLOCKING
         # Heavy shifts (E1, E2, J_ 10h+) are FORBIDDEN. Q3 is the correct
@@ -1375,7 +1507,7 @@ class ShiftScheduler:
         # handles the gap. When use_refuerzo=False, Q3 handles it.
         # If the solver can't find a solution without heavy shifts -> Infeasible.
         
-        heavy_extended_shifts = ['J_07-17', 'J_08-18', 'J_09-19', 'J_10-20', 'E1_07-18', 'E2_08-19']
+        heavy_extended_shifts = ['J_07-17', 'J_08-18', 'J_09-19', 'J_10-20', 'E1_07-18', 'E2_08-19', 'T4_08-16']
         
         # HARD BLOCK: No heavy extended shifts for anyone, ever.
         for e in self.employees:
@@ -1431,7 +1563,19 @@ class ShiftScheduler:
                     model.AddBoolAnd([x[(e, d, "T3_07-15")], is_short_staffed]).OnlyEnforceIf(using_ileana_short)
                     model.AddBoolOr([x[(e, d, "T3_07-15")].Not(), is_short_staffed.Not()]).OnlyEnforceIf(using_ileana_short.Not())
                     penalties.append(-50000 * using_ileana_short)
-                    
+
+                    # SÁBADO ESTÁNDAR: si hay un empleado sat_dom_only trabajando T1 ese día,
+                    # Ileana debe preferir T3_07-15 en vez de T1 (evitar 3x T1 AM).
+                    # Esta recompensa aplica en standard_mode independientemente de short_staffed.
+                    if d == "Sáb" and standard_mode:
+                        sat_dom_t1_count = sum(
+                            1 for emp in self.employees
+                            if emp in sat_dom_only
+                            and self.emp_data[emp].get('fixed_shifts', {}).get('Sáb') == 'T1_05-13'
+                        )
+                        if sat_dom_t1_count > 0:
+                            penalties.append(-80000 * x[(e, d, "T3_07-15")])
+
                 # Make Jensy explicitly favor T16_05-14 on short staffed days
                 if e == "Jensy":
                     using_jensy_short = model.NewBoolVar(f"jensy_req_short_{d}")
@@ -1445,16 +1589,49 @@ class ShiftScheduler:
              for d in DAYS:
                  if not standard_mode:
                      # Only penalize T4/T2 and reward T3 when short-staffed (T3 available)
-                     penalties.append(400 * x[(e, d, "T4_08-16")])
-                     penalties.append(2000 * x[(e, d, "T2_06-14")])
+                     # T2_06-14: no penalizar sábado — es el turno AM natural ese día
+                     if d != "Sáb":
+                         penalties.append(2000 * x[(e, d, "T2_06-14")])
                      penalties.append(-1000 * x[(e, d, "T3_07-15")])
                  # Reward T1_05-13 to ensure early morning coverage when needed
                  penalties.append(-2000 * x[(e, d, "T1_05-13")])
-                 # Prefer 14-22 over 13-22/14-23
-                 penalties.append(-1500 * x[(e, d, "D2_14-22")])
                  # Prefer 15-23 over 14-23
                  penalties.append(-1500 * x[(e, d, "D3_15-23")])
-                 
+                 # D2_14-22: recompensa condicional (ver O9c abajo)
+
+        # O9c. Preferencia T10_15-22 sobre D2_14-22 de Lun-Vie
+        # =========================
+        # En días normales de lunes a viernes se prefiere el turno 15-22 sobre el 14-22.
+        # D2_14-22 solo se usa en: días conflictivos (collision), Sábado o Domingo.
+        # En esos días especiales D2 sigue siendo recompensado normalmente.
+        # Lógica de pesos:
+        #   - Lun-Vie día normal  : D2 penalizado (+200 000), T10 recompensado (-120 000)
+        #   - Lun-Vie día colisión: D2 recompensado (-1 500),  T10 recompensado (-120 000)
+        #   - Sáb / Dom           : D2 recompensado (-1 500),  T10 recompensado (-1 500)
+        lun_vie = [d for d in DAYS if d not in ["Sáb", "Dom"]]
+        for e in self.employees:
+            # Sábado y Domingo: recompensar ambos igual que antes
+            for d_special in ["Sáb", "Dom"]:
+                penalties.append(-1500 * x[(e, d_special, "D2_14-22")])
+                penalties.append(-1500 * x[(e, d_special, "T10_15-22")])
+
+            # Lunes a Viernes: comportamiento condicional según si es día de colisión
+            for d in lun_vie:
+                # D2_14-22 en día normal (no colisión) → penalizar fuerte
+                d2_normal = model.NewBoolVar(f"d2_normal_{e}_{d}")
+                model.AddBoolAnd([x[(e, d, "D2_14-22")], collision_vars[d].Not()]).OnlyEnforceIf(d2_normal)
+                model.AddBoolOr([x[(e, d, "D2_14-22")].Not(), collision_vars[d]]).OnlyEnforceIf(d2_normal.Not())
+                penalties.append(200000 * d2_normal)
+
+                # D2_14-22 en día colisión → recompensar normalmente
+                d2_collision = model.NewBoolVar(f"d2_collision_{e}_{d}")
+                model.AddBoolAnd([x[(e, d, "D2_14-22")], collision_vars[d]]).OnlyEnforceIf(d2_collision)
+                model.AddBoolOr([x[(e, d, "D2_14-22")].Not(), collision_vars[d].Not()]).OnlyEnforceIf(d2_collision.Not())
+                penalties.append(-1500 * d2_collision)
+
+                # T10_15-22 de Lun-Vie: siempre recompensado (turno preferido)
+                penalties.append(-120000 * x[(e, d, "T10_15-22")])
+
         # O9b. ANTI-DUPLICATION: REMOVED
         # Duplicate shifts (e.g. 2x T1_05-13, 2x T8_13-20) are allowed and part
         # of the ideal distribution pattern.
@@ -1589,18 +1766,30 @@ class ShiftScheduler:
                 was_pm_majority = pm_count > am_count
                 
                 if e in turno_principal and turno_principal[e]:
-                    ROTATION_PENALTY = 25000  # High enough to force rotation, but lower than consistency (50k) 
+                    ROTATION_PENALTY = 200000  # High enough to force rotation
                     for s, var in turno_principal[e].items():
                         if was_am_majority and s in AM_SHIFTS:
                             penalties.append(ROTATION_PENALTY * var)
                         elif was_pm_majority and s in PM_SHIFTS:
                             penalties.append(ROTATION_PENALTY * var)
+                    
+                    # Extra penalty for Women repeating majority type
+                    if self.emp_data[e].get('gender') == 'F':
+                        GENDER_ROTATION_PENALTY = 500000
+                        for s, var in turno_principal[e].items():
+                            if was_am_majority and s in AM_SHIFTS:
+                                penalties.append(GENDER_ROTATION_PENALTY * var)
+                            elif was_pm_majority and s in PM_SHIFTS:
+                                penalties.append(GENDER_ROTATION_PENALTY * var)
 
         # 2. SUNDAY ROTATION (History-based queue)
         # Build rotation queue by analyzing history: who had Sunday OFF least recently goes first
         # NOTE: Night person IS eligible for Sunday rotation — the persona_hace_libres
         # covers the N_22-05 replacement when primary night is OFF on Sunday.
-        eligible = [e for e in sorted(self.employees) if not self.emp_data[e].get('is_jefe_pista', False)]
+        # Exclude sat_dom_only employees from Sunday rotation — they always work Sunday.
+        eligible = [e for e in sorted(self.employees)
+                    if not self.emp_data[e].get('is_jefe_pista', False)
+                    and e not in sat_dom_only]
         
         # Scan history to find each employee's last Sunday OFF (index = recency)
         last_sunday_off = {}  # employee -> history_index (higher = more recent)
@@ -1634,24 +1823,33 @@ class ShiftScheduler:
         rotation_target = rotation_queue[0] if rotation_queue else None
         
         if rotation_target:
-            if manual_sunday_off and manual_sunday_off != rotation_target:
-                # Someone ELSE has manual Sunday OFF -> skip rotation soft constraint
-                # (their fixed_shift already handles their OFF day)
-                # Still penalize others from taking Sunday OFF unnecessarily
-                for e in rotation_queue:
-                    if e == manual_sunday_off: continue
-                    penalties.append(10000 * x[(e, "Dom", "OFF")])
-            else:
-                # Normal rotation: soft constraint to give target Sunday OFF
-                # Replace IntVar with native BoolVar math:
-                if rotation_target in x and (rotation_target, "Dom", "OFF") in x:
-                     # 5M penalty for denying the rotation target's Sunday OFF
-                     penalties.append(5000000 * (x[(rotation_target, "Dom", "OFF")].Not()))
-                
-                # Penalize OTHERS having Sunday OFF
-                for e in rotation_queue:
-                    if e == rotation_target: continue
-                    # Strong penalty to discourage the wrong person getting Sunday off
+            # Always guarantee the rotation_target their Sunday OFF (5M if denied)
+            if rotation_target in x and (rotation_target, "Dom", "OFF") in x:
+                penalties.append(5000000 * (x[(rotation_target, "Dom", "OFF")].Not()))
+
+            # Build the set of employees who are "free" to take Sunday OFF without issue:
+            # manual_sunday_off and rotation_target are already accounted for.
+            # All remaining flex employees are divided into:
+            #   - secondary_candidate: the next person in the rotation queue (low penalty ~5k)
+            #     This allows a 4th Sunday OFF when coverage permits.
+            #   - everyone else: penalized at 500k to avoid gratuitous extra OFFs.
+            accounted = set()
+            if manual_sunday_off:
+                accounted.add(manual_sunday_off)
+            accounted.add(rotation_target)
+
+            remaining_queue = [e for e in rotation_queue if e not in accounted]
+            secondary_candidate = remaining_queue[0] if remaining_queue else None
+
+            for e in rotation_queue:
+                if e in accounted:
+                    continue
+                if e == secondary_candidate:
+                    # Low penalty: solver will give this person Sunday OFF when
+                    # coverage allows it (i.e. the 4th libre scenario).
+                    penalties.append(5000 * x[(e, "Dom", "OFF")])
+                else:
+                    # Strong penalty: discourage anyone else from taking Sunday OFF.
                     penalties.append(500000 * x[(e, "Dom", "OFF")])
 
         # O6. Sunday Rotation (Historial Compatibility)
