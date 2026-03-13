@@ -663,7 +663,7 @@ def export_excel(history_index: Optional[int] = None):
         target_tasks = last_result.get("daily_tasks", {}) 
     
     if not target_schedule:
-        pass
+        raise HTTPException(status_code=404, detail="No hay horario generado para exportar")
 
     from openpyxl.styles import Border, Side
     from scheduler_engine import DAYS, SHIFTS
