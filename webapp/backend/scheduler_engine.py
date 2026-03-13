@@ -1817,15 +1817,34 @@ class ShiftScheduler:
                 # Factibilidad aproximada del hard-min opuesto considerando solo días fijos.
                 fixed_same_block_days = 0
                 fixed_absent_days = 0
+                fixed_off_days = 0
+                fixed_vac_days = 0
                 for d in DAYS:
                     fixed_s = fixed_map.get(d)
                     fixed_b = shift_block(fixed_s)
                     if fixed_b is None and fixed_s in ["OFF", "VAC", "PERM"]:
                         fixed_absent_days += 1
+                        if fixed_s == "OFF":
+                            fixed_off_days += 1
+                        elif fixed_s == "VAC":
+                            fixed_vac_days += 1
                     elif fixed_b == ("AM" if was_am_majority else "PM"):
                         fixed_same_block_days += 1
 
-                max_possible_opposite = len(DAYS) - fixed_absent_days - fixed_same_block_days
+                # Reservar días OFF/VAC obligatorios que aún no estén fijados en fixed_shifts.
+                # El core impone OFF+VAC == base_off + forced_vac (base_off >= 1 para personal normal),
+                # así que debemos descontar esos días no laborables para no sobreestimar días opuestos factibles.
+                base_off = max(1, fixed_off_days)
+                required_off_vac_days = base_off + fixed_vac_days
+                fixed_off_vac_days = fixed_off_days + fixed_vac_days
+                pending_required_off_vac_days = max(0, required_off_vac_days - fixed_off_vac_days)
+
+                max_possible_opposite = (
+                    len(DAYS)
+                    - fixed_absent_days
+                    - pending_required_off_vac_days
+                    - fixed_same_block_days
+                )
                 min_opposite_target = 2
 
                 if max_possible_opposite >= min_opposite_target:
