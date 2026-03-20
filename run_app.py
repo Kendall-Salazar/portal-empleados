@@ -6,8 +6,22 @@ import sys
 import os
 import shutil
 
+def get_resource_root():
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return os.path.abspath(sys._MEIPASS)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def get_runtime_root():
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
 # Add backend to path so it can be imported
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'webapp', 'backend'))
+backend_path = os.path.join(get_resource_root(), 'webapp', 'backend')
+if os.path.exists(backend_path):
+    sys.path.append(backend_path)
 
 def run_server():
     import main
@@ -16,7 +30,7 @@ def run_server():
 if __name__ == '__main__':
     # --- WebView2 cache management ---
     # Use a known storage path so we can manage the cache
-    app_dir = os.path.dirname(os.path.abspath(__file__))
+    app_dir = get_runtime_root()
     storage_path = os.path.join(app_dir, '.webview_data')
 
     # Clear stale cache on startup to ensure CSS/JS updates are always picked up.
@@ -39,7 +53,7 @@ if __name__ == '__main__':
 
     # 2. Create and start native application window pointing to the local React/HTML frontend
     window = webview.create_window(
-        title='Chronos OrganizaT - Horarios & Planillas',
+        title='Chronos',
         url='http://127.0.0.1:8000', # FastAPI serves the frontend on root
         width=1280,
         height=800,

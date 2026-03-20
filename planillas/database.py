@@ -5,9 +5,19 @@ Maneja empleados, tarifas, meses y semanas generadas.
 """
 import sqlite3
 import os
+import sys
 from datetime import datetime
 
-DB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "planilla.db")
+
+def _get_planillas_base_dir():
+    if getattr(sys, "frozen", False):
+        runtime_dir = os.path.join(os.path.dirname(os.path.abspath(sys.executable)), "planillas")
+        os.makedirs(runtime_dir, exist_ok=True)
+        return runtime_dir
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+DB_FILE = os.path.join(_get_planillas_base_dir(), "planilla.db")
 
 
 def get_conn():
@@ -76,11 +86,14 @@ def init_db():
             fixed_night_person TEXT,
             allow_long_shifts INTEGER DEFAULT 0,
             use_refuerzo INTEGER DEFAULT 0,
-            refuerzo_type TEXT DEFAULT 'diurno',
+            refuerzo_type TEXT DEFAULT 'personalizado',
+            refuerzo_start TEXT DEFAULT '07:00',
+            refuerzo_end TEXT DEFAULT '12:00',
             allow_collision_quebrado INTEGER DEFAULT 0,
             collision_peak_priority TEXT DEFAULT 'pm',
             sunday_cycle_index INTEGER DEFAULT 0,
-            sunday_rotation_queue TEXT
+            sunday_rotation_queue TEXT,
+            use_history INTEGER DEFAULT 1
         );
 
         CREATE TABLE IF NOT EXISTS horarios_generados (
@@ -164,6 +177,21 @@ def init_db():
             conn.commit()
         except sqlite3.OperationalError:
             print(f"init_db: columna {table}.{col} ya existe, se omite migración")
+        conn.close()
+
+    # Migration: scheduler config flags
+    _scheduler_config_migrations = [
+        ("horario_config", "use_history", "INTEGER DEFAULT 1"),
+        ("horario_config", "refuerzo_start", "TEXT DEFAULT '07:00'"),
+        ("horario_config", "refuerzo_end", "TEXT DEFAULT '12:00'"),
+    ]
+    for table, col, col_type in _scheduler_config_migrations:
+        conn = get_conn()
+        try:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
+            conn.commit()
+        except Exception:
+            pass
         conn.close()
 
     # Create vacaciones table

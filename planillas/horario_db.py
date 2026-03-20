@@ -9,6 +9,7 @@ Funciones para:
 """
 import json
 import os
+import re
 import sqlite3
 from datetime import datetime
 
@@ -38,6 +39,7 @@ SHIFTS = {
     "Q3_05-11+17-22": set(range(5, 11)) | set(range(17, 22)),
 }
 
+MANUAL_SHIFT_PREFIX = "MANUAL_"
 DIAS_MAP = {"Vie": 0, "Sáb": 1, "Dom": 2, "Lun": 3, "Mar": 4, "Mié": 5, "Jue": 6}
 DIAS_EXCEL = ["Viernes", "Sabado", "Domingo", "Lunes", "Martes", "Miercoles", "Jueves"]
 
@@ -46,34 +48,149 @@ DIAS_EXCEL = ["Viernes", "Sabado", "Domingo", "Lunes", "Martes", "Miercoles", "J
 # CLASIFICACIÓN DE HORAS
 # ═════════════════════════════════════════════════════════════════════════════
 
+def _parse_manual_time_token(token):
+    raw = str(token or "").strip().lower().replace(".", "")
+    raw = re.sub(r"\s+", "", raw)
+    if not raw:
+        return None
+
+    match = re.fullmatch(r"(\d{1,2})(?::(\d{2}))?(am|pm)", raw)
+    if match:
+        hour = int(match.group(1))
+        minutes = int(match.group(2) or 0)
+        suffix = match.group(3)
+        if minutes != 0 or hour < 1 or hour > 12:
+            return None
+        if suffix == "am":
+            return 0 if hour == 12 else hour
+        return hour if hour == 12 else hour + 12
+
+    match = re.fullmatch(r"(\d{1,2})(?::(\d{2}))?", raw)
+    if not match:
+        return None
+
+    hour = int(match.group(1))
+    minutes = int(match.group(2) or 0)
+    if minutes != 0 or hour < 0 or hour > 29:
+        return None
+    return hour
+
+
+def _split_manual_range_segment(segment):
+    cleaned = str(segment or "").strip().replace("–", "-").replace("—", "-")
+    if not cleaned:
+        return None
+
+    for pattern in (
+        re.compile(r"\s*-\s*"),
+        re.compile(r"\s+a\s+", re.IGNORECASE),
+        re.compile(r"\s+to\s+", re.IGNORECASE),
+    ):
+        parts = pattern.split(cleaned, maxsplit=1)
+        if len(parts) == 2:
+            return parts[0], parts[1]
+
+    return None
+
+
+def normalize_manual_shift_code(shift_code):
+    if not isinstance(shift_code, str):
+        return None
+
+    raw = shift_code.strip()
+    if not raw:
+        return None
+
+    upper = raw.upper()
+    if upper in SHIFTS:
+        return upper
+    if upper in ("OFF", "LIBRE", "DESCANSO"):
+        return "OFF"
+    if upper in ("VAC", "VACACIONES"):
+        return "VAC"
+    if upper in ("PERM", "PERMISO"):
+        return "PERM"
+
+    candidate = raw
+    if upper.startswith(MANUAL_SHIFT_PREFIX):
+        candidate = raw[len(MANUAL_SHIFT_PREFIX):]
+
+    segments = [seg for seg in re.split(r"\s*(?:\+|/|,)\s*", candidate) if seg]
+    if not segments:
+        return None
+
+    normalized_segments = []
+    for segment in segments:
+        split = _split_manual_range_segment(segment)
+        if not split:
+            return None
+
+        start = _parse_manual_time_token(split[0])
+        end = _parse_manual_time_token(split[1])
+        if start is None or end is None:
+            return None
+
+        normalized_segments.append(f"{start:02d}-{end:02d}")
+
+    return f"{MANUAL_SHIFT_PREFIX}{'+'.join(normalized_segments)}"
+
+
+def get_shift_hours_set(shift_code):
+    normalized = normalize_manual_shift_code(shift_code)
+    if normalized in SHIFTS:
+        return set(SHIFTS[normalized])
+
+    if not normalized or not normalized.startswith(MANUAL_SHIFT_PREFIX):
+        return set()
+
+    horas = set()
+    for segment in normalized[len(MANUAL_SHIFT_PREFIX):].split("+"):
+        start_raw, end_raw = segment.split("-")
+        start = int(start_raw)
+        end = int(end_raw)
+        if end <= start:
+            end += 24
+        horas.update(range(start, end))
+    return horas
+
+
 def clasificar_turno(turno_code):
     """
     Clasifica un turno y devuelve (horas_diurnas, horas_nocturnas, horas_mixtas).
 
     Reglas:
-      - Turno inicia antes de las 12:00 → DIURNA
-      - Turno inicia >=12:00 y <22:00 → MIXTA
-      - Turno N_22-05 → NOCTURNA
-      - OFF/VAC/PERM → (0, 0, 0)
+      - Turno inicia antes de las 12:00 -> DIURNA
+      - Turno inicia >=12:00 y <22:00 -> MIXTA
+      - Turno N_22-05 -> NOCTURNA
+      - OFF/VAC/PERM -> (0, 0, 0)
     """
-    if turno_code in ("OFF", "VAC", "PERM") or turno_code not in SHIFTS:
+    normalized = normalize_manual_shift_code(turno_code)
+    if normalized in ("OFF", "VAC", "PERM"):
         return (0, 0, 0)
 
-    horas_set = SHIFTS[turno_code]
+    horas_set = get_shift_hours_set(turno_code)
     if not horas_set:
         return (0, 0, 0)
 
     total_horas = len(horas_set)
-    min_hora = min(h % 24 for h in horas_set)  # Normalize 22-28 → 22-4
+    min_hora = min(h % 24 for h in horas_set)  # Normalize 22-28 -> 22-4
 
-    if turno_code == "N_22-05":
+    if normalized == "N_22-05":
         return (0, total_horas, 0)  # 100% nocturna
-    elif turno_code == "T17_16-23":
+    elif normalized == "T17_16-23":
         return (0, 1, 6)  # Especial: 1h nocturna, 6h mixtas
+    elif normalized and normalized.startswith(MANUAL_SHIFT_PREFIX):
+        nocturnas = sum(1 for h in horas_set if (h % 24) >= 22 or (h % 24) < 5)
+        regulares = total_horas - nocturnas
+        if min_hora >= 22 or min_hora < 5:
+            return (0, total_horas, 0)
+        if min_hora < 12:
+            return (regulares, nocturnas, 0)
+        return (0, nocturnas, regulares)
     elif min_hora < 12:
-        return (total_horas, 0, 0)  # Inicia antes de mediodía → diurna
+        return (total_horas, 0, 0)  # Inicia antes de mediodía -> diurna
     else:
-        return (0, 0, total_horas)  # Inicia a mediodía o después → mixta
+        return (0, 0, total_horas)  # Inicia a mediodía o después -> mixta
 
 
 def procesar_horario_semana(horario_dict):
@@ -130,8 +247,8 @@ def migrar_json_a_sqlite(json_path):
         INSERT INTO horario_config
         (id, night_mode, fixed_night_person, allow_long_shifts, use_refuerzo,
          refuerzo_type, allow_collision_quebrado, collision_peak_priority,
-         sunday_cycle_index, sunday_rotation_queue)
-        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         sunday_cycle_index, sunday_rotation_queue, use_history)
+        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         cfg.get("night_mode", "rotation"),
         cfg.get("fixed_night_person"),
@@ -142,6 +259,7 @@ def migrar_json_a_sqlite(json_path):
         cfg.get("collision_peak_priority", "pm"),
         cfg.get("sunday_cycle_index", 0),
         json.dumps(cfg.get("sunday_rotation_queue")) if cfg.get("sunday_rotation_queue") else None,
+        1 if cfg.get("use_history", True) else 0,
     ))
 
     # 3. Migrar historial de horarios
@@ -290,11 +408,17 @@ def rellenar_horas_en_excel(excel_path, nombre_hoja, horario_dict):
     FILA_NOCT   = 2
     FILA_EXTRA  = 3
 
-    # Obtener jefes de pista
+    # Obtener jefes de pista y datos de planilla
     conn = db.get_conn()
     jefes = [r[0] for r in conn.execute(
         "SELECT nombre FROM horario_empleados WHERE es_jefe_pista=1").fetchall()]
-        
+    empleados_planilla = {
+        row["nombre"]: dict(row)
+        for row in conn.execute(
+            "SELECT nombre, tipo_pago, salario_fijo FROM empleados"
+        ).fetchall()
+    }
+
     # Obtener préstamos activos para rellenar la deducción de planilla (col 13)
     prestamos_activos = {}
     prest_rows = conn.execute("""
@@ -305,21 +429,37 @@ def rellenar_horas_en_excel(excel_path, nombre_hoja, horario_dict):
     """).fetchall()
     for pr in prest_rows:
         prestamos_activos[pr["nombre"]] = pr["pago_semanal"]
-        
+
     conn.close()
 
     # Procesar horas
     horas = procesar_horario_semana(horario_dict)
     recap_horas = {}
 
-    for emp_nombre, dias_horas in horas.items():
-        # Buscar emp_start: primera fila del bloque del empleado (col A = nombre)
-        emp_row = None
+    def _buscar_fila_empleado(emp_nombre, tipo_pago):
         for r in range(5, ws.max_row + 1):
             val = ws.cell(row=r, column=1).value
-            if val and isinstance(val, str) and val.strip() == emp_nombre:
-                emp_row = r
-                break
+            if not (val and isinstance(val, str) and val.strip() == emp_nombre):
+                continue
+
+            jornada_val = ws.cell(row=r, column=2).value
+            es_bloque_por_horas = jornada_val == "Hrs. Diurnas"
+
+            if tipo_pago == "fijo":
+                if not es_bloque_por_horas:
+                    return r
+                continue
+
+            if es_bloque_por_horas:
+                return r
+
+        return None
+
+    for emp_nombre, dias_horas in horas.items():
+        emp_info = empleados_planilla.get(emp_nombre, {})
+        tipo_pago = emp_info.get("tipo_pago")
+        salario_fijo = emp_info.get("salario_fijo") or 0
+        emp_row = _buscar_fila_empleado(emp_nombre, tipo_pago)
 
         if emp_row is None:
             continue  # Empleado no está en esta hoja
@@ -328,6 +468,16 @@ def rellenar_horas_en_excel(excel_path, nombre_hoja, horario_dict):
         pago_prestamo = prestamos_activos.get(emp_nombre)
         if pago_prestamo:
             ws.cell(row=emp_row, column=13).value = pago_prestamo
+
+        if tipo_pago == "fijo":
+            recap_horas[emp_nombre] = {
+                "diurnas": 0,
+                "mixtas": 0,
+                "nocturnas": 0,
+                "extra": 0,
+                "salario_bruto": round(salario_fijo / 4.33, 2) if salario_fijo else 0,
+            }
+            continue
 
         total_emp_d = 0; total_emp_m = 0; total_emp_n = 0; total_emp_e = 0
 
@@ -358,7 +508,7 @@ def rellenar_horas_en_excel(excel_path, nombre_hoja, horario_dict):
                 ws.cell(row=emp_row + FILA_NOCT,   column=col).value = h_nocturna
             if h_extra > 0:
                 ws.cell(row=emp_row + FILA_EXTRA,  column=col).value = h_extra
-            
+
             total_emp_d += h_diurna
             total_emp_m += h_mixta
             total_emp_n += h_nocturna
@@ -372,6 +522,7 @@ def rellenar_horas_en_excel(excel_path, nombre_hoja, horario_dict):
         }
 
     wb.save(excel_path)
+    wb.close()
     return True, "Horas rellenadas exitosamente", recap_horas
 
 

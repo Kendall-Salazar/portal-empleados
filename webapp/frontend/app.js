@@ -10,6 +10,7 @@ let validationRules = null;
 
 let SHIFT_OPTIONS = [];
 let SHIFT_HOURS = {};
+const MANUAL_SHIFT_PREFIX = "MANUAL_";
 
 // Hourly set mapping mapped dynamically via API now
 // Removing hardcoded SHIFT_HOURS_SET
@@ -200,7 +201,13 @@ function renderConfig() {
     if (refuerzoCb) refuerzoCb.checked = config.use_refuerzo || false;
 
     const refuerzoTypeSel = document.getElementById("refuerzoTypeSelect");
-    if (refuerzoTypeSel) refuerzoTypeSel.value = config.refuerzo_type || "diurno";
+    if (refuerzoTypeSel) refuerzoTypeSel.value = config.refuerzo_type || "personalizado";
+
+    const refuerzoStartInput = document.getElementById("refuerzoStartTime");
+    if (refuerzoStartInput) refuerzoStartInput.value = config.refuerzo_start || "07:00";
+
+    const refuerzoEndInput = document.getElementById("refuerzoEndTime");
+    if (refuerzoEndInput) refuerzoEndInput.value = config.refuerzo_end || "12:00";
 
     toggleRefuerzoConfig();
 
@@ -210,6 +217,9 @@ function renderConfig() {
 
     const collisionPrioritySel = document.getElementById("collisionPeakPriority");
     if (collisionPrioritySel) collisionPrioritySel.value = config.collision_peak_priority || "pm";
+
+    const historyCb = document.getElementById("useHistoryContext");
+    if (historyCb) historyCb.checked = config.use_history !== false;
 
     toggleCollisionConfig();
 }
@@ -235,9 +245,15 @@ function setNightMode(val, btn) {
 function toggleRefuerzoConfig() {
     const isChecked = document.getElementById("useRefuerzo")?.checked;
     const container = document.getElementById("refuerzoTypeContainer");
+    const customContainer = document.getElementById("refuerzoCustomTimeContainer");
+    const refuerzoType = document.getElementById("refuerzoTypeSelect")?.value || "personalizado";
     if (container) {
         if (isChecked) container.classList.remove("hidden");
         else container.classList.add("hidden");
+    }
+    if (customContainer) {
+        if (isChecked && refuerzoType === "personalizado") customContainer.classList.remove("hidden");
+        else customContainer.classList.add("hidden");
     }
     updateConfig();
 }
@@ -258,22 +274,41 @@ async function updateConfig() {
     const person = document.getElementById("nightPersonSelect").value;
     const allowLong = document.getElementById("allowLongShifts").checked;
     const useRefuerzo = document.getElementById("useRefuerzo")?.checked || false;
-    const refuerzoType = document.getElementById("refuerzoTypeSelect")?.value || "diurno";
+    const refuerzoType = document.getElementById("refuerzoTypeSelect")?.value || "personalizado";
+    const refuerzoStart = document.getElementById("refuerzoStartTime")?.value || "07:00";
+    const refuerzoEnd = document.getElementById("refuerzoEndTime")?.value || "12:00";
 
     config.night_mode = mode;
     config.fixed_night_person = person;
     config.allow_long_shifts = allowLong;
     config.use_refuerzo = useRefuerzo;
     config.refuerzo_type = refuerzoType;
+    config.refuerzo_start = refuerzoStart;
+    config.refuerzo_end = refuerzoEnd;
     config.allow_collision_quebrado = document.getElementById("allowCollisionQuebrado")?.checked || false;
     config.collision_peak_priority = document.getElementById("collisionPeakPriority")?.value || "pm";
+    config.use_history = document.getElementById("useHistoryContext")?.checked ?? true;
 
-    // renderConfig();  <-- Don't call renderConfig here or it loops with toggleRefuerzoConfig
+    const customContainer = document.getElementById("refuerzoCustomTimeContainer");
+    if (customContainer) {
+        if (useRefuerzo && refuerzoType === "personalizado") customContainer.classList.remove("hidden");
+        else customContainer.classList.add("hidden");
+    }
+
     await fetch(`${API_URL}/config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config)
     });
+
+    try {
+        const rulesRes = await fetch(`${API_URL}/validation_rules`);
+        validationRules = await rulesRes.json();
+        SHIFT_OPTIONS = validationRules.shift_options;
+        SHIFT_HOURS = validationRules.shift_hours;
+    } catch (e) {
+        console.error("Error refreshing validation rules:", e);
+    }
 }
 
 // MODALS
@@ -411,10 +446,9 @@ function buildPillGroups(day = null) {
 
     const SKIP = new Set(["OFF", "VAC", "PERM", "N_22-05"]);
 
-    // Solo turnos permitidos el domingo según la lógica del scheduler
-    const SUNDAY_ONLY_SHIFTS = new Set([
-        "T1_05-13", "T3_07-15", "T8_13-20", "D4_13-22", "T10_15-22", "Q3_05-11+17-22"
-    ]);
+    const sundayAllowedShifts = Array.isArray(validationRules?.sunday_allowed_shifts)
+        ? new Set(validationRules.sunday_allowed_shifts)
+        : null;
 
     // Helper: get the start hour from SHIFTS set
     const startOf = (code) => {
@@ -431,8 +465,11 @@ function buildPillGroups(day = null) {
     for (const code of allCodes) {
         if (SKIP.has(code)) continue;
 
-        // Filter out invalid shifts for Sunday
-        if (day === "Dom" && !SUNDAY_ONLY_SHIFTS.has(code)) {
+        if (code === "D4_13-22" && day !== "Dom") {
+            continue;
+        }
+
+        if (day === "Dom" && sundayAllowedShifts && !sundayAllowedShifts.has(code)) {
             continue;
         }
 
@@ -681,9 +718,12 @@ async function generateSchedule() {
     config.fixed_night_person = document.getElementById('nightPersonSelect').value;
     config.allow_long_shifts = document.getElementById("allowLongShifts").checked;
     config.use_refuerzo = document.getElementById("useRefuerzo")?.checked || false;
-    config.refuerzo_type = document.getElementById("refuerzoTypeSelect")?.value || "diurno";
+    config.refuerzo_type = document.getElementById("refuerzoTypeSelect")?.value || "personalizado";
+    config.refuerzo_start = document.getElementById("refuerzoStartTime")?.value || "07:00";
+    config.refuerzo_end = document.getElementById("refuerzoEndTime")?.value || "12:00";
     config.allow_collision_quebrado = document.getElementById("allowCollisionQuebrado")?.checked || false;
     config.collision_peak_priority = document.getElementById("collisionPeakPriority")?.value || "pm";
+    config.use_history = document.getElementById("useHistoryContext")?.checked ?? true;
 
     try {
         // AUTO-SYNC: Si hay fechas de semana, sincronizar vacaciones/permisos → turnos fijos
@@ -706,7 +746,7 @@ async function generateSchedule() {
         const res = await fetch(`${API_URL}/solve`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ employees, config })
+            body: JSON.stringify({ employees, config, target_week_start: weekStart || null })
         });
         const result = await res.json();
 
@@ -722,7 +762,8 @@ async function generateSchedule() {
             document.getElementById("btnSaveSchedule").classList.remove("hidden");
             const libresText = result.metadata?.libres_person ? `Libres: ${result.metadata.libres_person}` : "Éxito";
             const solutionsCount = result.metadata?.solutions_found ? ` | Óptimos procesados: ${result.metadata.solutions_found}` : "";
-            document.getElementById("scheduleMeta").textContent = libresText + solutionsCount;
+            const historyText = result.metadata?.history_context_label ? ` | ${result.metadata.history_context_label}` : "";
+            document.getElementById("scheduleMeta").textContent = libresText + solutionsCount + historyText;
         } else {
             console.error("Solver Status:", result.status);
             if (result.status === "Infeasible") {
@@ -742,15 +783,16 @@ async function generateSchedule() {
 }
 
 function getShiftInfo(s) {
-    if (!s || s === "OFF") return { class: "pill-off", icon: "fa-mug-hot", text: "LIBRE" };
-    if (s === "Q3_05-11+17-22") return { class: "pill-night", icon: "fa-bolt", text: "05-11 / 17-22" };
+    const effectiveShift = normalizeFlexibleShiftInput(s) || s;
+    if (!effectiveShift || effectiveShift === "OFF") return { class: "pill-off", icon: "fa-mug-hot", text: "LIBRE" };
+    if (effectiveShift === "Q3_05-11+17-22") return { class: "pill-night", icon: "fa-bolt", text: "05-11 / 17-22" };
 
     // Determine Type
     let typeClass = "pill-morning"; // Default
     let icon = "fa-sun";
 
-    if (s === "VAC") return { class: "pill-vac", icon: "fa-plane", text: "VAC" };
-    if (s === "PERM") return { class: "pill-perm", icon: "fa-file-signature", text: "PERM" };
+    if (effectiveShift === "VAC") return { class: "pill-vac", icon: "fa-plane", text: "VAC" };
+    if (effectiveShift === "PERM") return { class: "pill-perm", icon: "fa-file-signature", text: "PERM" };
 
     // Morning/Day Logic (Corrected to User Request)
     // Morning (< 12): Yellow (pill-morning)
@@ -758,11 +800,11 @@ function getShiftInfo(s) {
     // Night (>= 20 or <= 4 or N_): Purple/Blue (pill-night)
 
     // Heuristic
-    const match = s.match(/_(\d{1,2})/);
+    const match = typeof effectiveShift === "string" ? effectiveShift.match(/_(\d{1,2})/) : null;
     let startHour = 8;
     if (match) startHour = parseInt(match[1]);
 
-    if (s.includes("N_") || startHour >= 20 || startHour <= 4) {
+    if (effectiveShift.includes("N_") || startHour >= 20 || startHour <= 4) {
         typeClass = "pill-night";
         icon = "fa-moon";
     } else if (startHour >= 12) {
@@ -773,7 +815,8 @@ function getShiftInfo(s) {
     }
 
     // Format Text
-    let rangePart = s.split('_').slice(1).join('_'); // 08-16
+    let rangePart = effectiveShift.split('_').slice(1).join('_'); // 08-16
+    if (!rangePart && effectiveShift.includes("-")) rangePart = effectiveShift;
     let timeText = formatTimeRange(rangePart);
     if (!timeText) timeText = s;
 
@@ -807,6 +850,140 @@ function formatTimeRange(rangeStr) {
     return `${formatH(start)} - ${formatH(end)}`;
 }
 
+function parseFlexibleTimeToken(token) {
+    if (!token) return null;
+    const compact = token
+        .toString()
+        .trim()
+        .toLowerCase()
+        .replace(/\./g, "")
+        .replace(/\s+/g, "");
+
+    if (!compact) return null;
+
+    let match = compact.match(/^(\d{1,2})(?::(\d{2}))?(am|pm)$/);
+    if (match) {
+        let hour = parseInt(match[1], 10);
+        const minutes = match[2] ? parseInt(match[2], 10) : 0;
+        const suffix = match[3];
+        if (Number.isNaN(hour) || Number.isNaN(minutes) || minutes !== 0 || hour < 1 || hour > 12) {
+            return null;
+        }
+        if (suffix === "am") {
+            if (hour === 12) hour = 0;
+        } else if (hour !== 12) {
+            hour += 12;
+        }
+        return hour;
+    }
+
+    match = compact.match(/^(\d{1,2})(?::(\d{2}))?$/);
+    if (!match) return null;
+
+    const hour = parseInt(match[1], 10);
+    const minutes = match[2] ? parseInt(match[2], 10) : 0;
+    if (Number.isNaN(hour) || Number.isNaN(minutes) || minutes !== 0 || hour < 0 || hour > 29) {
+        return null;
+    }
+    return hour;
+}
+
+function splitFlexibleRangeSegment(segment) {
+    const cleaned = (segment || "").trim().replace(/[–—]/g, "-");
+    if (!cleaned) return null;
+
+    let parts = cleaned.split(/\s*-\s*/);
+    if (parts.length === 2) return parts;
+
+    parts = cleaned.split(/\s+a\s+/i);
+    if (parts.length === 2) return parts;
+
+    parts = cleaned.split(/\s+to\s+/i);
+    if (parts.length === 2) return parts;
+
+    return null;
+}
+
+function normalizeFlexibleShiftInput(value) {
+    if (value === null || value === undefined) return null;
+
+    const raw = value.toString().trim();
+    if (!raw) return null;
+
+    const upper = raw.toUpperCase();
+    if (["OFF", "LIBRE", "DESCANSO"].includes(upper)) return "OFF";
+    if (["VAC", "VACACIONES"].includes(upper)) return "VAC";
+    if (["PERM", "PERMISO"].includes(upper)) return "PERM";
+    if (upper === "AUTO") return "AUTO";
+    if (SHIFT_HOURS[upper] !== undefined) return upper;
+
+    let candidate = raw;
+    if (upper.startsWith(MANUAL_SHIFT_PREFIX)) {
+        candidate = raw.slice(MANUAL_SHIFT_PREFIX.length);
+    }
+
+    const segments = candidate.split(/\s*(?:\+|\/|,)\s*/).filter(Boolean);
+    if (!segments.length) return null;
+
+    const normalizedSegments = [];
+    for (const segment of segments) {
+        const split = splitFlexibleRangeSegment(segment);
+        if (!split) return null;
+
+        const start = parseFlexibleTimeToken(split[0]);
+        const end = parseFlexibleTimeToken(split[1]);
+        if (start === null || end === null) return null;
+
+        normalizedSegments.push(
+            `${String(start).padStart(2, "0")}-${String(end).padStart(2, "0")}`
+        );
+    }
+
+    return `${MANUAL_SHIFT_PREFIX}${normalizedSegments.join("+")}`;
+}
+
+function getShiftHoursList(shiftCode) {
+    const normalized = normalizeFlexibleShiftInput(shiftCode) || shiftCode;
+    const knownHours = validationRules?.shift_sets?.[normalized];
+    if (knownHours && knownHours.length) {
+        return [...knownHours];
+    }
+
+    if (!normalized || typeof normalized !== "string" || !normalized.startsWith(MANUAL_SHIFT_PREFIX)) {
+        return [];
+    }
+
+    const rangePart = normalized.slice(MANUAL_SHIFT_PREFIX.length);
+    const hours = new Set();
+
+    rangePart.split("+").forEach(segment => {
+        const [startRaw, endRaw] = segment.split("-");
+        const start = parseInt(startRaw, 10);
+        let end = parseInt(endRaw, 10);
+        if (Number.isNaN(start) || Number.isNaN(end)) return;
+        if (end <= start) end += 24;
+        for (let h = start; h < end; h++) {
+            hours.add(h);
+        }
+    });
+
+    return Array.from(hours).sort((a, b) => a - b);
+}
+
+function getShiftHoursCount(shiftCode) {
+    if (SHIFT_HOURS[shiftCode] !== undefined) return SHIFT_HOURS[shiftCode];
+    return getShiftHoursList(shiftCode).length;
+}
+
+function getShiftStartHour(shiftCode) {
+    const normalized = normalizeFlexibleShiftInput(shiftCode) || shiftCode;
+    const match = typeof normalized === "string" ? normalized.match(/_(\d{2})/) : null;
+    if (match) return parseInt(match[1], 10);
+
+    const hours = getShiftHoursList(shiftCode);
+    return hours.length ? Math.min(...hours) : 24;
+}
+
 
 let currentSortMode = 'time';
 
@@ -823,14 +1000,8 @@ function getAverageStartHour(name, schedule) {
             count++;
             return;
         }
-        const m = s.match(/_(\d{2})/);
-        if (m) {
-            sum += parseInt(m[1]);
-            count++;
-        } else {
-            sum += 24;
-            count++;
-        }
+        sum += getShiftStartHour(s);
+        count++;
     });
     return count === 0 ? 24 : sum / count;
 }
@@ -1032,7 +1203,7 @@ function renderSchedule(schedule, tableSelector, tasks = {}) {
                 const s = schedule[name][d] || "OFF";
                 const info = getShiftInfo(s);
 
-                totalHours += SHIFT_HOURS[s] || 0;
+                totalHours += getShiftHoursCount(s);
 
                 let fixedClass = "";
                 if (emp && emp.fixed_shifts && emp.fixed_shifts[d]) fixedClass = "pill-fixed";
@@ -1094,7 +1265,7 @@ async function loadHistory() {
                         <span class="h-date">${dateStr}</span>
                     </div>
                     <div class="h-actions">
-                        <button class="btn-icon" onclick="validateHistory(${i}, event)" title="Verificar Cobertura">
+                        <button class="btn-icon" onclick="validateHistory(${i}, event)" title="Validar Historial">
                             <i class="fa-solid fa-shield-check"></i>
                         </button>
                         <button class="btn-icon" onclick="exportHistoryImage(${i}, event)" title="Exportar Foto">
@@ -1323,6 +1494,14 @@ function applyValidationUI() {
         let h12 = d % 12 || 12;
         return `${h12}${d >= 12 && d < 24 ? "PM" : "AM"}`;
     };
+    const overstaffPolicy = validationRules.overstaff_policy || {};
+    const capValue = overstaffPolicy.cap_value ?? 5;
+    const allowedHoursAtCap = overstaffPolicy.allowed_hours_at_cap_per_day ?? 1;
+    const cappedDays = new Set(overstaffPolicy.limited_days || overstaffPolicy.days || []);
+    const getMinReq = (day, h) => validationRules.bounds[day]?.[String(h)] ?? 0;
+    const getSoftReq = (day, h) => validationRules.soft_bounds?.[day]?.[String(h)] ?? getMinReq(day, h);
+    const getMaxReq = (day, h) => validationRules.max_bounds?.[day]?.[String(h)] ?? Number.POSITIVE_INFINITY;
+    const formatCapHours = (hours) => hours.length ? hours.join(", ") : "ninguna";
 
     let hasGlobalErrors = false;
     let hasGlobalWarnings = false;
@@ -1337,7 +1516,7 @@ function applyValidationUI() {
         Object.entries(currentGeneratedSchedule).forEach(([, daysData]) => {
             const s = daysData[day] || "OFF";
             if (!["OFF", "VAC", "PERM"].includes(s)) {
-                (validationRules.shift_sets[s] || []).forEach(h => {
+                getShiftHoursList(s).forEach(h => {
                     if (coverage[h] !== undefined) coverage[h]++;
                 });
             }
@@ -1345,23 +1524,57 @@ function applyValidationUI() {
 
         allCoverage[day] = coverage;
 
-        let errors = [], warnings = [];
+        let errors = [];
+        let warnings = [];
+        let capHours = [];
         for (let h = 5; h <= 28; h++) {
-            const minReq = validationRules.bounds[day]?.[String(h)] ?? 0;
-            const softReq = validationRules.soft_bounds?.[day]?.[String(h)] ?? minReq;
+            const minReq = getMinReq(day, h);
+            const softReq = getSoftReq(day, h);
+            const maxReq = getMaxReq(day, h);
             const actual = coverage[h];
             const label = formatHour(h);
             if (minReq > 0 && actual < minReq) {
-                errors.push({ label, actual, minReq, softReq });
+                errors.push({ type: "under", label, actual, minReq, softReq, maxReq });
+            } else if (actual > maxReq) {
+                errors.push({ type: "over", label, actual, minReq, softReq, maxReq });
             } else if (softReq > minReq && actual < softReq) {
-                warnings.push({ label, actual, minReq, softReq });
+                warnings.push({ type: "soft", label, actual, minReq, softReq, maxReq });
+            }
+
+            if (cappedDays.has(day) && maxReq === capValue && actual === capValue) {
+                capHours.push(label);
             }
         }
 
-        dayResults[day] = { errors, warnings, colIndex: index + 2 };
+        const capStatus = !cappedDays.has(day)
+            ? "ok"
+            : capHours.length > allowedHoursAtCap
+                ? "error"
+                : capHours.length > 0
+                    ? "warn"
+                    : "ok";
+        if (capStatus === "error") {
+            errors.unshift({
+                type: "cap_limit",
+                actual: capHours.length,
+                allowed: allowedHoursAtCap,
+                capValue,
+                hours: capHours
+            });
+        }
+
+        dayResults[day] = {
+            errors,
+            warnings,
+            colIndex: index + 2,
+            capStatus,
+            capHours,
+            capHoursUsed: capHours.length,
+            capHoursAllowed: allowedHoursAtCap
+        };
 
         const isDayValid = errors.length === 0;
-        const hasWarns = warnings.length > 0;
+        const hasWarns = warnings.length > 0 || capStatus === "warn";
         if (!isDayValid) hasGlobalErrors = true;
         else if (hasWarns) hasGlobalWarnings = true;
 
@@ -1385,9 +1598,9 @@ function applyValidationUI() {
     // === GLOBAL STATUS BADGE ===
     const overallState = hasGlobalErrors ? "error" : hasGlobalWarnings ? "warn" : "ok";
     const stateConfig = {
-        ok: { icon: "fa-circle-check", label: "Horario Óptimo", cls: "vb-ok" },
-        warn: { icon: "fa-circle-exclamation", label: "Sub-óptimo", cls: "vb-warn" },
-        error: { icon: "fa-triangle-exclamation", label: "Déficit de Cobertura", cls: "vb-error" }
+        ok: { icon: "fa-circle-check", label: "Horario optimo", cls: "vb-ok" },
+        warn: { icon: "fa-circle-exclamation", label: "Sub-optimo", cls: "vb-warn" },
+        error: { icon: "fa-triangle-exclamation", label: "Incumple reglas", cls: "vb-error" }
     }[overallState];
 
     // === FULLSCREEN OVERLAY ===
@@ -1414,11 +1627,18 @@ function applyValidationUI() {
         const hourLabel = `<div class="hm-hour">${formatHour(h)}</div>`;
         const cells = DAYS.map(day => {
             const count = allCoverage[day][h] || 0;
-            const minReq = validationRules.bounds[day]?.[String(h)] ?? 0;
-            const softReq = validationRules.soft_bounds?.[day]?.[String(h)] ?? minReq;
-            let cls = count < minReq ? "hmc-deficit" : count < softReq ? "hmc-warn" : "hmc-ok";
-            const intensity = minReq > 0 ? Math.min(count / Math.max(softReq, 1), 1) : 1;
-            const tooltip = `${day} ${formatHour(h)}: ${count} pers. (min ${minReq}, ideal ${softReq})`;
+            const minReq = getMinReq(day, h);
+            const softReq = getSoftReq(day, h);
+            const maxReq = getMaxReq(day, h);
+            const capExceeded = dayResults[day].capStatus === "error" && count === capValue && maxReq === capValue;
+            const atCap = cappedDays.has(day) && count === capValue && maxReq === capValue;
+            let cls = (count < minReq || count > maxReq || capExceeded) ? "hmc-deficit" : (count < softReq || atCap) ? "hmc-warn" : "hmc-ok";
+            const intensityBase = Math.max(softReq || 0, minReq || 0, 1);
+            const intensity = Math.min(count / intensityBase, 1);
+            const capText = cappedDays.has(day)
+                ? ` | tolerancia ${dayResults[day].capHoursUsed}/${allowedHoursAtCap} en ${capValue}`
+                : "";
+            const tooltip = `${day} ${formatHour(h)}: ${count} pers. (min ${minReq}, ideal ${softReq}, max ${maxReq}${capText})`;
             return `<div class="hm-cell ${cls}" title="${tooltip}" style="--intensity:${intensity.toFixed(2)}">${count}</div>`;
         }).join("");
         return `<div class="hm-row">${hourLabel}${cells}</div>`;
@@ -1428,11 +1648,11 @@ function applyValidationUI() {
 
     hmEl.innerHTML = `
         <div class="val-heatmap-header">
-            <span><i class="fa-solid fa-fire"></i> Mapa de Calor — Cobertura por Hora</span>
+            <span><i class="fa-solid fa-fire"></i> Mapa de Calor - Cobertura por Hora</span>
             <div class="hm-legend">
                 <span class="hml hml-ok">Ideal</span>
-                <span class="hml hml-warn">Sub-óptimo</span>
-                <span class="hml hml-deficit">Déficit</span>
+                <span class="hml hml-warn">Sub-optimo</span>
+                <span class="hml hml-deficit">Fuera de regla</span>
             </div>
         </div>
         <div class="hm-grid">
@@ -1442,27 +1662,48 @@ function applyValidationUI() {
 
     // === BUILD DAY CARDS ===
     const cardsHTML = DAYS.map(day => {
-        const { errors, warnings, colIndex } = dayResults[day];
-        const st = errors.length > 0 ? "error" : warnings.length > 0 ? "warn" : "ok";
+        const { errors, warnings, colIndex, capStatus, capHours, capHoursUsed, capHoursAllowed } = dayResults[day];
+        const st = errors.length > 0 ? "error" : (warnings.length > 0 || capStatus === "warn") ? "warn" : "ok";
         const cfg = {
-            ok: { icon: "✅", pill: "Óptimo", pillCls: "vpill-ok" },
-            warn: { icon: "⚠️", pill: "Sub-óptimo", pillCls: "vpill-warn" },
-            error: { icon: "🚨", pill: "Déficit", pillCls: "vpill-error" }
+            ok: { icon: "<i class=\"fa-solid fa-check\"></i>", pill: "Optimo", pillCls: "vpill-ok" },
+            warn: { icon: "<i class=\"fa-solid fa-triangle-exclamation\"></i>", pill: "Sub-optimo", pillCls: "vpill-warn" },
+            error: { icon: "<i class=\"fa-solid fa-ban\"></i>", pill: "Incumple", pillCls: "vpill-error" }
         }[st];
 
-        let details = [...errors.map(e =>
-            `<div class="vcard-detail vcard-err"><i class="fa-solid fa-xmark"></i>${e.label}: ${e.actual}/${e.minReq}</div>`
-        ), ...warnings.map(w =>
-            `<div class="vcard-detail vcard-wrn"><i class="fa-solid fa-arrow-up"></i>${w.label}: ${w.actual}\u2192${w.softReq}</div>`
-        )].join("") || `<div class="vcard-detail vcard-ok"><i class="fa-solid fa-check"></i>Sin problemas</div>`;
+        const errorDetails = errors.map(e => {
+            if (e.type === "cap_limit") {
+                return `<div class="vcard-detail vcard-err"><i class="fa-solid fa-ban"></i>Tolerancia ${e.capValue} personas: ${e.actual}/${e.allowed} horas (${formatCapHours(e.hours)})</div>`;
+            }
+            if (e.type === "over") {
+                return `<div class="vcard-detail vcard-err"><i class="fa-solid fa-arrow-up"></i>${e.label}: ${e.actual}/${e.maxReq} max</div>`;
+            }
+            return `<div class="vcard-detail vcard-err"><i class="fa-solid fa-xmark"></i>${e.label}: ${e.actual}/${e.minReq} min</div>`;
+        });
+        const warningDetails = warnings.map(w =>
+            `<div class="vcard-detail vcard-wrn"><i class="fa-solid fa-arrow-up"></i>${w.label}: ${w.actual}->${w.softReq} ideal</div>`
+        );
+        const toleranceClass = capStatus === "error" ? "vcard-err" : capStatus === "warn" ? "vcard-wrn" : "vcard-ok";
+        const toleranceIcon = capStatus === "error" ? "fa-solid fa-ban" : capStatus === "warn" ? "fa-solid fa-clock" : "fa-solid fa-check";
+        const toleranceLine = cappedDays.has(day)
+            ? `<div class="vcard-detail ${toleranceClass}"><i class="${toleranceIcon}"></i>Tolerancia ${capValue} personas: ${capHoursUsed}/${capHoursAllowed}${capHours.length ? ` (${formatCapHours(capHours)})` : ""}</div>`
+            : "";
+
+        let details = [...errorDetails, ...warningDetails, toleranceLine].join("")
+            || `<div class="vcard-detail vcard-ok"><i class="fa-solid fa-check"></i>Sin problemas</div>`;
 
         let allHoursHTML = `<div class="vcard-all-hours" style="display:flex; flex-wrap:wrap; gap:4px; font-size:0.75rem; margin-top:8px;">`;
         for (let h = 5; h <= 28; h++) {
             const actual = allCoverage[day][h] || 0;
-            const minReq = validationRules.bounds[day]?.[String(h)] || 0;
+            const minReq = getMinReq(day, h);
+            const softReq = getSoftReq(day, h);
+            const maxReq = getMaxReq(day, h);
             if (actual === 0 && minReq === 0) continue;
-            let color = actual < minReq ? "var(--danger)" : "var(--text-muted)";
-            allHoursHTML += `<div style="background:var(--bg-app); padding:2px 4px; border-radius:4px; border:1px solid var(--border-color);"><span style="color:${color}; font-weight:bold;">${formatHour(h)}:</span> ${actual}p</div>`;
+            const capExceeded = dayResults[day].capStatus === "error" && actual === capValue && maxReq === capValue;
+            const atCap = cappedDays.has(day) && actual === capValue && maxReq === capValue;
+            let color = "var(--text-muted)";
+            if (actual < minReq || actual > maxReq || capExceeded) color = "var(--danger)";
+            else if (actual < softReq || atCap) color = "var(--warning)";
+            allHoursHTML += `<div title="min ${minReq} | ideal ${softReq} | max ${maxReq}" style="background:var(--bg-app); padding:2px 4px; border-radius:4px; border:1px solid var(--border-color);"><span style="color:${color}; font-weight:bold;">${formatHour(h)}:</span> ${actual}p [${minReq}/${softReq}/${maxReq}]</div>`;
         }
         allHoursHTML += `</div>`;
         details += allHoursHTML;
@@ -1483,7 +1724,7 @@ function applyValidationUI() {
                 <i class="fa-solid ${stateConfig.icon}"></i>
                 <span>${stateConfig.label}</span>
             </div>
-            <span class="val-subtitle">${hasGlobalErrors ? "Hay horas con menos personal del m\u00ednimo requerido" : hasGlobalWarnings ? "Algunas horas no alcanzan el nivel ideal de cobertura" : "Todos los d\u00edas cumplen los requisitos de cobertura"}</span>
+            <span class="val-subtitle">${hasGlobalErrors ? "Hay horas fuera de minimos, maximos o de la tolerancia diaria permitida" : hasGlobalWarnings ? "Hay horas por debajo del ideal o ya se uso la tolerancia de 5 personas" : "Todos los dias cumplen minimos, maximos y tolerancias"}</span>
         </div>
         <div class="vcards-row">${cardsHTML}</div>`;
 
@@ -1493,7 +1734,7 @@ function applyValidationUI() {
         <div class="val-overlay-backdrop" onclick="closeValidatorOverlay()"></div>
         <div class="val-overlay-panel">
             <div class="val-overlay-topbar">
-                <span class="val-overlay-title"><i class="fa-solid fa-shield-check"></i> Validación de Cobertura</span>
+                <span class="val-overlay-title"><i class="fa-solid fa-shield-check"></i> Validacion de reglas y cobertura</span>
                 <button class="val-overlay-close" onclick="closeValidatorOverlay()" title="Minimizar">
                     <i class="fa-solid fa-xmark"></i>
                 </button>
@@ -1610,17 +1851,22 @@ async function editHistoryShift(empName, day, histIndex) {
     if (!entry) return;
 
     const currentShift = entry.schedule[empName][day] || "OFF";
+    const currentShiftPromptValue = currentShift.startsWith(MANUAL_SHIFT_PREFIX)
+        ? currentShift.slice(MANUAL_SHIFT_PREFIX.length)
+        : currentShift;
 
     // Create a simple custom prompt or modal for simplicity here
     // In a real app we'd use a nice modal
     const codes = Object.keys(SHIFT_HOURS);
-    let msg = `Cambiar turno para ${empName} el ${day}:\n\nOpciones:\n` + codes.join(", ");
-    // Allow Free Text Input (User Request)
-    // No validation against SHIFT_HOURS keys.
-    const newShift = prompt(msg, currentShift);
+    let msg = `Cambiar turno para ${empName} el ${day}:\n\nOpciones:\n${codes.join(", ")}\n\nTambien puedes escribir un horario manual, por ejemplo:\n13-22\n1pm - 10pm\n5am-11am + 5pm-8pm`;
+    const newShift = prompt(msg, currentShiftPromptValue);
 
     if (newShift !== null && newShift.trim() !== "") {
-        const val = newShift.trim();
+        const val = normalizeFlexibleShiftInput(newShift);
+        if (!val || val === "AUTO") {
+            alert("Formato no reconocido. Usa un codigo interno o un rango como 1pm-10pm, 13-22 o 5am-11am + 5pm-8pm.");
+            return;
+        }
         entry.schedule[empName][day] = val;
 
         // Save back
@@ -1630,7 +1876,8 @@ async function editHistoryShift(empName, day, histIndex) {
             body: JSON.stringify(entry)
         });
 
-        loadHistory(); // Refresh UI
+        await loadHistory();
+        await validateHistory(histIndex);
     }
 }
 
@@ -1641,6 +1888,12 @@ function getISOWeekNumber(date) {
     d.setUTCDate(d.getUTCDate() + 4 - dayNum);
     const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
     return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+}
+
+function getAutofillWeekNumber(date) {
+    const labelDate = new Date(date.getTime());
+    labelDate.setDate(labelDate.getDate() + 3);
+    return getISOWeekNumber(labelDate);
 }
 
 function autoCalcWeekEnd() {
@@ -1656,7 +1909,7 @@ function autoCalcWeekEnd() {
     endInput.value = end.toISOString().split("T")[0];
 
     // Show preview of week name
-    const weekNum = getISOWeekNumber(start);
+    const weekNum = getAutofillWeekNumber(start);
     preview.textContent = `Semana ${weekNum}`;
     preview.style.display = "block";
 }
@@ -1687,7 +1940,7 @@ function openSaveModal() {
     const nameInput = document.getElementById("scheduleNameInput");
     if (startInput && startInput.value && nameInput) {
         const start = new Date(startInput.value + "T00:00:00");
-        const weekNum = getISOWeekNumber(start);
+        const weekNum = getAutofillWeekNumber(start);
         nameInput.value = `Semana ${weekNum}`;
     } else {
         nameInput.value = "";
@@ -1720,6 +1973,9 @@ async function confirmSaveSchedule() {
 function populateShiftSelects() {
     document.querySelectorAll(".shift-select").forEach(sel => {
         SHIFT_OPTIONS.forEach(o => {
+            if (o.code === "D4_13-22" && sel.getAttribute("data-day") !== "Dom") {
+                return;
+            }
             const opt = document.createElement("option");
             opt.value = o.code; opt.textContent = o.label;
             sel.appendChild(opt);

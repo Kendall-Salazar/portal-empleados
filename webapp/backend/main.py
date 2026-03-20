@@ -12,6 +12,8 @@ from fastapi.responses import FileResponse
 import tempfile
 import subprocess
 import shutil
+import re
+import unicodedata
 
 app = FastAPI()
 
@@ -19,17 +21,54 @@ app = FastAPI()
 import sys
 import sqlite3
 
-# Add planillas dir to path so we can import database module
-_planillas_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../planillas")
-if os.path.exists(_planillas_dir):
-    sys.path.insert(0, os.path.abspath(_planillas_dir))
-    import database as plan_db  # Initializes planilla.db with all tables
-    import planilla as pl_module
-    import generador_boletas as gb_module
-    import horario_db
+_backend_dir = os.path.dirname(os.path.abspath(__file__))
+
+
+def _get_resource_root():
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return os.path.abspath(sys._MEIPASS)
+    return os.path.abspath(os.path.join(_backend_dir, "../.."))
+
+
+def _get_runtime_root():
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.abspath(os.path.join(_backend_dir, "../.."))
+
+
+def _prefer_runtime_path(*parts):
+    runtime_path = os.path.join(_runtime_root, *parts)
+    resource_path = os.path.join(_resource_root, *parts)
+    if os.path.exists(runtime_path):
+        return runtime_path
+    return resource_path
+
+
+_resource_root = _get_resource_root()
+_runtime_root = _get_runtime_root()
+_resource_planillas_dir = os.path.join(_resource_root, "planillas")
+_runtime_planillas_dir = os.path.join(_runtime_root, "planillas")
+_planillas_dir = (
+    _runtime_planillas_dir
+    if os.path.exists(_runtime_planillas_dir) or not os.path.exists(_resource_planillas_dir)
+    else _resource_planillas_dir
+)
+_frontend_dir = _prefer_runtime_path("webapp", "frontend")
+_template_path = _prefer_runtime_path("webapp", "backend", "formato_template.xlsm")
+
+os.makedirs(_planillas_dir, exist_ok=True)
+
+# Add source planillas dir to path for local runs; frozen builds rely on bundled imports.
+if os.path.exists(_resource_planillas_dir):
+    sys.path.insert(0, os.path.abspath(_resource_planillas_dir))
+
+import database as plan_db  # Initializes planilla.db with all tables
+import planilla as pl_module
+import generador_boletas as gb_module
+import horario_db
 
 DB_FILE_LEGACY = "database.json"  # JSON original, kept for migration reference
-EXPORT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../export_horarios")
+EXPORT_DIR = os.path.join(_runtime_root, "export_horarios")
 os.makedirs(EXPORT_DIR, exist_ok=True)
 
 def _get_conn():
@@ -67,10 +106,13 @@ def load_db():
             "allow_long_shifts": bool(cfg_row["allow_long_shifts"]),
             "use_refuerzo": bool(cfg_row["use_refuerzo"]),
             "refuerzo_type": cfg_row["refuerzo_type"],
+            "refuerzo_start": cfg_row["refuerzo_start"] if "refuerzo_start" in cfg_row.keys() and cfg_row["refuerzo_start"] else "07:00",
+            "refuerzo_end": cfg_row["refuerzo_end"] if "refuerzo_end" in cfg_row.keys() and cfg_row["refuerzo_end"] else "12:00",
             "allow_collision_quebrado": bool(cfg_row["allow_collision_quebrado"]),
             "collision_peak_priority": cfg_row["collision_peak_priority"],
             "sunday_cycle_index": cfg_row["sunday_cycle_index"] or 0,
             "sunday_rotation_queue": json.loads(cfg_row["sunday_rotation_queue"]) if cfg_row["sunday_rotation_queue"] else None,
+            "use_history": bool(cfg_row["use_history"]) if "use_history" in cfg_row.keys() else True,
         }
 
     # History log
@@ -160,19 +202,22 @@ def save_db(data):
         conn.execute("""
             INSERT INTO horario_config
             (id, night_mode, fixed_night_person, allow_long_shifts, use_refuerzo,
-             refuerzo_type, allow_collision_quebrado, collision_peak_priority,
-             sunday_cycle_index, sunday_rotation_queue)
-            VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             refuerzo_type, refuerzo_start, refuerzo_end, allow_collision_quebrado,
+             collision_peak_priority, sunday_cycle_index, sunday_rotation_queue, use_history)
+            VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             cfg.get("night_mode", "rotation"),
             cfg.get("fixed_night_person"),
             1 if cfg.get("allow_long_shifts", False) else 0,
             1 if cfg.get("use_refuerzo", False) else 0,
-            cfg.get("refuerzo_type", "diurno"),
+            cfg.get("refuerzo_type", "personalizado"),
+            cfg.get("refuerzo_start", "07:00"),
+            cfg.get("refuerzo_end", "12:00"),
             1 if cfg.get("allow_collision_quebrado", False) else 0,
             cfg.get("collision_peak_priority", "pm"),
             cfg.get("sunday_cycle_index", 0),
             json.dumps(cfg.get("sunday_rotation_queue")) if cfg.get("sunday_rotation_queue") else None,
+            1 if cfg.get("use_history", True) else 0,
         ))
 
     # Guardar history_log (reescribir completo)
@@ -195,6 +240,275 @@ def save_db(data):
     conn.commit()
     conn.close()
 
+
+_WEEK_NAME_RE = re.compile(r"semana\s*(\d+)", re.IGNORECASE)
+
+
+def _parse_date_like(value):
+    if not value:
+        return None
+    if isinstance(value, datetime.datetime):
+        return value.date()
+    if isinstance(value, datetime.date):
+        return value
+    if not isinstance(value, str):
+        return None
+
+    raw = value.strip()
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y"):
+        try:
+            return datetime.datetime.strptime(raw, fmt).date()
+        except ValueError:
+            continue
+    try:
+        return datetime.datetime.fromisoformat(raw.replace("Z", "+00:00")).date()
+    except ValueError:
+        return None
+
+
+def _parse_timestamp(value):
+    if not value:
+        return None
+    if isinstance(value, datetime.datetime):
+        return value
+    if isinstance(value, datetime.date):
+        return datetime.datetime.combine(value, datetime.time.min)
+    if not isinstance(value, str):
+        return None
+    raw = value.strip()
+    try:
+        return datetime.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        parsed_date = _parse_date_like(raw)
+        if parsed_date:
+            return datetime.datetime.combine(parsed_date, datetime.time.min)
+        return None
+
+
+def _infer_week_start_from_name(name, fallback_year, reference_date=None):
+    if not name or fallback_year is None:
+        return None
+    match = _WEEK_NAME_RE.search(name)
+    if not match:
+        return None
+    week_number = int(match.group(1))
+    if week_number < 1:
+        return None
+
+    candidates = []
+    try:
+        # Current UI naming uses the ISO week of the Monday inside the Fri-Thu range.
+        monday = datetime.date.fromisocalendar(fallback_year, week_number, 1)
+        candidates.append(monday - datetime.timedelta(days=3))
+    except ValueError:
+        pass
+    try:
+        # Legacy fallback for older names saved with the Friday ISO week number.
+        candidates.append(datetime.date.fromisocalendar(fallback_year, week_number, 5))
+    except ValueError:
+        pass
+
+    if not candidates:
+        return None
+    if reference_date:
+        candidates.sort(key=lambda candidate: (
+            abs((candidate - reference_date).days),
+            0 if candidate <= reference_date else 1,
+        ))
+    return candidates[0]
+
+
+def _extract_history_anchor(entry):
+    week_dates = entry.get("week_dates")
+    if isinstance(week_dates, dict):
+        friday = week_dates.get("Vie")
+        parsed = _parse_date_like(friday)
+        if parsed:
+            return parsed
+
+    timestamp = _parse_timestamp(entry.get("timestamp"))
+    inferred = _infer_week_start_from_name(
+        entry.get("name", ""),
+        timestamp.year if timestamp else None,
+        timestamp.date() if timestamp else None,
+    )
+    return inferred
+
+
+def _history_entry_display_name(info):
+    if not isinstance(info, dict):
+        return "semana previa"
+    entry = info.get("entry") if isinstance(info.get("entry"), dict) else info
+    name = entry.get("name")
+    if name:
+        return name
+    sort_date = info.get("sort_date")
+    if sort_date:
+        return f"Semana del {sort_date.isoformat()}"
+    return "semana previa"
+
+
+def _prepare_history_for_solver(history_list, target_week_start=None, use_history=True, max_entries=3):
+    if not use_history:
+        return [], {
+            "enabled": False,
+            "label": "Historial desactivado",
+            "entries_used": 0,
+            "reference_name": None,
+            "reference_week_start": None,
+            "range_start_name": None,
+            "range_start_week_start": None,
+            "range_end_name": None,
+            "range_end_week_start": None,
+            "women_reference_name": None,
+        }
+
+    normalized = []
+    for index, entry in enumerate(history_list or []):
+        if not isinstance(entry, dict):
+            continue
+        timestamp = _parse_timestamp(entry.get("timestamp"))
+        anchor = _extract_history_anchor(entry)
+        sort_date = anchor or (timestamp.date() if timestamp else None)
+        normalized.append({
+            "entry": entry,
+            "anchor": anchor,
+            "sort_date": sort_date,
+            "timestamp": timestamp,
+            "index": index,
+        })
+
+    deduped = {}
+    passthrough = []
+    for info in normalized:
+        if info["anchor"] is None:
+            passthrough.append(info)
+            continue
+        previous = deduped.get(info["anchor"])
+        current_rank = (info["timestamp"] or datetime.datetime.min, info["index"])
+        previous_rank = (previous["timestamp"] or datetime.datetime.min, previous["index"]) if previous else None
+        if previous is None or current_rank >= previous_rank:
+            deduped[info["anchor"]] = info
+
+    ordered = list(deduped.values()) + passthrough
+    ordered.sort(key=lambda info: (
+        info["sort_date"] or datetime.date.min,
+        info["timestamp"] or datetime.datetime.min,
+        info["index"],
+    ))
+
+    target_date = _parse_date_like(target_week_start)
+    selection_reason = "latest"
+    if target_date:
+        previous_week = target_date - datetime.timedelta(days=7)
+        eligible = [info for info in ordered if info["sort_date"] and info["sort_date"] < target_date]
+        exact_previous = [info for info in eligible if info["sort_date"] == previous_week]
+        if exact_previous:
+            eligible = [info for info in eligible if info["sort_date"] <= previous_week]
+            selection_reason = "exact_previous_week"
+        else:
+            selection_reason = "nearest_previous_week"
+    else:
+        eligible = ordered
+
+    if not eligible:
+        return [], {
+            "enabled": True,
+            "label": "Historial activo: sin semana previa elegible",
+            "entries_used": 0,
+            "reference_name": None,
+            "reference_week_start": None,
+            "range_start_name": None,
+            "range_start_week_start": None,
+            "range_end_name": None,
+            "range_end_week_start": None,
+            "women_reference_name": None,
+        }
+
+    selected = eligible[-max_entries:]
+    first_reference = selected[0]
+    reference = selected[-1]
+    range_start_name = _history_entry_display_name(first_reference)
+    range_end_name = _history_entry_display_name(reference)
+    range_start_week_start = first_reference["sort_date"].isoformat() if first_reference["sort_date"] else None
+    reference_week_start = reference["sort_date"].isoformat() if reference["sort_date"] else None
+
+    if len(selected) == 1:
+        label = f"Historial usado: {range_end_name}"
+    else:
+        label = f"Historial usado: Hombres {range_start_name} -> {range_end_name} | Mujeres {range_end_name}"
+
+    return [info["entry"] for info in selected], {
+        "enabled": True,
+        "label": label,
+        "entries_used": len(selected),
+        "reference_name": reference["entry"].get("name"),
+        "reference_week_start": reference_week_start,
+        "range_start_name": range_start_name,
+        "range_start_week_start": range_start_week_start,
+        "range_end_name": range_end_name,
+        "range_end_week_start": reference_week_start,
+        "women_reference_name": range_end_name,
+    }
+
+
+def _normalize_inventory_header(value):
+    if value is None:
+        return ""
+    text = str(value).strip().lower()
+    if not text:
+        return ""
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = re.sub(r"[^a-z0-9]+", " ", text).strip()
+    return text
+
+
+def _matches_inventory_alias(normalized_value: str, alias: str) -> bool:
+    if not normalized_value:
+        return False
+    return (
+        normalized_value == alias
+        or normalized_value.startswith(f"{alias} ")
+        or f" {alias} " in f" {normalized_value} "
+    )
+
+
+def _detect_inventory_header_row(ws, target_fields, max_scan_rows=30, max_scan_cols=30):
+    normalized_aliases = {
+        field: [_normalize_inventory_header(alias) for alias in aliases]
+        for field, aliases in target_fields.items()
+    }
+
+    best_row = None
+    best_header_map = {}
+    best_score = 0
+
+    for row_idx in range(1, min(ws.max_row, max_scan_rows) + 1):
+        row_header_map = {}
+        matched_fields = set()
+
+        for col_idx in range(1, min(ws.max_column, max_scan_cols) + 1):
+            normalized_value = _normalize_inventory_header(ws.cell(row=row_idx, column=col_idx).value)
+            if not normalized_value:
+                continue
+
+            for field, aliases in normalized_aliases.items():
+                if field in matched_fields:
+                    continue
+                if any(_matches_inventory_alias(normalized_value, alias) for alias in aliases):
+                    row_header_map[col_idx] = field
+                    matched_fields.add(field)
+                    break
+
+        row_score = len(matched_fields)
+        if row_score > best_score:
+            best_score = row_score
+            best_row = row_idx
+            best_header_map = row_header_map
+
+    return best_row, best_header_map
+
 # INITIALIZATION (Seed if empty)
 db = load_db()
 if not db.get("employees"):
@@ -212,7 +526,11 @@ if not db.get("employees"):
     db["employees"] = default_employees
     db["config"] = {
         "night_mode": "rotation", 
-        "fixed_night_person": "Eligio"
+        "fixed_night_person": "Eligio",
+        "refuerzo_type": "personalizado",
+        "refuerzo_start": "07:00",
+        "refuerzo_end": "12:00",
+        "use_history": True,
     }
     save_db(db)
 
@@ -234,15 +552,19 @@ class Config(BaseModel):
     fixed_night_person: Optional[str] = None
     allow_long_shifts: bool = False
     use_refuerzo: bool = False
-    refuerzo_type: str = "diurno"
+    refuerzo_type: str = "personalizado"
+    refuerzo_start: str = "07:00"
+    refuerzo_end: str = "12:00"
     allow_collision_quebrado: bool = False
     collision_peak_priority: str = "pm"
+    use_history: bool = True
     sunday_cycle_index: int = 0  # Legacy, kept for backwards compat
     sunday_rotation_queue: Optional[List[str]] = None
 
 class SolverRequest(BaseModel):
     employees: List[Employee]
     config: Config
+    target_week_start: Optional[str] = None
 
 class PlanillaPermiso(BaseModel):
     empleado_id: int
@@ -390,11 +712,30 @@ def solve_schedule(request: SolverRequest):
         })
 
     config_data = request.config.dict()
+    history_for_solver, history_context = _prepare_history_for_solver(
+        history_list,
+        target_week_start=request.target_week_start,
+        use_history=config_data.get("use_history", True),
+    )
     
     # Instantiate Scheduler
-    scheduler = ShiftScheduler(employees_data, config_data, history_data=history_list)
+    scheduler = ShiftScheduler(employees_data, config_data, history_data=history_for_solver)
     result = scheduler.solve()
-    
+
+    if isinstance(result, dict):
+        metadata = result.setdefault("metadata", {})
+        metadata["history_enabled"] = history_context["enabled"]
+        metadata["history_entries_used"] = history_context["entries_used"]
+        metadata["history_reference_name"] = history_context["reference_name"]
+        metadata["history_reference_week_start"] = history_context["reference_week_start"]
+        metadata["history_range_start_name"] = history_context["range_start_name"]
+        metadata["history_range_start_week_start"] = history_context["range_start_week_start"]
+        metadata["history_range_end_name"] = history_context["range_end_name"]
+        metadata["history_range_end_week_start"] = history_context["range_end_week_start"]
+        metadata["history_women_reference_name"] = history_context["women_reference_name"]
+        metadata["history_context_label"] = history_context["label"]
+        metadata["history_target_week_start"] = request.target_week_start
+
     # Save last result for Export (if feasible or even partial)
     # We save it to DB so export_excel can read it
     if result.get("schedule"):
@@ -528,12 +869,15 @@ def format_shift_code(code: str) -> str:
     Converts internal shift code (e.g., 'T12_14-22') to readable 12h format 
     (e.g., '02:00 PM - 10:00 PM').
     """
-    if not code or code == "OFF": return "LIBRE"
-    if code == "VAC": return "VACACIONES"
+    normalized = horario_db.normalize_manual_shift_code(code) or code
+
+    if not normalized or normalized == "OFF": return "LIBRE"
+    if normalized == "VAC": return "VACACIONES"
+    if normalized == "PERM": return "PERMISO"
     
     # Check for split shift first (e.g. Q1_05-11+17-20)
-    if "+" in code:
-        parts = code.split("_")
+    if "+" in normalized:
+        parts = normalized.split("_")
         if len(parts) > 1:
             times = parts[1].split("+") # ['05-11', '17-20']
             readable_times = []
@@ -542,11 +886,11 @@ def format_shift_code(code: str) -> str:
             return " / ".join(readable_times)
     
     # Standard Shift (Code_Start-End)
-    parts = code.split("_")
+    parts = normalized.split("_")
     if len(parts) > 1:
         return _format_time_range(parts[1])
         
-    return code
+    return normalized
 
 def _format_time_range(time_range: str) -> str:
     # time_range ex: "14-22" or "06-16"
@@ -566,6 +910,101 @@ def _format_time_range(time_range: str) -> str:
     except (ValueError, TypeError, AttributeError):
         return time_range
 
+
+EXCEL_EMPLOYEE_PALETTE = [
+    "4D93D9",
+    "FF0000",
+    "61CBF3",
+    "663300",
+    "D86DCD",
+    "153D64",
+    "8ED973",
+    "D9EAD3",
+    "BFBFBF",
+    "F1A983",
+    "F9E79F",
+    "D6E4F0",
+]
+EXCEL_EMPLOYEE_COLOR_MAP = {
+    "Angel": "4D93D9",
+    "Eligio": "FF0000",
+    "Ileana": "61CBF3",
+    "Jeison": "663300",
+    "Jensy": "D86DCD",
+    "Keilor": "153D64",
+    "Maikel": "8ED973",
+    "Alejandro": "D9EAD3",
+    "Randall": "BFBFBF",
+    "Steven": "F1A983",
+    "Tomas": "F9E79F",
+    "Refuerzo": "D6E4F0",
+}
+EXCEL_EMPLOYEE_FONT_COLOR_MAP = {
+    "Eligio": "FFFFFF",
+}
+EXCEL_LIBRE_FILL = "FFFF00"
+
+
+def _excel_font_color_for_fill(hex_color: str) -> str:
+    color = (hex_color or "").strip().lstrip("#")
+    if len(color) == 8:
+        color = color[2:]
+    if len(color) != 6:
+        return "000000"
+
+    try:
+        red = int(color[0:2], 16)
+        green = int(color[2:4], 16)
+        blue = int(color[4:6], 16)
+    except ValueError:
+        return "000000"
+
+    brightness = (red * 299 + green * 587 + blue * 114) / 1000
+    return "FFFFFF" if brightness < 145 else "000000"
+
+
+def _normalize_excel_task_text(task_text: str) -> str:
+    if task_text is None:
+        return ""
+
+    text = str(task_text).strip()
+    replacements = {
+        "â†‘AM": "↑",
+        "â†“PM": "↓",
+        "↑AM": "↑",
+        "↓PM": "↓",
+        "↑ AM": "↑",
+        "↓ PM": "↓",
+    }
+    for source, target in replacements.items():
+        text = text.replace(source, target)
+    return " ".join(text.split())
+
+
+def _build_excel_task_text(task_text: str, shift_code: str) -> str:
+    text = _normalize_excel_task_text(task_text)
+    if not text:
+        return ""
+
+    if "↑" not in text and "↓" not in text:
+        hours = sorted(horario_db.get_shift_hours_set(shift_code))
+        if hours:
+            text = f"{text} {'↑' if hours[0] < 12 else '↓'}"
+
+    return text
+
+
+def _task_style_key(task_text: str) -> str:
+    normalized = unicodedata.normalize("NFKD", str(task_text or ""))
+    normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch)).lower()
+    if "banos" in normalized:
+        return "banos"
+    if "tanques" in normalized:
+        return "tanques"
+    if "oficina" in normalized:
+        return "oficina"
+    return ""
+
 @app.get("/api/validation_rules")
 def get_validation_rules():
     db = load_db()
@@ -584,17 +1023,32 @@ def get_validation_rules():
             
     standard_mode = active_count >= 10
     
-    from scheduler_engine import SHIFTS, HOURS, coverage_bounds
+    from scheduler_engine import (
+        SHIFTS,
+        HOURS,
+        coverage_bounds,
+        effective_coverage_bounds,
+        get_overstaff_policy,
+        ensure_manual_shift_code,
+        sync_refuerzo_custom_shift,
+    )
+    sync_refuerzo_custom_shift(db.get("config", {}))
+    ensure_manual_shift_code(7, 12)
     
     # Precompute coverage matrix bounds: { "Dom": { "5": 2, "6": 2... } }
     bounds = {}
+    max_bounds = {}
     soft_bounds = {}  # Desired optimal coverage (for yellow warnings)
+    overstaff_policy = get_overstaff_policy()
     for d in DAYS:
         bounds[d] = {}
+        max_bounds[d] = {}
         soft_bounds[d] = {}
         for h in HOURS:
-            mn, mx = coverage_bounds(h, d, standard_mode)
+            mn, _ = coverage_bounds(h, d, standard_mode)
+            _, effective_mx = effective_coverage_bounds(h, d, standard_mode)
             bounds[d][h] = mn
+            max_bounds[d][h] = effective_mx
             
             # Soft targets (desired, not strictly enforced)
             if d == "Dom" and standard_mode:
@@ -623,6 +1077,23 @@ def get_validation_rules():
     shift_hours = {
         "OFF": 0, "VAC": 0, "PERM": 0
     }
+    if standard_mode:
+        sunday_allowed_shifts = [
+            "OFF",
+            "VAC",
+            "PERM",
+            "T1_05-13",
+            "T3_07-15",
+            "T8_13-20",
+            "D4_13-22",
+            "T10_15-22",
+            "N_22-05",
+        ]
+    else:
+        sunday_allowed_shifts = [
+            s for s in SHIFTS.keys()
+            if s not in ["AUTO"]
+        ]
     
     for s, hours in SHIFTS.items():
         if s in ["OFF", "VAC", "PERM", "AUTO"]: continue
@@ -641,7 +1112,10 @@ def get_validation_rules():
         "shift_options": shift_options,
         "shift_hours": shift_hours,
         "bounds": bounds,
+        "max_bounds": max_bounds,
         "soft_bounds": soft_bounds,
+        "sunday_allowed_shifts": sunday_allowed_shifts,
+        "overstaff_policy": overstaff_policy,
         "standard_mode": standard_mode,
         "active_employees": active_count
     }
@@ -652,28 +1126,29 @@ def export_excel(history_index: Optional[int] = None):
     
     target_schedule = {}
     target_tasks = {}
+    selected_entry = None
     
     if history_index is not None:
-        # Export from History
         history_list = db.get("history_log", [])
         if 0 <= history_index < len(history_list):
-            entry = history_list[history_index]
-            target_schedule = entry.get("schedule", {})
-            target_tasks = entry.get("daily_tasks", {})
+            selected_entry = history_list[history_index]
+            target_schedule = selected_entry.get("schedule", {})
+            target_tasks = selected_entry.get("daily_tasks", {})
     else:
-        # Export Last Result
         last_result = db.get("last_result", {})
         target_schedule = last_result.get("schedule", {})
-        target_tasks = last_result.get("daily_tasks", {}) 
+        target_tasks = last_result.get("daily_tasks", {})
+        history_list = db.get("history_log", [])
+        if history_list:
+            selected_entry = history_list[-1]
     
     if not target_schedule:
         raise HTTPException(status_code=404, detail="No hay horario generado para exportar")
 
     from openpyxl.styles import Border, Side
-    from scheduler_engine import DAYS, SHIFTS
+    from scheduler_engine import DAYS
 
-    # Try to load VBA template for format propagation macros
-    template_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "formato_template.xlsm")
+    template_path = _template_path
     use_vba = os.path.exists(template_path)
     
     if use_vba:
@@ -686,24 +1161,7 @@ def export_excel(history_index: Optional[int] = None):
         ws = wb.active
         ws.title = "Horario"
     
-    # ========================
-    # COLOR PALETTE for employees (rotating, distinct colors)
-    # ========================
-    palette = [
-        "D6E4F0",  # Light Blue
-        "E2EFDA",  # Light Green
-        "FCE4D6",  # Light Peach
-        "EDEDED",  # Light Gray
-        "D9E2F3",  # Lavender
-        "FFF2CC",  # Light Yellow
-        "E2D9F3",  # Light Purple
-        "D5F5E3",  # Mint
-        "FADBD8",  # Light Pink
-        "D4EFDF",  # Sage
-        "F9E79F",  # Gold
-        "AED6F1",  # Sky Blue
-    ]
-    
+    palette = EXCEL_EMPLOYEE_PALETTE
     thin_border = Border(
         left=Side(style='thin', color='CCCCCC'),
         right=Side(style='thin', color='CCCCCC'),
@@ -711,63 +1169,53 @@ def export_excel(history_index: Optional[int] = None):
         bottom=Side(style='thin', color='CCCCCC')
     )
     
-    # ========================
-    # SHEET 1: HORARIO PRINCIPAL
-    # ========================
-    # ========================
-    # DATE ROW (above headers) — if week_dates available
-    # ========================
     week_dates = None
-    if history_index is not None:
-        history_list = db.get("history_log", [])
-        if 0 <= history_index < len(history_list):
-            entry = history_list[history_index]
-            week_dates = entry.get("week_dates")
-            if not week_dates:
-                meta = entry.get("metadata", {})
-                if isinstance(meta, str):
-                    import json as _json
-                    try:
-                        meta = _json.loads(meta)
-                    except _json.JSONDecodeError:
-                        print(f"export_excel: metadata JSON inválido en history_index={history_index}")
-                        meta = {}
-                week_dates = meta.get("week_dates")
-    
+    if selected_entry:
+        week_dates = selected_entry.get(""week_dates"")
+        if not week_dates:
+            meta = selected_entry.get(""metadata"", {})
+            if isinstance(meta, str):
+                import json as _json
+                try:
+                    meta = _json.loads(meta)
+                except _json.JSONDecodeError:
+                    if history_index is not None:
+                        print(f"export_excel: metadata JSON invalido en history_index={history_index}")
+                    meta = {}
+            week_dates = meta.get("week_dates")
+    current_row = 1
     if week_dates:
-        date_row = [""]
-        for d in DAYS:
-            date_row.append(week_dates.get(d, ""))
-        date_row.append("")  # Hours column empty
-        ws.append(date_row)
-        # Style date row
-        date_fill = PatternFill(start_color="D6E4F0", end_color="D6E4F0", fill_type="solid")
         date_font = Font(bold=True, color="2F5496", size=10)
-        for cell in ws[ws.max_row]:
-            cell.fill = date_fill
+        for day_idx, day in enumerate(DAYS, start=2):
+            cell = ws.cell(row=current_row, column=day_idx, value=week_dates.get(day, ""))
+            cell.number_format = "d/m/yyyy"
             cell.font = date_font
             cell.alignment = Alignment(horizontal="center", vertical="center")
-            cell.border = thin_border
+        current_row += 1
     
+    header_row = current_row
     headers = ["Colaborador"] + DAYS + ["Horas"]
-    ws.append(headers)
-    header_row_idx = ws.max_row
-    
-    # Header Style
+    for col_idx, header in enumerate(headers, start=1):
+        ws.cell(row=header_row, column=col_idx, value=header)
     header_fill = PatternFill(start_color="2F5496", end_color="2F5496", fill_type="solid")
     header_font = Font(bold=True, color="FFFFFF", size=11)
     
-    for cell in ws[header_row_idx]:
+    for cell in ws[header_row]:
         cell.fill = header_fill
         cell.font = header_font
         cell.alignment = Alignment(horizontal="center", vertical="center")
         cell.border = thin_border
 
-    # Employee Data Rows
     emp_names = list(target_schedule.keys())
-    
-    # Precalculate colors per employee for consistency across all sections
-    emp_colors = {name: palette[idx % len(palette)] for idx, name in enumerate(emp_names)}
+    emp_colors = {}
+    fallback_index = 0
+    for name in emp_names:
+        if name in EXCEL_EMPLOYEE_COLOR_MAP:
+            emp_colors[name] = EXCEL_EMPLOYEE_COLOR_MAP[name]
+        else:
+            emp_colors[name] = palette[fallback_index % len(palette)]
+            fallback_index += 1
+    first_emp_row = header_row + 1
     
     for idx, name in enumerate(emp_names):
         shifts = target_schedule[name]
@@ -780,100 +1228,85 @@ def export_excel(history_index: Optional[int] = None):
             row_data.append(readable_shift)
             
             # Calculate hours
-            hours = len(SHIFTS.get(s_code, set()))
+            hours = len(horario_db.get_shift_hours_set(s_code))
             total_hours += hours
             
         row_data.append(total_hours)
-        ws.append(row_data)
-        
-        # Style the row
-        current_row = ws.max_row
+        current_data_row = first_emp_row + idx
+        for col_idx, value in enumerate(row_data, start=1):
+            ws.cell(row=current_data_row, column=col_idx, value=value)
+
         color = emp_colors[name]
-        name_fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
+        row_fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
+        row_font_color = EXCEL_EMPLOYEE_FONT_COLOR_MAP.get(name, _excel_font_color_for_fill(color))
         
         for col_idx in range(1, len(row_data) + 1):
-            cell = ws.cell(row=current_row, column=col_idx)
+            cell = ws.cell(row=current_data_row, column=col_idx)
             cell.border = thin_border
             cell.alignment = Alignment(wrap_text=True, vertical="center", horizontal="center")
             
             if col_idx == 1:
-                # Name cell: bold, colored, left-aligned — THIS IS THE FORMAT KEY
-                cell.fill = name_fill
-                cell.font = Font(bold=True, size=11)
+                cell.fill = row_fill
+                cell.font = Font(bold=True, size=11, color=row_font_color)
                 cell.alignment = Alignment(vertical="center", horizontal="left")
             else:
-                # Schedule cells inherit the name's color
-                light_fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
-                cell.fill = light_fill
+                cell.fill = row_fill
+                cell.font = Font(
+                    bold=(col_idx == len(row_data)),
+                    size=11 if col_idx == len(row_data) else 10,
+                    color=row_font_color,
+                )
                 
-                # Highlight special shifts
                 s_code = shifts.get(DAYS[col_idx - 2], "OFF") if col_idx <= 8 else None
                 if s_code == "OFF":
-                    cell.fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
-                    cell.font = Font(color="999999", italic=True)
+                    cell.fill = PatternFill(start_color=EXCEL_LIBRE_FILL, end_color=EXCEL_LIBRE_FILL, fill_type="solid")
+                    cell.font = Font(color="999999", italic=True, size=11 if col_idx == len(row_data) else 10)
                 elif s_code == "VAC":
                     cell.fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
                     cell.font = Font(color="006100", bold=True)
-                elif s_code == "N_22-05":
-                    cell.fill = PatternFill(start_color="2F2F5F", end_color="2F2F5F", fill_type="solid")
-                    cell.font = Font(color="FFFFFF", bold=True)
-                elif col_idx == len(row_data):
-                    # Hours column
-                    cell.font = Font(bold=True, size=11)
+                elif s_code == "PERM":
+                    cell.fill = PatternFill(start_color="FCE4D6", end_color="FCE4D6", fill_type="solid")
+                    cell.font = Font(color="9A3412", bold=True)
         
-    # Column Widths
     ws.column_dimensions["A"].width = 18
     for col_idx in range(2, 9):
         col_letter = openpyxl.utils.get_column_letter(col_idx)
         ws.column_dimensions[col_letter].width = 20
     ws.column_dimensions[openpyxl.utils.get_column_letter(9)].width = 8
     
-    # ========================
-    # FORMATO SECTION (Column K) — Visual legend linked to both tables
-    # ========================
     formato_col = 11  # Column K
     
-    # Header
-    fmt_header = ws.cell(row=header_row_idx, column=formato_col, value="FORMATO")
-    fmt_header.fill = PatternFill(start_color="2F5496", end_color="2F5496", fill_type="solid")
+    fmt_header = ws.cell(row=header_row, column=formato_col, value=\    fmt_header.fill = PatternFill(start_color="2F5496", end_color="2F5496", fill_type="solid")
     fmt_header.font = Font(bold=True, color="FFFFFF", size=11)
     fmt_header.alignment = Alignment(horizontal="center", vertical="center")
     fmt_header.border = thin_border
     
-    # One cell per employee with the same format as their row in both tables
     for idx, name in enumerate(emp_names):
-        fmt_row = idx + header_row_idx + 1  # Data rows start right after the header row
+        fmt_row = first_emp_row + idx
         color = emp_colors[name]
         fmt_cell = ws.cell(row=fmt_row, column=formato_col, value=name)
         fmt_cell.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
-        fmt_cell.font = Font(bold=True, size=11)
+        fmt_cell.font = Font(bold=True, size=11, color=_excel_font_color_for_fill(color))
         fmt_cell.alignment = Alignment(vertical="center", horizontal="left")
         fmt_cell.border = thin_border
     
-    # LIBRE format entry (after all employees)
-    libre_row = len(emp_names) + header_row_idx + 1
+    libre_row = first_emp_row + len(emp_names)
     libre_cell = ws.cell(row=libre_row, column=formato_col, value="LIBRE")
-    libre_cell.fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
+    libre_cell.fill = PatternFill(start_color=EXCEL_LIBRE_FILL, end_color=EXCEL_LIBRE_FILL, fill_type="solid")
     libre_cell.font = Font(color="999999", italic=True, size=11)
     libre_cell.alignment = Alignment(vertical="center", horizontal="left")
     libre_cell.border = thin_border
     
     ws.column_dimensions[openpyxl.utils.get_column_letter(formato_col)].width = 18
 
-    # ========================
-    # SUB-TABLE: OBLIGACIONES / LIMPIEZA
-    # ========================
-    # Leave 2 blank rows as separator
     separator_row = ws.max_row + 2
     
-    # Title row
     ws.cell(row=separator_row, column=1, value="OBLIGACIONES / LIMPIEZA")
     title_cell = ws.cell(row=separator_row, column=1)
     title_cell.font = Font(bold=True, size=13, color="2F5496")
     title_cell.alignment = Alignment(horizontal="left", vertical="center")
     ws.merge_cells(start_row=separator_row, start_column=1, end_row=separator_row, end_column=9)
     
-    # Task Headers
     task_header_row = separator_row + 1
     task_headers = ["Colaborador"] + DAYS
     for col_idx, header in enumerate(task_headers, 1):
@@ -883,40 +1316,35 @@ def export_excel(history_index: Optional[int] = None):
         cell.alignment = Alignment(horizontal="center", vertical="center")
         cell.border = thin_border
     
-    # Task Data Rows
     for idx, name in enumerate(emp_names):
         emp_tasks = target_tasks.get(name, {})
         task_row_num = task_header_row + 1 + idx
         color = emp_colors[name]
         name_fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
         
-        # Name cell
         name_cell = ws.cell(row=task_row_num, column=1, value=name)
         name_cell.fill = name_fill
-        name_cell.font = Font(bold=True, size=10)
+        name_cell.font = Font(bold=True, size=10, color=_excel_font_color_for_fill(color))
         name_cell.alignment = Alignment(vertical="center", horizontal="left")
         name_cell.border = thin_border
         
         for d_idx, d in enumerate(DAYS):
             task = emp_tasks.get(d)
+            shift_code = target_schedule.get(name, {}).get(d, "OFF")
             col = d_idx + 2
             
             if task:
-                # Clean up task text for Excel
-                task_text = task
-                if "↑AM" in task_text or "↓PM" in task_text:
-                    task_text = task_text.replace("↑AM", "(AM)").replace("↓PM", "(PM)")
-                
+                task_text = _build_excel_task_text(task, shift_code)
                 cell = ws.cell(row=task_row_num, column=col, value=task_text)
+                style_key = _task_style_key(task_text)
                 
-                # Color-code by task type
-                if "Baños" in task:
+                if style_key == "banos":
                     cell.fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
                     cell.font = Font(color="B45309", bold=True, size=10)
-                elif "Tanques" in task:
+                elif style_key == "tanques":
                     cell.fill = PatternFill(start_color="D6E4F0", end_color="D6E4F0", fill_type="solid")
                     cell.font = Font(color="1D4ED8", bold=True, size=10)
-                elif "Oficina" in task:
+                elif style_key == "oficina":
                     cell.fill = PatternFill(start_color="FADBD8", end_color="FADBD8", fill_type="solid")
                     cell.font = Font(color="BE185D", bold=True, size=10)
                 else:
@@ -941,6 +1369,7 @@ def export_excel(history_index: Optional[int] = None):
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
     wb.save(tmp.name)
     tmp.close()
+    wb.close()
     
     return FileResponse(tmp.name, filename=filename)
 
@@ -1257,7 +1686,7 @@ def calcular_liquidacion(emp_id: int):
 
         for mes_data in meses:
             archivo = mes_data['archivo']
-            archivo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../planillas", archivo)
+            archivo_path = os.path.join(_planillas_dir, archivo)
             if not os.path.exists(archivo_path):
                 continue
             try:
@@ -1804,10 +2233,12 @@ def importar_horario_semana(req: PlanillaImportarHorario):
 
         for emp_nombre, h in hours_data.items():
             if emp_nombre in emp_map:
-                bruto = (h["diurnas"] * tarifas["tarifa_diurna"]) + \
-                        (h["mixtas"] * tarifas["tarifa_mixta"]) + \
-                        (h["nocturnas"] * tarifas["tarifa_nocturna"]) + \
-                        (h["extra"] * (tarifas["tarifa_diurna"] * 1.5)) # Extra typically 1.5x
+                bruto = h.get("salario_bruto")
+                if bruto is None:
+                    bruto = (h["diurnas"] * tarifas["tarifa_diurna"]) + \
+                            (h["mixtas"] * tarifas["tarifa_mixta"]) + \
+                            (h["nocturnas"] * tarifas["tarifa_nocturna"]) + \
+                            (h["extra"] * (tarifas["tarifa_diurna"] * 1.5)) # Extra typically 1.5x
                 
                 plan_db.guardar_salario_semanal(
                     emp_map[emp_nombre], emp_nombre,
@@ -1862,7 +2293,12 @@ def importar_horario_semana_historico(mes_id: int, semana_nombre: str, req: Plan
 
         for emp_nombre, h in hours_data.items():
             if emp_nombre in emp_map:
-                bruto = (h["diurnas"] * tarifas["tarifa_diurna"]) +                         (h["mixtas"] * tarifas["tarifa_mixta"]) +                         (h["nocturnas"] * tarifas["tarifa_nocturna"]) +                         (h["extra"] * (tarifas["tarifa_diurna"] * 1.5))
+                bruto = h.get("salario_bruto")
+                if bruto is None:
+                    bruto = (h["diurnas"] * tarifas["tarifa_diurna"]) + \
+                            (h["mixtas"] * tarifas["tarifa_mixta"]) + \
+                            (h["nocturnas"] * tarifas["tarifa_nocturna"]) + \
+                            (h["extra"] * (tarifas["tarifa_diurna"] * 1.5))
 
                 plan_db.guardar_salario_semanal(
                     emp_map[emp_nombre], emp_nombre,
@@ -1969,16 +2405,16 @@ def _get_emp_info(emp_id: int):
 @app.post("/api/utilidades/prestamo")
 def generar_doc_prestamo(req: DocPrestamo):
     nombre, cedula = _get_emp_info(req.emp_id)
-    logo = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../planillas/logo.png")
-    base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../")
+    logo = os.path.join(_planillas_dir, "logo.png")
+    base = _runtime_root
     path = docx_generator.generar_prestamo(nombre, cedula, req.monto_total, req.pago_semanal, logo, base)
     return {"status": "success", "path": path}
 
 @app.post("/api/utilidades/amonestacion")
 def generar_doc_amonestacion(req: DocAmonestacion):
     nombre, cedula = _get_emp_info(req.emp_id)
-    logo = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../planillas/logo.png")
-    base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../")
+    logo = os.path.join(_planillas_dir, "logo.png")
+    base = _runtime_root
     datos_dict = [d.dict(exclude_none=True) for d in req.datos]
     path = docx_generator.generar_amonestacion(nombre, cedula, req.tipo, datos_dict, logo, base)
     return {"status": "success", "path": path}
@@ -1986,24 +2422,24 @@ def generar_doc_amonestacion(req: DocAmonestacion):
 @app.post("/api/utilidades/vacaciones")
 def generar_doc_vacaciones(req: DocVacacionesReq):
     nombre, cedula = _get_emp_info(req.emp_id)
-    logo = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../planillas/logo.png")
-    base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../")
+    logo = os.path.join(_planillas_dir, "logo.png")
+    base = _runtime_root
     path = docx_generator.generar_vacaciones(nombre, cedula, req.tipo, req.fecha_inicio, req.fecha_reingreso, logo, base)
     return {"status": "success", "path": path}
 
 @app.post("/api/utilidades/despido")
 def generar_doc_despido(req: DocLiquidacion):
     nombre, cedula = _get_emp_info(req.emp_id)
-    logo = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../planillas/logo.png")
-    base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../")
+    logo = os.path.join(_planillas_dir, "logo.png")
+    base = _runtime_root
     path = docx_generator.generar_liquidacion("Despido", nombre, cedula, req.vacaciones_dias, req.vacaciones_monto, req.aguinaldo_monto, req.cesantia_monto, req.preaviso_monto, req.total_pagar, req.modo_pago, logo, base)
     return {"status": "success", "path": path}
 
 @app.post("/api/utilidades/renuncia")
 def generar_doc_renuncia(req: DocLiquidacion):
     nombre, cedula = _get_emp_info(req.emp_id)
-    logo = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../planillas/logo.png")
-    base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../")
+    logo = os.path.join(_planillas_dir, "logo.png")
+    base = _runtime_root
     path = docx_generator.generar_liquidacion("Renuncia", nombre, cedula, req.vacaciones_dias, req.vacaciones_monto, req.aguinaldo_monto, 0, 0, req.total_pagar, req.modo_pago, logo, base)
     return {"status": "success", "path": path}
 
@@ -2018,8 +2454,8 @@ def generar_doc_recomendacion(req: DocRecomendacion):
     emps = plan_db.get_empleados(solo_activos=False)
     emp = next((e for e in emps if e['id'] == req.emp_id), None)
     fecha_inicio = emp.get("fecha_inicio", "") if emp else ""
-    logo = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../planillas/logo.png")
-    base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../")
+    logo = os.path.join(_planillas_dir, "logo.png")
+    base = _runtime_root
     path = docx_generator.generar_recomendacion(nombre, cedula, req.puesto, fecha_inicio, req.texto_adicional, logo, base)
     return {"status": "success", "path": path}
 
@@ -2044,9 +2480,6 @@ async def upload_inventario(file: UploadFile = File(...)):
         wb = openpyxl.load_workbook(tmp.name, data_only=True)
         ws = wb.active
 
-        # Find header row — scan first 10 rows for column names
-        header_map = {}  # col_index -> field_name
-        header_row = None
         target_fields = {
             'nombre': ['nombre', 'articulo', 'producto', 'descripcion', 'item', 'descripción'],
             'precio': ['precio', 'costo', 'price', 'valor'],
@@ -2054,18 +2487,10 @@ async def upload_inventario(file: UploadFile = File(...)):
             'existencias': ['existencias', 'existencia', 'stock', 'cantidad', 'cant', 'inventario', 'qty'],
         }
 
-        for row_idx in range(1, min(ws.max_row + 1, 11)):
-            for col_idx in range(1, min(ws.max_column + 1, 30)):
-                cell_val = ws.cell(row=row_idx, column=col_idx).value
-                if cell_val and isinstance(cell_val, str):
-                    cell_lower = cell_val.strip().lower()
-                    for field, aliases in target_fields.items():
-                        if any(alias in cell_lower for alias in aliases):
-                            if field not in header_map.values():
-                                header_map[col_idx] = field
-                                header_row = row_idx
-            if len(header_map) >= 2:  # At minimum nombre + existencias
-                break
+        # Find a coherent header row inside the initial report area.
+        # This avoids confusing report filters like "Inventario: Todos" with
+        # the real table headers when the Excel includes a preamble.
+        header_row, header_map = _detect_inventory_header_row(ws, target_fields)
 
         if not header_row or 'nombre' not in header_map.values():
             wb.close()
@@ -2234,7 +2659,7 @@ def delete_inventario_carga(carga_id: int):
 # ==============================================================================
 # Serve Frontend
 # ==============================================================================
-frontend_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../frontend")
+frontend_path = _frontend_dir
 if os.path.exists(frontend_path):
     # Mount frontend directory for static files (React/Vue/JS/CSS)
     # Using 'html=True' lets it serve index.html for the root automatically.

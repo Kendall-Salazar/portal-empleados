@@ -162,3 +162,9 @@ CORAZON/
 planillas/Planillas */
 planillas/*.xlsx
 !planillas/Planilla_de_Pago.xlsx  # Mantener la plantilla de referencia
+
+# Local/generated artifacts outside the source tree
+.validation_tmp/
+empaquetado/
+export_horarios/
+scripts/

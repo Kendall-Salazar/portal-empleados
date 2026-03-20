@@ -134,14 +134,35 @@
                         <div id="refuerzoTypeContainer" class="select-wrapper hidden fade-in"
                             style="padding: 0 1.2rem;">
                             <label
-                                style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem; display: block;">Preferencia
-                                de Horario</label>
+                                style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem; display: block;">Modo
+                                de Refuerzo</label>
                             <select id="refuerzoTypeSelect" onchange="updateConfig()"
                                 style="width: 100%; padding: 0.5rem; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-panel); color: var(--text-main);">
+                                <option value="personalizado">Personalizado (Elegir Horas)</option>
                                 <option value="diurno">Diurno (Cubre Mañana)</option>
                                 <option value="nocturno">Nocturno (Cubre Tarde/Noche)</option>
                                 <option value="automatico">Automático (Mejor Opción)</option>
+                                <option value="sabado">Solo Sábado</option>
                             </select>
+                            <div id="refuerzoCustomTimeContainer" class="fade-in" style="margin-top: 0.85rem;">
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+                                    <div class="input-group">
+                                        <label style="font-size: 0.8rem; color: var(--text-muted);">Hora inicio</label>
+                                        <input type="time" id="refuerzoStartTime" step="3600" value="07:00"
+                                            onchange="updateConfig()"
+                                            style="width: 100%; padding: 0.5rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px; font-size: 0.85rem;">
+                                    </div>
+                                    <div class="input-group">
+                                        <label style="font-size: 0.8rem; color: var(--text-muted);">Hora final</label>
+                                        <input type="time" id="refuerzoEndTime" step="3600" value="12:00"
+                                            onchange="updateConfig()"
+                                            style="width: 100%; padding: 0.5rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px; font-size: 0.85rem;">
+                                    </div>
+                                </div>
+                                <small style="display:block; margin-top: 0.45rem; font-size: 0.72rem; color: var(--text-muted);">
+                                    Horario por defecto: 07:00 AM a 12:00 PM.
+                                </small>
+                            </div>
                         </div>
 
                         <!-- COLLISION DAY Q-SHIFT TOGGLE -->
@@ -174,6 +195,25 @@
                                 <option value="am">4 Mañana + 3 Tarde</option>
                             </select>
                         </div>
+
+                        <h3 style="margin-top: 1rem;"><i class="fa-solid fa-clock-rotate-left"></i> Historial</h3>
+                        <label class="option-card hover-glow" style="margin-bottom: 0.5rem; padding: 0.8rem;">
+                            <div class="opt-content">
+                                <div class="opt-icon"
+                                    style="background: rgba(14, 165, 233, 0.12); color: #0ea5e9; width: 32px; height: 32px; font-size: 0.9rem;">
+                                    <i class="fa-solid fa-timeline"></i>
+                                </div>
+                                <div class="opt-text">
+                                    <strong style="font-size: 0.85rem;">Usar semana anterior</strong>
+                                    <small style="font-size: 0.7rem;">Usa el historial previo para rotacion y evitar repeticiones</small>
+                                </div>
+                            </div>
+                            <div class="toggle-container">
+                                <input type="checkbox" id="useHistoryContext" class="toggle-checkbox"
+                                    onchange="updateConfig()">
+                                <div class="toggle-slider"></div>
+                            </div>
+                        </label>
                     </div>
                 </div> <!-- END scheduleConfigSidebar -->
 
