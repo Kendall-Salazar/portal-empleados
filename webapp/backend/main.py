@@ -1171,9 +1171,9 @@ def export_excel(history_index: Optional[int] = None):
     
     week_dates = None
     if selected_entry:
-        week_dates = selected_entry.get(""week_dates"")
+        week_dates = selected_entry.get("week_dates")
         if not week_dates:
-            meta = selected_entry.get(""metadata"", {})
+            meta = selected_entry.get("metadata", {})
             if isinstance(meta, str):
                 import json as _json
                 try:
@@ -1276,7 +1276,8 @@ def export_excel(history_index: Optional[int] = None):
     
     formato_col = 11  # Column K
     
-    fmt_header = ws.cell(row=header_row, column=formato_col, value=\    fmt_header.fill = PatternFill(start_color="2F5496", end_color="2F5496", fill_type="solid")
+    fmt_header = ws.cell(row=header_row, column=formato_col, value="FORMATO")
+    fmt_header.fill = PatternFill(start_color="2F5496", end_color="2F5496", fill_type="solid")
     fmt_header.font = Font(bold=True, color="FFFFFF", size=11)
     fmt_header.alignment = Alignment(horizontal="center", vertical="center")
     fmt_header.border = thin_border
@@ -1667,7 +1668,7 @@ def calcular_liquidacion(emp_id: int):
     antiguedad_anios = 0
     if fi:
         try:
-            inicio = datetime.strptime(fi, "%Y-%m-%d").date()
+            inicio = datetime.datetime.strptime(fi, "%Y-%m-%d").date()
             antiguedad_dias = (date.today() - inicio).days
             antiguedad_anios = antiguedad_dias / 365.25
         except (ValueError, TypeError):
