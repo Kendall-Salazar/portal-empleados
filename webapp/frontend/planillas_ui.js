@@ -2712,7 +2712,7 @@ async function generarVacaciones() {
 // DEFAULT TAB ON LOAD
 // =============================================================================
 document.addEventListener('DOMContentLoaded', () => {
-    setTimeout(() => switchMainTab('planilla-mensual'), 100);
+    setTimeout(() => switchMainTab('gestion'), 100);
 });
 
 // =============================================================================
