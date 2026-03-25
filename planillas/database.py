@@ -134,6 +134,23 @@ def init_db():
             precio REAL DEFAULT 0,
             existencias REAL DEFAULT 0
         );
+
+        CREATE TABLE IF NOT EXISTS inventario_base_config (
+            id INTEGER PRIMARY KEY DEFAULT 1,
+            source_path TEXT,
+            last_imported_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS inventario_base_articulos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            codigo TEXT,
+            nombre TEXT NOT NULL,
+            precio REAL DEFAULT 0,
+            existencias_base REAL DEFAULT 0,
+            hoja_origen TEXT,
+            orden INTEGER DEFAULT 0,
+            activo INTEGER DEFAULT 1
+        );
     """)
 
     # Insertar tarifas por defecto si no existen
@@ -145,6 +162,20 @@ def init_db():
         )
     conn.commit()
     conn.close()
+
+    _inventory_base_migrations = [
+        ("inventario_base_articulos", "hoja_origen", "TEXT"),
+        ("inventario_base_articulos", "orden", "INTEGER DEFAULT 0"),
+        ("inventario_base_articulos", "activo", "INTEGER DEFAULT 1"),
+    ]
+    for table, col, col_type in _inventory_base_migrations:
+        conn = get_conn()
+        try:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
+            conn.commit()
+        except sqlite3.OperationalError:
+            print(f"init_db: columna {table}.{col} ya existe, se omite migracion")
+        conn.close()
     # Migration: add cedula column if it doesn't exist
     conn = get_conn()
     try:
@@ -1136,6 +1167,102 @@ def get_articulos_carga(carga_id):
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def replace_inventario_base(articulos, source_path=None):
+    """Reemplaza la base maestra de inventario."""
+    conn = get_conn()
+    conn.execute("DELETE FROM inventario_base_articulos")
+    for idx, art in enumerate(articulos, start=1):
+        conn.execute(
+            """
+            INSERT INTO inventario_base_articulos
+            (codigo, nombre, precio, existencias_base, hoja_origen, orden, activo)
+            VALUES (?, ?, ?, ?, ?, ?, 1)
+            """,
+            (
+                art.get("codigo", ""),
+                art.get("nombre", "").strip(),
+                art.get("precio", 0),
+                art.get("existencias_base", 0),
+                art.get("hoja_origen"),
+                art.get("orden", idx),
+            ),
+        )
+    conn.execute(
+        """
+        INSERT INTO inventario_base_config (id, source_path, last_imported_at)
+        VALUES (1, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            source_path=excluded.source_path,
+            last_imported_at=excluded.last_imported_at
+        """,
+        (source_path, datetime.now().isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_inventario_base():
+    conn = get_conn()
+    items = conn.execute(
+        """
+        SELECT * FROM inventario_base_articulos
+        WHERE COALESCE(activo, 1)=1
+        ORDER BY hoja_origen, orden, nombre
+        """
+    ).fetchall()
+    cfg = conn.execute(
+        "SELECT * FROM inventario_base_config WHERE id=1"
+    ).fetchone()
+    conn.close()
+    return {
+        "config": dict(cfg) if cfg else None,
+        "articulos": [dict(r) for r in items],
+    }
+
+
+def upsert_inventario_base_articulo(articulo):
+    conn = get_conn()
+    art_id = articulo.get("id")
+    payload = (
+        articulo.get("codigo", ""),
+        articulo.get("nombre", "").strip(),
+        articulo.get("precio", 0),
+        articulo.get("existencias_base", 0),
+        articulo.get("hoja_origen"),
+        articulo.get("orden", 999999),
+    )
+    if art_id:
+        conn.execute(
+            """
+            UPDATE inventario_base_articulos
+            SET codigo=?, nombre=?, precio=?, existencias_base=?, hoja_origen=?, orden=?, activo=1
+            WHERE id=?
+            """,
+            payload + (art_id,),
+        )
+        new_id = art_id
+    else:
+        conn.execute(
+            """
+            INSERT INTO inventario_base_articulos
+            (codigo, nombre, precio, existencias_base, hoja_origen, orden, activo)
+            VALUES (?, ?, ?, ?, ?, ?, 1)
+            """,
+            payload,
+        )
+        new_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    conn.commit()
+    conn.close()
+    return new_id
+
+
+def delete_inventario_base_articulo(articulo_id):
+    conn = get_conn()
+    conn.execute("DELETE FROM inventario_base_articulos WHERE id=?", (articulo_id,))
+    conn.commit()
+    conn.close()
 
 
 # Inicializar al importar

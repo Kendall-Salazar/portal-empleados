@@ -2465,6 +2465,164 @@ def generar_doc_recomendacion(req: DocRecomendacion):
 # ==============================================================================
 from fastapi import UploadFile, File
 
+INVENTARIO_BASE_DEFAULT_PATH = r"c:\Users\kenda\Downloads\Control de Inventario Pista.xlsx"
+
+
+def _normalize_inventory_key(value):
+    text = str(value or "").strip().lower()
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = re.sub(r"\s+", " ", text)
+    return text
+
+
+def _to_float(value, default=0):
+    try:
+        if value in (None, ""):
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _load_inventario_base_from_excel(path: str):
+    wb = openpyxl.load_workbook(path, data_only=True)
+    articulos = []
+    try:
+        for sheet_name in ("S", "S2"):
+            if sheet_name not in wb.sheetnames:
+                continue
+            ws = wb[sheet_name]
+            for row_idx in range(3, ws.max_row + 1):
+                nombre = ws.cell(row=row_idx, column=1).value
+                if nombre is None or str(nombre).strip() == "":
+                    continue
+                articulos.append({
+                    "codigo": str(ws.cell(row=row_idx, column=2).value or "").strip(),
+                    "nombre": str(nombre).strip(),
+                    "precio": _to_float(ws.cell(row=row_idx, column=3).value, 0),
+                    "existencias_base": _to_float(ws.cell(row=row_idx, column=4).value, 0),
+                    "hoja_origen": sheet_name,
+                    "orden": len(articulos) + 1,
+                })
+    finally:
+        wb.close()
+    return articulos
+
+
+def _ensure_inventario_base_seeded():
+    current = plan_db.get_inventario_base()
+    if current["articulos"]:
+        return current
+    if os.path.exists(INVENTARIO_BASE_DEFAULT_PATH):
+        articulos = _load_inventario_base_from_excel(INVENTARIO_BASE_DEFAULT_PATH)
+        if articulos:
+            plan_db.replace_inventario_base(articulos, source_path=INVENTARIO_BASE_DEFAULT_PATH)
+            return plan_db.get_inventario_base()
+    return current
+
+
+def _compare_inventory_against_base(upload_items, base_items):
+    # Build lookup by (codigo, nombre) — both must match exactly
+    base_by_key = {}
+    for base in base_items:
+        code = _normalize_inventory_key(base.get("codigo"))
+        name = _normalize_inventory_key(base.get("nombre"))
+        if code and name:
+            base_by_key[(code, name)] = base
+
+    rows = []
+    matched_base_ids = set()
+    resumen = {
+        "total_base": len(base_items),
+        "total_cargados": len(upload_items),
+        "coinciden": 0,
+        "con_diferencia": 0,
+        "faltantes_en_carga": 0,
+    }
+
+    for item in upload_items:
+        item_code = _normalize_inventory_key(item.get("codigo"))
+        item_name = _normalize_inventory_key(item.get("nombre"))
+        match = base_by_key.get((item_code, item_name)) if item_code and item_name else None
+
+        if match:
+            matched_base_ids.add(match["id"])
+            delta = _to_float(item.get("existencias"), 0) - _to_float(match.get("existencias_base"), 0)
+            resumen["coinciden" if delta == 0 else "con_diferencia"] += 1
+            rows.append({
+                "status": "match" if delta == 0 else "difference",
+                "base_id": match["id"],
+                "hoja_origen": match.get("hoja_origen"),
+                "codigo": item.get("codigo") or match.get("codigo", ""),
+                "nombre": item.get("nombre") or match.get("nombre", ""),
+                "precio": item.get("precio", 0) or match.get("precio", 0),
+                "existencias_base": _to_float(match.get("existencias_base"), 0),
+                "existencias_actual": _to_float(item.get("existencias"), 0),
+                "delta": delta,
+            })
+        # Items not in base are simply ignored — no "new" rows
+
+    for base in base_items:
+        if base["id"] in matched_base_ids:
+            continue
+        resumen["faltantes_en_carga"] += 1
+        rows.append({
+            "status": "missing",
+            "base_id": base["id"],
+            "hoja_origen": base.get("hoja_origen"),
+            "codigo": base.get("codigo", ""),
+            "nombre": base.get("nombre", ""),
+            "precio": base.get("precio", 0),
+            "existencias_base": _to_float(base.get("existencias_base"), 0),
+            "existencias_actual": None,
+            "delta": None,
+        })
+
+    order = {"difference": 0, "missing": 1, "match": 2}
+    rows.sort(key=lambda r: (order.get(r["status"], 9), r.get("hoja_origen") or "Z", r.get("nombre") or ""))
+    return rows, resumen
+
+
+class InventarioBaseArticuloIn(BaseModel):
+    id: Optional[int] = None
+    codigo: str = ""
+    nombre: str
+    precio: float = 0
+    existencias_base: float = 0
+    hoja_origen: Optional[str] = None
+    orden: Optional[int] = None
+
+
+@app.get("/api/inventario/base")
+def get_inventario_base():
+    return _ensure_inventario_base_seeded()
+
+
+@app.post("/api/inventario/base/import-default")
+def import_inventario_base_default():
+    if not os.path.exists(INVENTARIO_BASE_DEFAULT_PATH):
+        raise HTTPException(status_code=404, detail=f"No se encontro el archivo base en {INVENTARIO_BASE_DEFAULT_PATH}")
+    articulos = _load_inventario_base_from_excel(INVENTARIO_BASE_DEFAULT_PATH)
+    if not articulos:
+        raise HTTPException(status_code=400, detail="No se encontraron articulos en las hojas S y S2.")
+    plan_db.replace_inventario_base(articulos, source_path=INVENTARIO_BASE_DEFAULT_PATH)
+    return {"status": "success", "total_articulos": len(articulos), "source_path": INVENTARIO_BASE_DEFAULT_PATH}
+
+
+@app.post("/api/inventario/base/articulo")
+def save_inventario_base_articulo(payload: InventarioBaseArticuloIn):
+    if not payload.nombre.strip():
+        raise HTTPException(status_code=400, detail="El nombre del producto es obligatorio.")
+    articulo_id = plan_db.upsert_inventario_base_articulo(payload.model_dump())
+    return {"status": "success", "id": articulo_id}
+
+
+@app.delete("/api/inventario/base/articulo/{articulo_id}")
+def delete_inventario_base_articulo(articulo_id: int):
+    plan_db.delete_inventario_base_articulo(articulo_id)
+    return {"status": "success"}
+
 @app.post("/api/inventario/upload")
 async def upload_inventario(file: UploadFile = File(...)):
     """Sube un Excel de inventario, parsea artículos y guarda en DB."""
@@ -2552,98 +2710,19 @@ def get_inventario_latest():
 
 @app.get("/api/inventario/diff")
 def get_inventario_diff():
-    """Calcula diferencias entre las 2 últimas cargas de inventario."""
+    """Calcula diferencias entre la ultima carga y la base maestra editable."""
     ultima = plan_db.get_ultima_carga()
+    base = _ensure_inventario_base_seeded()
     if not ultima:
-        return {"carga_actual": None, "carga_anterior": None, "articulos": [], "resumen": {}}
+        return {"carga_actual": None, "base": base, "articulos": [], "resumen": {}}
 
-    anterior = plan_db.get_carga_anterior(ultima['carga']['id'])
-    if not anterior:
-        # Solo hay una carga, no hay diferencia — devolver datos actuales sin delta
-        arts_out = []
-        for a in ultima['articulos']:
-            arts_out.append({
-                'nombre': a['nombre'],
-                'codigo': a.get('codigo', ''),
-                'precio': a.get('precio', 0),
-                'existencias_anterior': None,
-                'existencias_actual': a['existencias'],
-                'delta': None
-            })
-        return {
-            "carga_actual": ultima['carga'],
-            "carga_anterior": None,
-            "articulos": arts_out,
-            "resumen": {
-                "total_articulos": len(arts_out),
-                "total_consumidos": 0,
-                "total_sin_cambio": 0,
-                "total_aumentaron": 0,
-                "total_nuevos": len(arts_out),
-                "articulos_mas_consumidos": []
-            }
-        }
-
-    # Build lookup by nombre for anterior
-    ant_by_name = {}
-    for a in anterior['articulos']:
-        ant_by_name[a['nombre'].strip().lower()] = a
-
-    arts_out = []
-    consumidos = 0
-    sin_cambio = 0
-    aumentaron = 0
-    nuevos = 0
-
-    for a in ultima['articulos']:
-        key = a['nombre'].strip().lower()
-        ant = ant_by_name.pop(key, None)
-        if ant:
-            delta = a['existencias'] - ant['existencias']
-            arts_out.append({
-                'nombre': a['nombre'],
-                'codigo': a.get('codigo', '') or ant.get('codigo', ''),
-                'precio': a.get('precio', 0),
-                'existencias_anterior': ant['existencias'],
-                'existencias_actual': a['existencias'],
-                'delta': delta
-            })
-            if delta < 0:
-                consumidos += 1
-            elif delta == 0:
-                sin_cambio += 1
-            else:
-                aumentaron += 1
-        else:
-            arts_out.append({
-                'nombre': a['nombre'],
-                'codigo': a.get('codigo', ''),
-                'precio': a.get('precio', 0),
-                'existencias_anterior': None,
-                'existencias_actual': a['existencias'],
-                'delta': None
-            })
-            nuevos += 1
-
-    # Sort by delta ascending (most consumed first)
-    arts_sorted = sorted(
-        [a for a in arts_out if a['delta'] is not None and a['delta'] < 0],
-        key=lambda x: x['delta']
-    )
-    top5 = arts_sorted[:5]
+    arts_out, resumen = _compare_inventory_against_base(ultima["articulos"], base["articulos"])
 
     return {
-        "carga_actual": ultima['carga'],
-        "carga_anterior": anterior['carga'],
+        "carga_actual": ultima["carga"],
+        "base": base,
         "articulos": arts_out,
-        "resumen": {
-            "total_articulos": len(arts_out),
-            "total_consumidos": consumidos,
-            "total_sin_cambio": sin_cambio,
-            "total_aumentaron": aumentaron,
-            "total_nuevos": nuevos,
-            "articulos_mas_consumidos": top5
-        }
+        "resumen": resumen
     }
 
 @app.get("/api/inventario/history")

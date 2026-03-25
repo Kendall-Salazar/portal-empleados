@@ -4533,6 +4533,60 @@ select:focus {
     opacity: 0.6;
 }
 
+.inv-base-card {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 1.1rem 1.2rem;
+    margin-bottom: 1.25rem;
+}
+
+.inv-base-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    align-items: flex-start;
+}
+
+.inv-base-subtitle {
+    color: var(--text-muted);
+    font-size: 0.84rem;
+    margin-top: -0.25rem;
+    margin-bottom: 0;
+}
+
+.inv-base-actions {
+    display: flex;
+    gap: 0.65rem;
+    flex-wrap: wrap;
+}
+
+.portal-btn-secondary.inv-btn-soft {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-main);
+    border-radius: 10px;
+    padding: 0.75rem 1rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.inv-base-meta {
+    display: flex;
+    gap: 0.9rem;
+    flex-wrap: wrap;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    margin: 0.9rem 0 0.8rem;
+}
+
+.inv-base-meta span {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
 /* ── Date Header ── */
 .inv-date-header {
     display: flex;
@@ -4835,6 +4889,11 @@ select:focus {
     font-weight: 600;
 }
 
+.inv-delta-missing {
+    color: #f59e0b !important;
+    font-weight: 700;
+}
+
 /* Row highlights */
 .inv-row-consumed {
     background: rgba(239, 68, 68, 0.03);
@@ -4858,6 +4917,44 @@ select:focus {
 
 .inv-row-new:hover {
     background: rgba(59, 130, 246, 0.06) !important;
+}
+
+.inv-row-missing {
+    background: rgba(245, 158, 11, 0.04);
+}
+
+.inv-row-missing:hover {
+    background: rgba(245, 158, 11, 0.08) !important;
+}
+
+.inv-status-pill {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: 0.2rem 0.55rem;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.2px;
+}
+
+.inv-status-match {
+    background: rgba(16, 185, 129, 0.12);
+    color: #10b981;
+}
+
+.inv-status-difference {
+    background: rgba(239, 68, 68, 0.12);
+    color: #ef4444;
+}
+
+.inv-status-missing {
+    background: rgba(245, 158, 11, 0.14);
+    color: #f59e0b;
+}
+
+.inv-status-new {
+    background: rgba(59, 130, 246, 0.12);
+    color: #3b82f6;
 }
 
 /* ── History Cards ── */
@@ -5110,4 +5207,100 @@ select:focus {
         opacity: 1;
         transform: translateY(0);
     }
-}
+}
+
+/* =======================================================================
+   CUSTOM SCROLLBARS
+   ======================================================================= */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+    border-radius: 99px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: rgba(99, 102, 241, 0.18);
+    border-radius: 99px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+    transition: background 0.2s;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(99, 102, 241, 0.35);
+    border: 2px solid transparent;
+    background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:active {
+    background: rgba(99, 102, 241, 0.5);
+    border: 1px solid transparent;
+    background-clip: content-box;
+}
+
+::-webkit-scrollbar-corner {
+    background: transparent;
+}
+
+.dark-mode ::-webkit-scrollbar-thumb {
+    background: rgba(139, 92, 246, 0.22);
+    border: 2px solid transparent;
+    background-clip: content-box;
+}
+
+.dark-mode ::-webkit-scrollbar-thumb:hover {
+    background: rgba(139, 92, 246, 0.4);
+    border: 2px solid transparent;
+    background-clip: content-box;
+}
+
+.dark-mode ::-webkit-scrollbar-thumb:active {
+    background: rgba(139, 92, 246, 0.55);
+    border: 1px solid transparent;
+    background-clip: content-box;
+}
+
+/* =======================================================================
+   BASE EDITOR – "Agregar Producto" Button
+   ======================================================================= */
+#invEditorAdd {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.55rem 1.1rem;
+    border-radius: 10px;
+    font-weight: 600;
+    font-size: 0.82rem;
+    border: 1px dashed rgba(16, 185, 129, 0.4);
+    background: rgba(16, 185, 129, 0.08);
+    color: #10b981;
+    cursor: pointer;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+#invEditorAdd:hover {
+    background: rgba(16, 185, 129, 0.16);
+    border-color: rgba(16, 185, 129, 0.6);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2);
+}
+
+#invEditorAdd:active {
+    transform: translateY(0);
+    box-shadow: none;
+}
+
+#invEditorAdd i {
+    font-size: 0.78rem;
+    background: rgba(16, 185, 129, 0.15);
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}

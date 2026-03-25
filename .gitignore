@@ -157,6 +157,7 @@ database.json
 CORAZON/
 .webview_data/
 .vscode/
+.claude/
 
 # Planillas generadas (EXCEL)
 planillas/Planillas */

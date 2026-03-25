@@ -3114,6 +3114,7 @@ window.switchTab = function switchTab(id) {
 // =============================================================================
 // TAB: INVENTARIO
 // =============================================================================
+let inventarioBaseState = { articulos: [], config: null };
 
 async function loadInventarioTab() {
     const tab = document.getElementById('tab-inventario');
@@ -3127,7 +3128,7 @@ async function loadInventarioTab() {
                         </div>
                         <div>
                             <h2 class="portal-title">Control de Inventario</h2>
-                            <p class="portal-subtitle">Seguimiento diario de existencias y consumo</p>
+                            <p class="portal-subtitle">Verificación de la carga contra una base editable</p>
                         </div>
                     </div>
                 </div>
@@ -3138,7 +3139,6 @@ async function loadInventarioTab() {
                 </div>
             </div>
 
-            <!-- Upload Zone -->
             <div class="inv-upload-zone" id="invUploadZone">
                 <div class="inv-upload-inner">
                     <div class="inv-upload-icon">
@@ -3148,20 +3148,17 @@ async function loadInventarioTab() {
                     <p>Arrastra tu archivo aquí o haz click para seleccionar</p>
                     <p class="inv-upload-hint">Formato: columnas con Nombre, Precio, Código, Existencias</p>
                     <input type="file" id="invFileInput" accept=".xlsx,.xls,.xlsm" style="display:none;" onchange="handleInventarioFile(this)">
-                    <button class="portal-btn-primary" onclick="document.getElementById('invFileInput').click()">
+                    <label for="invFileInput" class="portal-btn-primary" style="cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
                         <i class="fa-solid fa-file-excel"></i> Examinar Archivo
-                    </button>
+                    </label>
                 </div>
             </div>
 
-            <!-- Dashboard Content (loaded dynamically) -->
+            <div id="invBaseSection"></div>
             <div id="invDashboard"></div>
-
-            <!-- History Section -->
             <div id="invHistorySection"></div>
         </div>`;
 
-    // Drag & drop
     const zone = document.getElementById('invUploadZone');
     zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('inv-drag-over'); });
     zone.addEventListener('dragleave', () => zone.classList.remove('inv-drag-over'));
@@ -3172,9 +3169,69 @@ async function loadInventarioTab() {
         if (files.length > 0) uploadInventarioExcel(files[0]);
     });
 
-    // Load current data
+    await loadInventarioBaseSection();
     await loadInventarioDashboard();
     await loadInventarioHistory();
+}
+
+async function loadInventarioBaseSection() {
+    const section = document.getElementById('invBaseSection');
+    if (!section) return;
+
+    try {
+        const res = await fetch('/api/inventario/base');
+        inventarioBaseState = await res.json();
+        const arts = inventarioBaseState.articulos || [];
+        const sourcePath = inventarioBaseState.config?.source_path || '';
+
+        section.innerHTML = `
+            <div class="inv-base-card">
+                <div class="inv-base-header">
+                    <div>
+                        <h3 class="inv-section-title"><i class="fa-solid fa-scale-balanced" style="color:#f59e0b;"></i> Base de Comparación</h3>
+                        <p class="inv-base-subtitle">Se usa para validar el Excel subido y puedes ajustarla si cambian productos o cantidades.</p>
+                    </div>
+                    <div class="inv-base-actions">
+                        <button class="portal-btn-primary" onclick="openInventarioBaseEditor()">
+                            <i class="fa-solid fa-pen-to-square"></i> Editar Base
+                        </button>
+                        <button class="portal-btn-secondary inv-btn-soft" onclick="reimportInventarioBaseDefault()">
+                            <i class="fa-solid fa-rotate"></i> Recargar Excel Base
+                        </button>
+                    </div>
+                </div>
+                <div class="inv-base-meta">
+                    <span><i class="fa-solid fa-box"></i> ${arts.length} productos base</span>
+                    <span><i class="fa-solid fa-file"></i> ${sourcePath || 'Base almacenada en la app'}</span>
+                </div>
+                <div class="inv-table-wrapper">
+                    <table class="inv-table">
+                        <thead>
+                            <tr>
+                                <th>Hoja</th>
+                                <th>Código</th>
+                                <th>Producto</th>
+                                <th class="inv-th-num">Precio</th>
+                                <th class="inv-th-num">Cantidad Base</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${arts.map(a => `
+                                <tr>
+                                    <td>${a.hoja_origen || 'Manual'}</td>
+                                    <td class="inv-td-code">${a.codigo || '—'}</td>
+                                    <td class="inv-td-name">${a.nombre}</td>
+                                    <td class="inv-td-num">₡${_money(a.precio || 0)}</td>
+                                    <td class="inv-td-num">${a.existencias_base ?? 0}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            </div>`;
+    } catch (e) {
+        section.innerHTML = `<div class="portal-error"><i class="fa-solid fa-circle-exclamation"></i> ${e.message}</div>`;
+    }
 }
 
 async function loadInventarioDashboard() {
@@ -3190,152 +3247,137 @@ async function loadInventarioDashboard() {
                 <div class="inv-empty-state">
                     <i class="fa-solid fa-box-open"></i>
                     <p>No hay cargas de inventario aún.</p>
-                    <p class="inv-empty-hint">Sube tu primer Excel para comenzar el seguimiento.</p>
+                    <p class="inv-empty-hint">Sube tu primer Excel para comenzar la verificación.</p>
                 </div>`;
             document.querySelector('#invCountChip span').textContent = '0 artículos';
             return;
         }
 
         const r = data.resumen || {};
-        const hasComparison = !!data.carga_anterior;
         const arts = data.articulos || [];
+        document.querySelector('#invCountChip span').textContent = `${r.total_cargados || arts.length} artículos`;
 
-        document.querySelector('#invCountChip span').textContent = `${r.total_articulos || arts.length} artículos`;
-
-        let html = '';
-
-        // ── Date Header ──
-        html += `<div class="inv-date-header">
-            <div class="inv-date-current">
-                <i class="fa-solid fa-calendar-day"></i>
-                <span>Carga actual: <strong>${_formatDateEs(data.carga_actual.fecha)}</strong></span>
-                <span class="inv-date-file">${data.carga_actual.archivo_nombre || ''}</span>
+        let html = `
+            <div class="inv-date-header">
+                <div class="inv-date-current">
+                    <i class="fa-solid fa-calendar-day"></i>
+                    <span>Carga actual: <strong>${_formatDateEs(data.carga_actual.fecha)}</strong></span>
+                    <span class="inv-date-file">${data.carga_actual.archivo_nombre || ''}</span>
+                </div>
+                <div class="inv-date-arrow"><i class="fa-solid fa-arrow-right-arrow-left"></i></div>
+                <div class="inv-date-prev">
+                    <i class="fa-solid fa-scale-balanced"></i>
+                    <span>Base: <strong>${r.total_base || 0} productos</strong></span>
+                </div>
             </div>
-            ${hasComparison ? `
-            <div class="inv-date-arrow"><i class="fa-solid fa-arrow-right-arrow-left"></i></div>
-            <div class="inv-date-prev">
-                <i class="fa-regular fa-calendar"></i>
-                <span>Anterior: <strong>${_formatDateEs(data.carga_anterior.fecha)}</strong></span>
-            </div>` : '<span class="inv-date-single">Primera carga — sube otro Excel mañana para ver diferencias</span>'}
-        </div>`;
 
-        // ── Stat Cards ──
-        if (hasComparison) {
-            html += `<div class="inv-stats-grid">
+            <div class="inv-stats-grid">
                 <div class="inv-stat-card" style="--stat-color: #8b5cf6;">
                     <div class="inv-stat-icon"><i class="fa-solid fa-boxes-stacked"></i></div>
-                    <div class="inv-stat-val">${r.total_articulos || 0}</div>
-                    <div class="inv-stat-label">Artículos Totales</div>
-                </div>
-                <div class="inv-stat-card" style="--stat-color: #ef4444;">
-                    <div class="inv-stat-icon"><i class="fa-solid fa-arrow-trend-down"></i></div>
-                    <div class="inv-stat-val">${r.total_consumidos || 0}</div>
-                    <div class="inv-stat-label">Con Consumo</div>
+                    <div class="inv-stat-val">${r.total_cargados || 0}</div>
+                    <div class="inv-stat-label">En Carga</div>
                 </div>
                 <div class="inv-stat-card" style="--stat-color: #10b981;">
-                    <div class="inv-stat-icon"><i class="fa-solid fa-equals"></i></div>
-                    <div class="inv-stat-val">${r.total_sin_cambio || 0}</div>
-                    <div class="inv-stat-label">Sin Cambio</div>
+                    <div class="inv-stat-icon"><i class="fa-solid fa-check-double"></i></div>
+                    <div class="inv-stat-val">${r.coinciden || 0}</div>
+                    <div class="inv-stat-label">Coinciden</div>
                 </div>
-                <div class="inv-stat-card" style="--stat-color: #3b82f6;">
-                    <div class="inv-stat-icon"><i class="fa-solid fa-arrow-trend-up"></i></div>
-                    <div class="inv-stat-val">${r.total_aumentaron || 0}</div>
-                    <div class="inv-stat-label">Aumentaron</div>
+                <div class="inv-stat-card" style="--stat-color: #ef4444;">
+                    <div class="inv-stat-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
+                    <div class="inv-stat-val">${r.con_diferencia || 0}</div>
+                    <div class="inv-stat-label">Con Diferencia</div>
+                </div>
+                <div class="inv-stat-card" style="--stat-color: #f59e0b;">
+                    <div class="inv-stat-icon"><i class="fa-solid fa-ban"></i></div>
+                    <div class="inv-stat-val">${r.faltantes_en_carga || 0}</div>
+                    <div class="inv-stat-label">Faltan en Excel</div>
                 </div>
             </div>`;
 
-            // ── Top 5 Most Consumed ──
-            const top5 = r.articulos_mas_consumidos || [];
-            if (top5.length > 0) {
-                const maxDelta = Math.abs(top5[0].delta || 1);
-                html += `<div class="inv-top5-section">
-                    <h3 class="inv-section-title"><i class="fa-solid fa-fire" style="color:#ef4444;"></i> Top Consumidos</h3>
-                    <div class="inv-top5-list">`;
-                top5.forEach((item, idx) => {
-                    const pct = Math.min(100, Math.round((Math.abs(item.delta) / maxDelta) * 100));
-                    html += `
-                    <div class="inv-top5-item" style="animation-delay: ${idx * 0.08}s;">
-                        <div class="inv-top5-rank">${idx + 1}</div>
-                        <div class="inv-top5-info">
-                            <span class="inv-top5-name">${item.nombre}</span>
-                            <div class="inv-top5-bar-bg">
-                                <div class="inv-top5-bar-fill" style="width:${pct}%;"></div>
-                            </div>
-                        </div>
-                        <div class="inv-top5-delta">
-                            <i class="fa-solid fa-arrow-down"></i> ${Math.abs(item.delta)}
-                        </div>
-                    </div>`;
-                });
-                html += `</div></div>`;
-            }
+        const topDiffs = arts.filter(a => a.status === 'difference').slice(0, 5);
+        if (topDiffs.length) {
+            const maxDelta = Math.max(...topDiffs.map(item => Math.abs(item.delta || 0)), 1);
+            html += `<div class="inv-top5-section">
+                <h3 class="inv-section-title"><i class="fa-solid fa-fire" style="color:#ef4444;"></i> Diferencias Más Grandes</h3>
+                <div class="inv-top5-list">
+                    ${topDiffs.map((item, idx) => {
+                        const pct = Math.min(100, Math.round((Math.abs(item.delta) / maxDelta) * 100));
+                        return `
+                            <div class="inv-top5-item" style="animation-delay: ${idx * 0.08}s;">
+                                <div class="inv-top5-rank">${idx + 1}</div>
+                                <div class="inv-top5-info">
+                                    <span class="inv-top5-name">${item.nombre}</span>
+                                    <div class="inv-top5-bar-bg">
+                                        <div class="inv-top5-bar-fill" style="width:${pct}%;"></div>
+                                    </div>
+                                </div>
+                                <div class="inv-top5-delta">${item.delta > 0 ? '+' : ''}${item.delta}</div>
+                            </div>`;
+                    }).join('')}
+                </div>
+            </div>`;
         }
 
-        // ── Articles Table ──
         html += `<div class="inv-table-section">
-            <h3 class="inv-section-title"><i class="fa-solid fa-table-list" style="color:#6366f1;"></i> Detalle de Artículos</h3>
+            <h3 class="inv-section-title"><i class="fa-solid fa-table-list" style="color:#6366f1;"></i> Verificación contra Base</h3>
             <div class="inv-table-wrapper">
                 <table class="inv-table">
                     <thead>
                         <tr>
+                            <th>Estado</th>
+                            <th>Hoja</th>
                             <th>Código</th>
                             <th>Artículo</th>
                             <th class="inv-th-num">Precio</th>
-                            ${hasComparison ? '<th class="inv-th-num">Anterior</th>' : ''}
+                            <th class="inv-th-num">Base</th>
                             <th class="inv-th-num">Actual</th>
-                            ${hasComparison ? '<th class="inv-th-num">Diferencia</th>' : ''}
+                            <th class="inv-th-num">Diferencia</th>
                         </tr>
                     </thead>
-                    <tbody>`;
+                    <tbody>
+                        ${arts.map((a, idx) => {
+                            let statusLabel = 'Coincide';
+                            let deltaClass = 'inv-delta-neutral';
+                            let deltaText = a.delta ?? '—';
+                            let rowClass = '';
 
-        arts.forEach((a, idx) => {
-            const delta = a.delta;
-            let deltaClass = 'inv-delta-neutral';
-            let deltaIcon = '';
-            let deltaText = '—';
-            let rowClass = '';
+                            if (a.status === 'difference') {
+                                statusLabel = 'Diferente';
+                                deltaClass = a.delta < 0 ? 'inv-delta-down' : 'inv-delta-up';
+                                deltaText = `${a.delta > 0 ? '+' : ''}${a.delta}`;
+                                rowClass = a.delta < 0 ? 'inv-row-consumed' : 'inv-row-increased';
+                            } else if (a.status === 'missing') {
+                                statusLabel = 'Faltante';
+                                deltaClass = 'inv-delta-missing';
+                                deltaText = 'Falta';
+                                rowClass = 'inv-row-missing';
+                            } else {
+                                deltaText = a.delta === 0 ? '0' : deltaText;
+                            }
 
-            if (delta !== null && delta !== undefined) {
-                if (delta < 0) {
-                    deltaClass = 'inv-delta-down';
-                    deltaIcon = '<i class="fa-solid fa-arrow-down"></i>';
-                    deltaText = `${deltaIcon} ${delta}`;
-                    rowClass = 'inv-row-consumed';
-                } else if (delta > 0) {
-                    deltaClass = 'inv-delta-up';
-                    deltaIcon = '<i class="fa-solid fa-arrow-up"></i>';
-                    deltaText = `${deltaIcon} +${delta}`;
-                    rowClass = 'inv-row-increased';
-                } else {
-                    deltaText = '<i class="fa-solid fa-minus"></i> 0';
-                }
-            } else if (hasComparison) {
-                deltaClass = 'inv-delta-new';
-                deltaText = '<i class="fa-solid fa-sparkles"></i> Nuevo';
-                rowClass = 'inv-row-new';
-            }
+                            return `
+                                <tr class="${rowClass}" style="animation-delay: ${idx * 0.02}s;">
+                                    <td><span class="inv-status-pill inv-status-${a.status || 'match'}">${statusLabel}</span></td>
+                                    <td>${a.hoja_origen || '—'}</td>
+                                    <td class="inv-td-code">${a.codigo || '—'}</td>
+                                    <td class="inv-td-name">${a.nombre}</td>
+                                    <td class="inv-td-num">₡${_money(a.precio || 0)}</td>
+                                    <td class="inv-td-num">${a.existencias_base !== null ? a.existencias_base : '—'}</td>
+                                    <td class="inv-td-num inv-td-current">${a.existencias_actual !== null ? a.existencias_actual : '—'}</td>
+                                    <td class="inv-td-num ${deltaClass}">${deltaText}</td>
+                                </tr>`;
+                        }).join('')}
+                    </tbody>
+                </table>
+            </div>
+        </div>`;
 
-            html += `
-                <tr class="${rowClass}" style="animation-delay: ${idx * 0.02}s;">
-                    <td class="inv-td-code">${a.codigo || '—'}</td>
-                    <td class="inv-td-name">${a.nombre}</td>
-                    <td class="inv-td-num">₡${_money(a.precio || 0)}</td>
-                    ${hasComparison ? `<td class="inv-td-num">${a.existencias_anterior !== null ? a.existencias_anterior : '—'}</td>` : ''}
-                    <td class="inv-td-num inv-td-current">${a.existencias_actual}</td>
-                    ${hasComparison ? `<td class="inv-td-num ${deltaClass}">${deltaText}</td>` : ''}
-                </tr>`;
-        });
-
-        html += `</tbody></table></div></div>`;
         dashboard.innerHTML = html;
-
-        // Animate top5 bars after render
         requestAnimationFrame(() => {
             document.querySelectorAll('.inv-top5-bar-fill').forEach(bar => {
                 bar.style.transition = 'width 0.8s cubic-bezier(0.4, 0, 0.2, 1)';
             });
         });
-
     } catch (e) {
         dashboard.innerHTML = `<div class="portal-error"><i class="fa-solid fa-circle-exclamation"></i> ${e.message}</div>`;
     }
@@ -3425,6 +3467,7 @@ async function uploadInventarioExcel(file) {
 
         // Reload dashboard
         inner.innerHTML = originalHTML;
+        await loadInventarioBaseSection();
         await loadInventarioDashboard();
         await loadInventarioHistory();
 
@@ -3446,3 +3489,143 @@ async function deleteInventarioCarga(cargaId) {
         showToast(e.message, 'error');
     }
 }
+
+window.openInventarioBaseEditor = async function openInventarioBaseEditor() {
+    const current = (inventarioBaseState.articulos || []).map((a, i) => ({
+        id: a.id, codigo: a.codigo || '', nombre: a.nombre || '',
+        precio: a.precio || 0, existencias_base: a.existencias_base ?? 0,
+        hoja_origen: a.hoja_origen || 'Manual', orden: a.orden || (i + 1),
+    }));
+
+    // Build modal
+    let backdrop = document.getElementById('invBaseEditorModal');
+    if (backdrop) backdrop.remove();
+
+    backdrop = document.createElement('div');
+    backdrop.id = 'invBaseEditorModal';
+    backdrop.className = 'modal-backdrop';
+    backdrop.innerHTML = `
+        <div class="modal-dialog large" style="max-width:900px;max-height:85vh;display:flex;flex-direction:column;">
+            <div class="modal-header-simple">
+                <h3><i class="fa-solid fa-pen-to-square" style="color:#f59e0b;"></i> Editar Base de Comparación</h3>
+                <button class="close-icon" id="invEditorClose"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div style="overflow:auto;flex:1;padding:0 1.2rem;">
+                <table class="inv-table" style="width:100%;">
+                    <thead>
+                        <tr>
+                            <th style="width:100px;">Código</th>
+                            <th>Producto</th>
+                            <th style="width:110px;">Precio</th>
+                            <th style="width:90px;">Cant. Base</th>
+                            <th style="width:100px;">Hoja</th>
+                            <th style="width:50px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="invEditorBody"></tbody>
+                </table>
+            </div>
+            <div style="padding:1rem 1.2rem;display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border);">
+                <button id="invEditorAdd">
+                    <i class="fa-solid fa-plus"></i> Agregar Producto
+                </button>
+                <div style="display:flex;gap:8px;">
+                    <button class="btn-text" id="invEditorCancel">Cancelar</button>
+                    <button class="btn-action primary" id="invEditorSave">
+                        <i class="fa-solid fa-floppy-disk"></i> Guardar Cambios
+                    </button>
+                </div>
+            </div>
+        </div>`;
+    document.body.appendChild(backdrop);
+
+    const tbody = document.getElementById('invEditorBody');
+    const inputStyle = 'width:100%;padding:6px 8px;background:var(--bg-app);border:1px solid var(--border);color:var(--text-main);border-radius:6px;font-size:0.85rem;';
+
+    function addRow(item) {
+        const tr = document.createElement('tr');
+        tr.dataset.itemId = item.id || '';
+        tr.innerHTML = `
+            <td><input type="text" value="${item.codigo}" data-field="codigo" style="${inputStyle}"></td>
+            <td><input type="text" value="${item.nombre}" data-field="nombre" style="${inputStyle}" placeholder="Nombre del producto"></td>
+            <td><input type="number" value="${item.precio}" data-field="precio" style="${inputStyle}" min="0" step="0.01"></td>
+            <td><input type="number" value="${item.existencias_base}" data-field="existencias_base" style="${inputStyle}" min="0"></td>
+            <td><input type="text" value="${item.hoja_origen}" data-field="hoja_origen" style="${inputStyle}"></td>
+            <td><button class="inv-editor-del" title="Eliminar" style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:1rem;padding:4px;">
+                <i class="fa-solid fa-trash-can"></i>
+            </button></td>`;
+        tr.querySelector('.inv-editor-del').addEventListener('click', () => tr.remove());
+        tbody.appendChild(tr);
+    }
+
+    current.forEach(addRow);
+
+    document.getElementById('invEditorAdd').addEventListener('click', () => {
+        addRow({ id: '', codigo: '', nombre: '', precio: 0, existencias_base: 0, hoja_origen: 'Manual' });
+        tbody.lastElementChild.querySelector('[data-field="nombre"]').focus();
+    });
+
+    const close = () => backdrop.remove();
+    document.getElementById('invEditorClose').addEventListener('click', close);
+    document.getElementById('invEditorCancel').addEventListener('click', close);
+
+    document.getElementById('invEditorSave').addEventListener('click', async () => {
+        const rows = [...tbody.querySelectorAll('tr')];
+        const items = rows.map((tr, i) => ({
+            id: tr.dataset.itemId ? Number(tr.dataset.itemId) : null,
+            codigo: tr.querySelector('[data-field="codigo"]').value.trim(),
+            nombre: tr.querySelector('[data-field="nombre"]').value.trim(),
+            precio: Number(tr.querySelector('[data-field="precio"]').value) || 0,
+            existencias_base: Number(tr.querySelector('[data-field="existencias_base"]').value) || 0,
+            hoja_origen: tr.querySelector('[data-field="hoja_origen"]').value.trim() || 'Manual',
+            orden: i + 1,
+        }));
+
+        if (items.some(it => !it.nombre)) {
+            showToast('Todos los productos deben tener nombre', 'error');
+            return;
+        }
+
+        try {
+            for (const item of items) {
+                const res = await fetch('/api/inventario/base/articulo', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(item),
+                });
+                if (!res.ok) {
+                    const err = await res.json();
+                    throw new Error(err.detail || 'Error guardando la base');
+                }
+            }
+
+            const originalIds = new Set(current.map(a => a.id));
+            const keptIds = new Set(items.map(a => a.id).filter(Boolean));
+            for (const id of originalIds) {
+                if (!keptIds.has(id)) {
+                    await fetch(`/api/inventario/base/articulo/${id}`, { method: 'DELETE' });
+                }
+            }
+
+            showToast('Base actualizada correctamente', 'success');
+            close();
+            await loadInventarioBaseSection();
+            await loadInventarioDashboard();
+        } catch (e) {
+            showToast(e.message, 'error');
+        }
+    });
+};
+
+window.reimportInventarioBaseDefault = async function reimportInventarioBaseDefault() {
+    try {
+        const res = await fetch('/api/inventario/base/import-default', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'No se pudo recargar la base');
+        showToast(`Base recargada: ${data.total_articulos} productos`, 'success');
+        await loadInventarioBaseSection();
+        await loadInventarioDashboard();
+    } catch (e) {
+        showToast(e.message, 'error');
+    }
+};
