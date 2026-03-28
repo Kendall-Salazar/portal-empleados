@@ -27,6 +27,23 @@ def get_conn():
     return conn
 
 
+def _column_exists(conn, table, column):
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return any(row["name"] == column for row in rows)
+
+
+def _ensure_column(table, column, column_type):
+    """Add a column only when it is actually missing."""
+    conn = get_conn()
+    try:
+        if _column_exists(conn, table, column):
+            return
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def init_db():
     """Crea las tablas si no existen."""
     conn = get_conn()
@@ -75,6 +92,7 @@ def init_db():
             forced_libres INTEGER DEFAULT 0,
             forced_quebrado INTEGER DEFAULT 0,
             es_jefe_pista INTEGER DEFAULT 0,
+            es_practicante INTEGER DEFAULT 0,
             strict_preferences INTEGER DEFAULT 0,
             turnos_fijos TEXT DEFAULT '{}',
             activo INTEGER DEFAULT 1
@@ -169,30 +187,13 @@ def init_db():
         ("inventario_base_articulos", "activo", "INTEGER DEFAULT 1"),
     ]
     for table, col, col_type in _inventory_base_migrations:
-        conn = get_conn()
-        try:
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
-            conn.commit()
-        except sqlite3.OperationalError:
-            print(f"init_db: columna {table}.{col} ya existe, se omite migracion")
-        conn.close()
+        _ensure_column(table, col, col_type)
+
     # Migration: add cedula column if it doesn't exist
-    conn = get_conn()
-    try:
-        conn.execute("ALTER TABLE empleados ADD COLUMN cedula TEXT")
-        conn.commit()
-    except sqlite3.OperationalError:
-        print("init_db: columna empleados.cedula ya existe, se omite migración")
-    conn.close()
+    _ensure_column("empleados", "cedula", "TEXT")
     
     # Migration: add strict_preferences column if it doesn't exist
-    conn = get_conn()
-    try:
-        conn.execute("ALTER TABLE horario_empleados ADD COLUMN strict_preferences INTEGER DEFAULT 0")
-        conn.commit()
-    except sqlite3.OperationalError:
-        print("init_db: columna horario_empleados.strict_preferences ya existe, se omite migración")
-    conn.close()
+    _ensure_column("horario_empleados", "strict_preferences", "INTEGER DEFAULT 0")
 
     # Migration: add correo, telefono, fecha_inicio, aplica_seguro columns
     _migrations = [
@@ -202,13 +203,10 @@ def init_db():
         ("empleados", "aplica_seguro", "INTEGER DEFAULT 1"),
     ]
     for table, col, col_type in _migrations:
-        conn = get_conn()
-        try:
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
-            conn.commit()
-        except sqlite3.OperationalError:
-            print(f"init_db: columna {table}.{col} ya existe, se omite migración")
-        conn.close()
+        _ensure_column(table, col, col_type)
+
+    # Migration: add es_practicante column
+    _ensure_column("horario_empleados", "es_practicante", "INTEGER DEFAULT 0")
 
     # Migration: scheduler config flags
     _scheduler_config_migrations = [
@@ -217,13 +215,7 @@ def init_db():
         ("horario_config", "refuerzo_end", "TEXT DEFAULT '12:00'"),
     ]
     for table, col, col_type in _scheduler_config_migrations:
-        conn = get_conn()
-        try:
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
-            conn.commit()
-        except Exception:
-            pass
-        conn.close()
+        _ensure_column(table, col, col_type)
 
     # Create vacaciones table
     conn = get_conn()
@@ -310,7 +302,7 @@ def add_empleado(nombre, tipo_pago, salario_fijo=None, cedula=None,
                  correo=None, telefono=None, fecha_inicio=None,
                  aplica_seguro=1, genero='M', puede_nocturno=1,
                  forced_libres=0, forced_quebrado=0, allow_no_rest=0,
-                 es_jefe_pista=0, strict_preferences=0, turnos_fijos='{}'):
+                 es_jefe_pista=0, es_practicante=0, strict_preferences=0, turnos_fijos='{}'):
     """Inserta en ambas tablas: empleados + horario_empleados."""
     conn = get_conn()
     try:
@@ -323,8 +315,8 @@ def add_empleado(nombre, tipo_pago, salario_fijo=None, cedula=None,
         existing = conn.execute("SELECT id FROM horario_empleados WHERE nombre=?", (nombre.strip(),)).fetchone()
         if not existing:
             conn.execute(
-                "INSERT INTO horario_empleados (nombre, genero, puede_nocturno, forced_libres, forced_quebrado, allow_no_rest, es_jefe_pista, strict_preferences, turnos_fijos) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (nombre.strip(), genero, puede_nocturno, forced_libres, forced_quebrado, allow_no_rest, es_jefe_pista, strict_preferences, turnos_fijos)
+                "INSERT INTO horario_empleados (nombre, genero, puede_nocturno, forced_libres, forced_quebrado, allow_no_rest, es_jefe_pista, es_practicante, strict_preferences, turnos_fijos) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (nombre.strip(), genero, puede_nocturno, forced_libres, forced_quebrado, allow_no_rest, es_jefe_pista, es_practicante, strict_preferences, turnos_fijos)
             )
         conn.commit()
         return True, "Empleado agregado"
@@ -385,7 +377,7 @@ def update_empleado(emp_id, nombre=None, tipo_pago=None, salario_fijo=None,
                     cedula=None, correo=None, telefono=None, fecha_inicio=None,
                     aplica_seguro=None, genero=None, puede_nocturno=None,
                     forced_libres=None, forced_quebrado=None, allow_no_rest=None,
-                    es_jefe_pista=None, strict_preferences=None, turnos_fijos=None):
+                    es_jefe_pista=None, es_practicante=None, strict_preferences=None, turnos_fijos=None):
     """Actualiza campos en ambas tablas (empleados + horario_empleados)."""
     conn = get_conn()
     # Get current name for horario_empleados link
@@ -427,6 +419,8 @@ def update_empleado(emp_id, nombre=None, tipo_pago=None, salario_fijo=None,
             conn.execute("UPDATE horario_empleados SET allow_no_rest=? WHERE nombre=?", (allow_no_rest, old_name))
         if es_jefe_pista is not None:
             conn.execute("UPDATE horario_empleados SET es_jefe_pista=? WHERE nombre=?", (es_jefe_pista, old_name))
+        if es_practicante is not None:
+            conn.execute("UPDATE horario_empleados SET es_practicante=? WHERE nombre=?", (es_practicante, old_name))
         if strict_preferences is not None:
             conn.execute("UPDATE horario_empleados SET strict_preferences=? WHERE nombre=?", (strict_preferences, old_name))
         if turnos_fijos is not None:
@@ -831,28 +825,65 @@ def get_prestamo(prestamo_id):
     return dict(row) if row else None
 
 
-def add_abono(prestamo_id, monto, tipo='planilla', semana_planilla=None, notas=None):
-    """Registra un abono a un préstamo y actualiza el saldo."""
+def _recalcular_prestamo_conn(conn, prestamo_id):
+    """Recalcula saldo y estado desde los abonos realmente registrados."""
+    prest = conn.execute(
+        "SELECT id, monto_total FROM prestamos WHERE id=?",
+        (prestamo_id,)
+    ).fetchone()
+    if not prest:
+        return None
+
+    total_abonos_row = conn.execute(
+        "SELECT COALESCE(SUM(monto), 0) AS total FROM prestamo_abonos WHERE prestamo_id=?",
+        (prestamo_id,)
+    ).fetchone()
+    total_abonos = float(total_abonos_row["total"] or 0)
+    monto_total = float(prest["monto_total"] or 0)
+    saldo = max(round(monto_total - total_abonos, 2), 0)
+
+    fecha_liquidacion = None
+    estado = "activo"
+    if saldo <= 0:
+        estado = "liquidado"
+        last_abono = conn.execute(
+            "SELECT MAX(fecha) AS fecha FROM prestamo_abonos WHERE prestamo_id=?",
+            (prestamo_id,)
+        ).fetchone()
+        fecha_liquidacion = (
+            last_abono["fecha"]
+            if last_abono and last_abono["fecha"]
+            else datetime.now().strftime("%Y-%m-%d")
+        )
+
+    conn.execute(
+        "UPDATE prestamos SET saldo=?, estado=?, fecha_liquidacion=? WHERE id=?",
+        (saldo, estado, fecha_liquidacion, prestamo_id)
+    )
+    return {"saldo": saldo, "estado": estado, "fecha_liquidacion": fecha_liquidacion}
+
+
+def recalcular_prestamo(prestamo_id):
     conn = get_conn()
-    fecha = datetime.now().strftime("%Y-%m-%d")
+    try:
+        data = _recalcular_prestamo_conn(conn, prestamo_id)
+        conn.commit()
+        return data
+    finally:
+        conn.close()
+
+
+def add_abono(prestamo_id, monto, tipo='planilla', semana_planilla=None, notas=None, fecha=None):
+    """Registra un abono a un préstamo y recalcula el saldo."""
+    conn = get_conn()
+    fecha = fecha or datetime.now().strftime("%Y-%m-%d")
     conn.execute(
         """INSERT INTO prestamo_abonos
            (prestamo_id, monto, tipo, fecha, semana_planilla, notas, fecha_registro)
            VALUES (?, ?, ?, ?, ?, ?, ?)""",
         (prestamo_id, monto, tipo, fecha, semana_planilla, notas, datetime.now().isoformat())
     )
-    # Actualizar saldo
-    conn.execute(
-        "UPDATE prestamos SET saldo = saldo - ? WHERE id=?",
-        (monto, prestamo_id)
-    )
-    # Si saldo <= 0, marcar como liquidado
-    prest = conn.execute("SELECT saldo FROM prestamos WHERE id=?", (prestamo_id,)).fetchone()
-    if prest and prest["saldo"] <= 0:
-        conn.execute(
-            "UPDATE prestamos SET estado='liquidado', saldo=0, fecha_liquidacion=? WHERE id=?",
-            (fecha, prestamo_id)
-        )
+    _recalcular_prestamo_conn(conn, prestamo_id)
     conn.commit()
     abono_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
     conn.close()

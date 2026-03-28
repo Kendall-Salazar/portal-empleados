@@ -66,10 +66,32 @@ import database as plan_db  # Initializes planilla.db with all tables
 import planilla as pl_module
 import generador_boletas as gb_module
 import horario_db
+import prestamo_sync
 
 DB_FILE_LEGACY = "database.json"  # JSON original, kept for migration reference
 EXPORT_DIR = os.path.join(_runtime_root, "export_horarios")
 os.makedirs(EXPORT_DIR, exist_ok=True)
+
+def _sanitize_export_stem(value: str, fallback: str = "horario") -> str:
+    normalized = unicodedata.normalize("NFKD", str(value or ""))
+    normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    normalized = re.sub(r"[<>:\"/\\\\|?*\x00-\x1F]+", " ", normalized)
+    normalized = re.sub(r"\s+", "_", normalized.strip())
+    normalized = re.sub(r"_+", "_", normalized).strip("._-")
+    return normalized or fallback
+
+def _build_export_filename_parts(filename: str, default_ext: str = ".png", fallback: str = "horario"):
+    safe_name = os.path.basename(str(filename or "")).strip()
+    stem, ext = os.path.splitext(safe_name)
+    ext = (ext or default_ext).lower()
+    if not re.fullmatch(r"\.[a-z0-9]+", ext):
+        ext = default_ext
+    return _sanitize_export_stem(stem or safe_name, fallback), ext
+
+def _get_export_base_name(entry: Optional[dict], fallback: str = "horario") -> str:
+    if not isinstance(entry, dict):
+        return fallback
+    return _sanitize_export_stem(entry.get("name"), fallback)
 
 def _get_conn():
     """Get connection to the shared planilla.db"""
@@ -91,6 +113,7 @@ def load_db():
             "forced_libres": bool(r["forced_libres"]),
             "forced_quebrado": bool(r["forced_quebrado"]),
             "is_jefe_pista": bool(r["es_jefe_pista"]),
+            "is_practicante": bool(r["es_practicante"]) if "es_practicante" in r.keys() else False,
             "strict_preferences": bool(r["strict_preferences"]) if "strict_preferences" in r.keys() else False,
             "fixed_shifts": json.loads(r["turnos_fijos"]) if r["turnos_fijos"] else {},
         }
@@ -165,7 +188,7 @@ def save_db(data):
                 conn.execute("""
                     UPDATE horario_empleados SET
                         genero=?, puede_nocturno=?, allow_no_rest=?, forced_libres=?,
-                        forced_quebrado=?, es_jefe_pista=?, strict_preferences=?, turnos_fijos=?, activo=1
+                        forced_quebrado=?, es_jefe_pista=?, es_practicante=?, strict_preferences=?, turnos_fijos=?, activo=1
                     WHERE nombre=?
                 """, (
                     emp.get("gender", "M"),
@@ -174,6 +197,7 @@ def save_db(data):
                     1 if emp.get("forced_libres", False) else 0,
                     1 if emp.get("forced_quebrado", False) else 0,
                     1 if emp.get("is_jefe_pista", False) else 0,
+                    1 if emp.get("is_practicante", False) else 0,
                     1 if emp.get("strict_preferences", False) else 0,
                     json.dumps(emp.get("fixed_shifts", {}), ensure_ascii=False),
                     emp["name"],
@@ -182,8 +206,8 @@ def save_db(data):
                 conn.execute("""
                     INSERT INTO horario_empleados
                     (nombre, genero, puede_nocturno, allow_no_rest, forced_libres,
-                     forced_quebrado, es_jefe_pista, strict_preferences, turnos_fijos, activo)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                     forced_quebrado, es_jefe_pista, es_practicante, strict_preferences, turnos_fijos, activo)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
                 """, (
                     emp["name"], emp.get("gender", "M"),
                     1 if emp.get("can_do_night", True) else 0,
@@ -191,6 +215,7 @@ def save_db(data):
                     1 if emp.get("forced_libres", False) else 0,
                     1 if emp.get("forced_quebrado", False) else 0,
                     1 if emp.get("is_jefe_pista", False) else 0,
+                    1 if emp.get("is_practicante", False) else 0,
                     1 if emp.get("strict_preferences", False) else 0,
                     json.dumps(emp.get("fixed_shifts", {}), ensure_ascii=False),
                 ))
@@ -242,6 +267,26 @@ def save_db(data):
 
 
 _WEEK_NAME_RE = re.compile(r"semana\s*(\d+)", re.IGNORECASE)
+SCHEDULE_DAYS = ("Vie", "Sáb", "Dom", "Lun", "Mar", "Mié", "Jue")
+SPECIAL_DAY_MODES = {"normal", "sunday_like", "holy_thursday", "closed"}
+
+
+def _normalize_special_days(raw_special_days):
+    normalized = {}
+    if not isinstance(raw_special_days, dict):
+        return normalized
+
+    for raw_day, raw_mode in raw_special_days.items():
+        if raw_day not in SCHEDULE_DAYS:
+            continue
+        mode = raw_mode if raw_mode in SPECIAL_DAY_MODES else "normal"
+        if raw_day == "Dom" and mode == "sunday_like":
+            continue
+        if raw_day != "Jue" and mode == "holy_thursday":
+            continue
+        if mode != "normal":
+            normalized[raw_day] = mode
+    return normalized
 
 
 def _parse_date_like(value):
@@ -543,6 +588,7 @@ class Employee(BaseModel):
     forced_libres: bool = False
     forced_quebrado: bool = False
     is_jefe_pista: bool = False
+    is_practicante: bool = False
     strict_preferences: bool = False
     activo: bool = True
     fixed_shifts: Dict[str, str] = Field(default_factory=dict)
@@ -565,6 +611,7 @@ class SolverRequest(BaseModel):
     employees: List[Employee]
     config: Config
     target_week_start: Optional[str] = None
+    special_days: Dict[str, str] = Field(default_factory=dict)
 
 class PlanillaPermiso(BaseModel):
     empleado_id: int
@@ -588,7 +635,12 @@ class HistoryEntry(BaseModel):
     next_sunday_cycle_index: Optional[int] = None  # Legacy
     next_sunday_rotation_queue: Optional[List[str]] = None
     week_dates: Optional[Dict[str, str]] = None
+    special_days: Dict[str, str] = Field(default_factory=dict)
     timestamp: str = "" 
+
+
+class ValidationRulesRequest(BaseModel):
+    special_days: Dict[str, str] = Field(default_factory=dict)
 
 class ImageExportRequest(BaseModel):
     image_data: str  # Base64 string
@@ -616,6 +668,7 @@ def get_employees(include_inactive: bool = False):
             "forced_libres": bool(e.get("forced_libres", 0)),
             "forced_quebrado": bool(e.get("forced_quebrado", 0)),
             "is_jefe_pista": bool(e.get("es_jefe_pista", 0)),
+            "is_practicante": bool(e.get("es_practicante", 0)),
             "strict_preferences": bool(e.get("strict_preferences", 0)),
             "activo": bool(e.get("activo", 1)),
             "fixed_shifts": fixed_shifts
@@ -707,11 +760,14 @@ def solve_schedule(request: SolverRequest):
             "forced_libres": bool(e.get("forced_libres", 0)),
             "forced_quebrado": bool(e.get("forced_quebrado", 0)),
             "is_jefe_pista": bool(e.get("es_jefe_pista", 0)),
+            "is_practicante": bool(e.get("es_practicante", 0)),
             "strict_preferences": bool(e.get("strict_preferences", 0)),
             "fixed_shifts": fixed_shifts
         })
 
     config_data = request.config.dict()
+    special_days = _normalize_special_days(request.special_days)
+    config_data["special_days"] = special_days
     history_for_solver, history_context = _prepare_history_for_solver(
         history_list,
         target_week_start=request.target_week_start,
@@ -735,6 +791,7 @@ def solve_schedule(request: SolverRequest):
         metadata["history_women_reference_name"] = history_context["women_reference_name"]
         metadata["history_context_label"] = history_context["label"]
         metadata["history_target_week_start"] = request.target_week_start
+        metadata["special_days"] = special_days
 
     # Save last result for Export (if feasible or even partial)
     # We save it to DB so export_excel can read it
@@ -812,11 +869,12 @@ def save_history(entry: HistoryEntry):
     new_record = entry.dict()
     if not new_record.get("timestamp"):
         new_record["timestamp"] = datetime.datetime.now().isoformat()
-    # Preserve week_dates in metadata
+    normalized_special_days = _normalize_special_days(entry.special_days)
+    if normalized_special_days:
+        new_record["special_days"] = normalized_special_days
+    else:
+        new_record.pop("special_days", None)
     if entry.week_dates:
-        if "metadata" not in new_record:
-            new_record["metadata"] = {}
-        # Store week_dates if entry has it from solve
         new_record["week_dates"] = entry.week_dates
         
     history_list.append(new_record)
@@ -859,10 +917,73 @@ def update_history_item(index: int, entry: HistoryEntry):
         # Update specific fields
         history_list[index]["schedule"] = entry.schedule
         history_list[index]["daily_tasks"] = entry.daily_tasks
+        if entry.week_dates is not None:
+            history_list[index]["week_dates"] = entry.week_dates
+        normalized_special_days = _normalize_special_days(entry.special_days)
+        if normalized_special_days:
+            history_list[index]["special_days"] = normalized_special_days
+        else:
+            history_list[index].pop("special_days", None)
         db["history_log"] = history_list
         save_db(db)
         return {"status": "Updated"}
     raise HTTPException(status_code=404, detail="Index out of bounds")
+
+
+@app.post("/api/history/{index}/reassign_tasks")
+def reassign_history_tasks(index: int):
+    db = load_db()
+    history_list = db.get("history_log", [])
+
+    if not (0 <= index < len(history_list)):
+        raise HTTPException(status_code=404, detail="Index out of bounds")
+
+    entry = history_list[index]
+    schedule = entry.get("schedule", {})
+    if not isinstance(schedule, dict) or not schedule:
+        raise HTTPException(status_code=400, detail="El historial no tiene un horario válido")
+
+    employees_data = [
+        dict(employee)
+        for employee in (db.get("employees", []) or [])
+        if isinstance(employee, dict)
+    ]
+    employee_names = {emp.get("name") for emp in employees_data if isinstance(emp, dict)}
+    for missing_name in sorted(name for name in schedule.keys() if name not in employee_names):
+        employees_data.append({
+            "name": missing_name,
+            "gender": "M",
+            "can_do_night": True,
+            "allow_no_rest": False,
+            "forced_libres": False,
+            "forced_quebrado": False,
+            "is_jefe_pista": False,
+            "is_practicante": False,
+            "strict_preferences": False,
+            "fixed_shifts": {},
+        })
+
+    config_data = dict(db.get("config", {}) or {})
+    config_data["use_refuerzo"] = "Refuerzo" in schedule
+    special_days = _normalize_special_days(entry.get("special_days", {}))
+    config_data["special_days"] = special_days
+
+    scheduler = ShiftScheduler(employees_data, config_data, history_data=[])
+    daily_tasks = scheduler.assign_tasks(schedule)
+
+    history_list[index]["daily_tasks"] = daily_tasks
+    if special_days:
+        history_list[index]["special_days"] = special_days
+    else:
+        history_list[index].pop("special_days", None)
+    db["history_log"] = history_list
+    save_db(db)
+
+    return {
+        "status": "Updated",
+        "daily_tasks": daily_tasks,
+        "special_days": special_days,
+    }
 
 def format_shift_code(code: str) -> str:
     """
@@ -1005,8 +1126,112 @@ def _task_style_key(task_text: str) -> str:
         return "oficina"
     return ""
 
+
+def _build_validation_rules_impl(special_days=None):
+    db = load_db()
+    employees = db.get("employees", [])
+    normalized_special_days = _normalize_special_days(special_days)
+
+    from scheduler_engine import DAYS
+
+    active_count = 0
+    for e in employees:
+        if e.get('is_refuerzo', False) or e.get('name') == 'Refuerzo':
+            continue
+        fixed = e.get('fixed_shifts', {})
+        all_absent = all(fixed.get(d) in ['VAC', 'PERM'] for d in DAYS)
+        if not all_absent:
+            active_count += 1
+
+    standard_mode = active_count >= 10
+
+    from scheduler_engine import (
+        SHIFTS,
+        HOURS,
+        coverage_bounds,
+        effective_coverage_bounds,
+        get_allowed_shifts_for_day,
+        get_effective_day_mode,
+        get_overstaff_policy_for_days,
+        ensure_manual_shift_code,
+        sync_refuerzo_custom_shift,
+    )
+    sync_refuerzo_custom_shift(db.get("config", {}))
+    ensure_manual_shift_code(7, 12)
+
+    bounds = {}
+    max_bounds = {}
+    soft_bounds = {}
+    day_allowed_shifts = {}
+    day_modes = {}
+    overstaff_policy = get_overstaff_policy_for_days(normalized_special_days)
+    for d in DAYS:
+        bounds[d] = {}
+        max_bounds[d] = {}
+        soft_bounds[d] = {}
+        day_mode = get_effective_day_mode(d, normalized_special_days)
+        day_modes[d] = day_mode
+        day_allowed_shifts[d] = get_allowed_shifts_for_day(d, standard_mode, normalized_special_days)
+        for h in HOURS:
+            mn, _ = coverage_bounds(h, d, standard_mode, special_day_mode=day_mode)
+            _, effective_mx = effective_coverage_bounds(h, d, standard_mode, special_day_mode=day_mode)
+            bounds[d][h] = mn
+            max_bounds[d][h] = effective_mx
+
+            if day_mode == "closed":
+                soft_bounds[d][h] = 0
+            elif day_mode in {"sunday_like", "holy_thursday"}:
+                soft_bounds[d][h] = mn
+            else:
+                if 7 <= h <= 10 or 17 <= h <= 19:
+                    soft_bounds[d][h] = 4
+                elif h == 6:
+                    soft_bounds[d][h] = 3
+                else:
+                    soft_bounds[d][h] = mn
+
+    shift_sets = {s: list(hours) for s, hours in SHIFTS.items()}
+    shift_options = [
+        {"code": "AUTO", "label": "Auto"},
+        {"code": "VAC", "label": "VACACIONES"},
+        {"code": "PERM", "label": "PERMISO"},
+        {"code": "OFF", "label": "LIBRE"},
+    ]
+    shift_hours = {"OFF": 0, "VAC": 0, "PERM": 0}
+
+    for s, hours in SHIFTS.items():
+        if s in ["OFF", "VAC", "PERM", "AUTO"]:
+            continue
+        shift_hours[s] = len(hours)
+        if s == "N_22-05":
+            label = "Noche"
+        else:
+            parts = s.split("_")
+            label = parts[1] if len(parts) > 1 else s
+            if "+" in label:
+                label = parts[0]
+        shift_options.append({"code": s, "label": label})
+
+    return {
+        "shift_sets": shift_sets,
+        "shift_options": shift_options,
+        "shift_hours": shift_hours,
+        "bounds": bounds,
+        "max_bounds": max_bounds,
+        "soft_bounds": soft_bounds,
+        "day_allowed_shifts": day_allowed_shifts,
+        "sunday_allowed_shifts": day_allowed_shifts.get("Dom", []),
+        "special_days": normalized_special_days,
+        "day_modes": day_modes,
+        "overstaff_policy": overstaff_policy,
+        "standard_mode": standard_mode,
+        "active_employees": active_count
+    }
+
 @app.get("/api/validation_rules")
 def get_validation_rules():
+    return _build_validation_rules_impl({})
+
     db = load_db()
     employees = db.get("employees", [])
     
@@ -1119,6 +1344,11 @@ def get_validation_rules():
         "standard_mode": standard_mode,
         "active_employees": active_count
     }
+
+
+@app.post("/api/validation_rules")
+def post_validation_rules(request: ValidationRulesRequest):
+    return _build_validation_rules_impl(request.special_days)
 
 @app.get("/api/export_excel")
 def export_excel(history_index: Optional[int] = None):
@@ -1359,11 +1589,14 @@ def export_excel(history_index: Optional[int] = None):
 
     # Save to temp
     suffix = ".xlsm" if use_vba else ".xlsx"
-    filename = "horario" + suffix
+    export_base_name = "horario"
+    if history_index is not None:
+        export_base_name = _get_export_base_name(selected_entry, f"historial_{history_index + 1}")
+    filename = f"{export_base_name}{suffix}"
     
     # Save a local backup to EXPORT_DIR
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    local_filename = f"horario_{timestamp}{suffix}"
+    local_filename = f"{export_base_name}_{timestamp}{suffix}"
     local_path = os.path.join(EXPORT_DIR, local_filename)
     wb.save(local_path)
     
@@ -1382,8 +1615,9 @@ def export_image(req: ImageExportRequest):
         header, encoded = req.image_data.split(",", 1)
         data = base64.b64decode(encoded)
         
+        stem, ext = _build_export_filename_parts(req.filename, default_ext=".png", fallback="horario")
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"horario_{timestamp}.png"
+        filename = f"{stem}_{timestamp}{ext}"
         file_path = os.path.join(EXPORT_DIR, filename)
         
         with open(file_path, "wb") as f:
@@ -1412,6 +1646,7 @@ class PlanillaEmpleado(BaseModel):
     forced_quebrado: Optional[int] = 0
     allow_no_rest: Optional[int] = 0
     es_jefe_pista: Optional[int] = 0
+    es_practicante: Optional[int] = 0
     strict_preferences: Optional[int] = 0
     activo: Optional[int] = 1
     turnos_fijos: Optional[str] = "{}"
@@ -1460,6 +1695,7 @@ def add_planilla_empleado(emp: PlanillaEmpleado):
         puede_nocturno=emp.puede_nocturno,
         forced_libres=emp.forced_libres, forced_quebrado=emp.forced_quebrado,
         allow_no_rest=emp.allow_no_rest, es_jefe_pista=emp.es_jefe_pista,
+        es_practicante=emp.es_practicante,
         strict_preferences=emp.strict_preferences, turnos_fijos=emp.turnos_fijos
     )
     if not ok:
@@ -1476,9 +1712,10 @@ def update_planilla_empleado(emp_id: int, emp: PlanillaEmpleado):
         puede_nocturno=emp.puede_nocturno,
         forced_libres=emp.forced_libres, forced_quebrado=emp.forced_quebrado,
         allow_no_rest=emp.allow_no_rest, es_jefe_pista=emp.es_jefe_pista,
+        es_practicante=emp.es_practicante,
         strict_preferences=emp.strict_preferences, turnos_fijos=emp.turnos_fijos
     )
-    
+
     # Check if the active status changed
     exist = plan_db.get_conn().execute("SELECT activo FROM empleados WHERE id=?", (emp_id,)).fetchone()
     if exist:
@@ -1595,6 +1832,94 @@ class PrestamoAbono(BaseModel):
     tipo: str = "planilla"
     semana_planilla: Optional[str] = None
     notas: Optional[str] = None
+
+
+def _find_mes_for_sync(mes_id: Optional[int] = None):
+    if mes_id is None:
+        return plan_db.get_mes_activo()
+
+    meses = plan_db.get_todos_meses()
+    return next((m for m in meses if m["id"] == mes_id), None)
+
+
+def _sync_prestamo_rebajos_mes(mes_id: Optional[int] = None, mes_data: Optional[dict] = None):
+    mes = mes_data or _find_mes_for_sync(mes_id)
+    if not mes:
+        return {
+            "status": "noop",
+            "message": "No hay un mes para sincronizar.",
+            "created": 0,
+            "updated": 0,
+            "deleted": 0,
+            "skipped": 0,
+            "affected_prestamos": 0,
+        }
+
+    archivo_path = os.path.join(_planillas_dir, mes["archivo"])
+    if not os.path.exists(archivo_path):
+        return {
+            "status": "noop",
+            "message": f"No se encontro el Excel del mes {mes['id']}.",
+            "created": 0,
+            "updated": 0,
+            "deleted": 0,
+            "skipped": 0,
+            "affected_prestamos": 0,
+        }
+
+    semanas = plan_db.get_semanas_del_mes(mes["id"])
+    summary = prestamo_sync.sync_rebajos_mes(mes, archivo_path, semanas)
+    summary["status"] = "success"
+    summary["mes_id"] = mes["id"]
+    return summary
+
+
+def _sync_prestamo_rebajos_todos():
+    meses = plan_db.get_todos_meses()
+    if not meses:
+        return {
+            "status": "noop",
+            "message": "No hay meses registrados para sincronizar.",
+            "created": 0,
+            "updated": 0,
+            "deleted": 0,
+            "skipped": 0,
+            "affected_prestamos": 0,
+            "meses_sincronizados": 0,
+        }
+
+    total = {
+        "status": "success",
+        "created": 0,
+        "updated": 0,
+        "deleted": 0,
+        "skipped": 0,
+        "affected_prestamos": 0,
+        "meses_sincronizados": 0,
+    }
+    for mes in meses:
+        summary = _sync_prestamo_rebajos_mes(mes_data=mes)
+        if summary["status"] != "success":
+            continue
+        total["created"] += summary["created"]
+        total["updated"] += summary["updated"]
+        total["deleted"] += summary["deleted"]
+        total["skipped"] += summary["skipped"]
+        total["affected_prestamos"] += summary["affected_prestamos"]
+        total["meses_sincronizados"] += 1
+
+    if total["meses_sincronizados"] == 0:
+        total["status"] = "noop"
+        total["message"] = "No se encontro ningun Excel de planilla para sincronizar."
+    return total
+
+
+@app.post("/api/planillas/prestamos/sync-planilla-rebajos")
+def sync_planilla_rebajos_prestamo(mes_id: Optional[int] = None):
+    if mes_id is None:
+        return _sync_prestamo_rebajos_todos()
+    return _sync_prestamo_rebajos_mes(mes_id=mes_id)
+
 
 @app.get("/api/planillas/prestamos")
 def get_all_prestamos_activos():
@@ -2124,6 +2449,8 @@ def delete_semana(semana_id: int):
         except Exception as e:
             print(f"Advertencia al modificar Excel: {e}")
 
+    _sync_prestamo_rebajos_mes(mes_data=target_mes)
+
     return {"status": "success", "semanas": plan_db.get_semanas_del_mes(target_mes["id"])}
 
 
@@ -2136,6 +2463,8 @@ def delete_mes_historial(mes_id: int):
         raise HTTPException(status_code=404, detail="Mes no encontrado")
     if not mes_target.get("cerrado"):
         raise HTTPException(status_code=400, detail="Solo se pueden eliminar meses cerrados")
+
+    prestamo_sync.clear_auto_rebajos_mes(mes_id)
 
     # Intentar borrar el Excel físico (no fatal si falla)
     archivo_path = os.path.join(_planillas_dir, mes_target["archivo"])
@@ -2316,7 +2645,9 @@ def generar_boletas(req: PlanillaBoletasRequest):
     mes_activo = plan_db.get_mes_activo()
     if not mes_activo:
         raise HTTPException(status_code=400, detail="No active month to generate boletas.")
-        
+
+    _sync_prestamo_rebajos_mes(mes_data=mes_activo)
+
     archivo_path = os.path.join(_planillas_dir, mes_activo["archivo"])
     logo_path = os.path.join(_planillas_dir, "logo.png")
     

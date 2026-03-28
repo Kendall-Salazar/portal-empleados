@@ -210,7 +210,7 @@
                             </div>
                             <div class="toggle-container">
                                 <input type="checkbox" id="useHistoryContext" class="toggle-checkbox"
-                                    onchange="updateConfig()">
+                                    checked onchange="updateConfig()">
                                 <div class="toggle-slider"></div>
                             </div>
                         </label>
@@ -233,6 +233,12 @@
                                 style="width: 100%; padding: 0.5rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px; font-size: 0.85rem; opacity: 0.7;">
                         </div>
                         <div id="weekNamePreview" style="font-size: 0.8rem; color: var(--primary); font-weight: 600; text-align: center; padding: 4px; display: none;"></div>
+
+                        <div id="weekSpecialDaysSection" class="config-section" style="display: none; margin-top: 0.9rem; padding: 0.9rem; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-panel);">
+                            <h3 style="margin-top: 0;"><i class="fa-solid fa-wand-magic-sparkles"></i> Excepciones de la Semana</h3>
+                            <p class="helper-text-sm" style="margin-top:-5px; margin-bottom: 10px;">Marca quÃ© dÃ­as deben usar reglas de domingo o quedar cerrados para esta semana.</p>
+                            <div id="weekSpecialDaysGrid" style="display: grid; grid-template-columns: 1fr; gap: 0.65rem;"></div>
+                        </div>
                         
                         <button class="btn-action" onclick="openSundayRotationModal()" style="width: 100%; margin-top: 1rem; border: 1px solid var(--primary); color: var(--primary); background: rgba(59, 130, 246, 0.1);">
                             <i class="fa-solid fa-arrows-spin"></i> Cola de Domingos
@@ -391,8 +397,8 @@
                     <input type="text" id="scheduleNameInput" placeholder="Ej. Semana Promo Agosto" autofocus>
                 </div>
                 <div class="modal-actions">
-                    <button class="btn-text" onclick="closeSaveModal()">Cancelar</button>
-                    <button class="btn-action primary" onclick="confirmSaveSchedule()">Confirmar</button>
+                    <button type="button" class="btn-text" onclick="closeSaveModal()">Cancelar</button>
+                    <button type="button" class="btn-action primary" onclick="confirmSaveSchedule(event)">Confirmar</button>
                 </div>
             </div>
         </div>
@@ -604,11 +610,27 @@
                             </div>
                         </label>
 
+                        <label class="pref-option">
+                            <div class="opt-info">
+                                <div class="opt-icon" style="background: #dbeafe; color: #2563eb;"><i
+                                        class="fa-solid fa-graduation-cap"></i></div>
+                                <div class="opt-text">
+                                    <strong>Practicante</strong>
+                                    <small>Acompaña al jefe de pista</small>
+                                </div>
+                            </div>
+                            <div class="toggle-container">
+                                <input type="checkbox" id="empPracticante" class="toggle-checkbox">
+                                <div class="toggle-slider"></div>
+                            </div>
+                        </label>
+
                         <div id="jefeShiftConfig" class="input-group jefe-shift-config" style="display: none;">
                             <label style="font-size: 0.8rem; margin-bottom: 5px; color: #94a3b8;">Horario Base
-                                (L-V)</label>
+                                (L-V / personalizado)</label>
                             <select id="jefeShiftSelect" onchange="animateSelect(this)"
                                 style="padding: 5px; font-size: 0.85rem; width: 100%; border-radius: 4px; background: #0f172a; color: white; border: 1px solid #475569;">
+                                <option value="CUSTOM">Personalizado por día</option>
                                 <option value="J_06-16">06:00 AM - 04:00 PM</option>
                                 <option value="J_07-17">07:00 AM - 05:00 PM</option>
                             </select>

@@ -7,6 +7,10 @@ let currentGeneratedSchedule = null;
 let currentDailyTasks = null;
 let currentMetadata = null;
 let validationRules = null;
+let baseValidationRules = null;
+let historyEntriesCache = [];
+let expandedHistoryItems = new Set();
+let hiddenHistoryHours = new Set();
 
 let SHIFT_OPTIONS = [];
 let SHIFT_HOURS = {};
@@ -17,7 +21,28 @@ const MANUAL_SHIFT_PREFIX = "MANUAL_";
 
 const DAYS = ["Vie", "Sáb", "Dom", "Lun", "Mar", "Mié", "Jue"];
 
+const SPECIAL_DAY_DEFAULT = "normal";
+const HOLY_THURSDAY_DAY = "Jue";
+const SPECIAL_DAY_OPTIONS = [
+    { value: "normal", label: "Normal" },
+    { value: "sunday_like", label: "Como domingo" },
+    { value: "holy_thursday", label: "Jueves Santo" },
+    { value: "closed", label: "Cerrado" },
+];
+const DAY_INDEX = Object.fromEntries(DAYS.map((day, index) => [day, index]));
+
 let isValidationOn = false;
+let weekSpecialDays = createDefaultSpecialDays();
+let historySelectionState = {
+    active: false,
+    histIndex: null,
+    empName: "",
+    anchorDay: null,
+    currentDay: null,
+    days: [],
+    dragged: false,
+    suppressClick: false,
+};
 
 document.addEventListener("DOMContentLoaded", () => {
     // Default to Dark Mode
@@ -31,6 +56,212 @@ document.addEventListener("DOMContentLoaded", () => {
     const btn = document.getElementById('theme-toggle');
     if (btn) btn.onclick = () => document.body.classList.toggle('dark-mode');
 });
+
+function createDefaultSpecialDays() {
+    return DAYS.reduce((acc, day) => {
+        acc[day] = SPECIAL_DAY_DEFAULT;
+        return acc;
+    }, {});
+}
+
+function normalizeSpecialDaysState(rawState = {}) {
+    const normalized = createDefaultSpecialDays();
+    if (!rawState || typeof rawState !== "object") {
+        return normalized;
+    }
+
+    DAYS.forEach(day => {
+        const mode = rawState[day];
+        if (mode === "normal" || mode === "sunday_like" || mode === "holy_thursday" || mode === "closed") {
+            if (day === "Dom" && mode === "sunday_like") {
+                normalized[day] = "normal";
+            } else if (day !== HOLY_THURSDAY_DAY && mode === "holy_thursday") {
+                normalized[day] = "normal";
+            } else {
+                normalized[day] = mode;
+            }
+        }
+    });
+
+    return normalized;
+}
+
+function getSpecialDaysPayload(sourceState = weekSpecialDays) {
+    const normalized = normalizeSpecialDaysState(sourceState);
+    const payload = {};
+    DAYS.forEach(day => {
+        const mode = normalized[day];
+        if (mode !== SPECIAL_DAY_DEFAULT) {
+            payload[day] = mode;
+        }
+    });
+    return payload;
+}
+
+function escapeHtmlAttr(value = "") {
+    return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+}
+
+function cloneHistoryEntry(entry) {
+    return JSON.parse(JSON.stringify(entry || {}));
+}
+
+function sanitizeFileStem(value, fallback = "horario") {
+    const normalized = String(value || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "");
+    const cleaned = normalized
+        .replace(/[<>:"/\\|?*\x00-\x1F]/g, " ")
+        .replace(/\s+/g, "_")
+        .replace(/_+/g, "_")
+        .replace(/^[._-]+|[._-]+$/g, "");
+    return cleaned || fallback;
+}
+
+function getHistoryExportBaseName(index) {
+    const entry = historyEntriesCache[index];
+    return sanitizeFileStem(entry?.name, `historial_${index + 1}`);
+}
+
+function setStatusMessage(message, kind = "info", timeoutMs = 2600) {
+    const status = document.getElementById("statusMessage");
+    if (!status) return;
+
+    const iconByKind = {
+        success: "fa-check",
+        error: "fa-circle-xmark",
+        info: "fa-circle-info",
+    };
+    const icon = iconByKind[kind] || iconByKind.info;
+    const className = kind === "error" ? "error" : "";
+    status.innerHTML = className
+        ? `<span class="${className}"><i class="fa-solid ${icon}"></i> ${message}</span>`
+        : `<i class="fa-solid ${icon}"></i> ${message}`;
+
+    if (timeoutMs > 0) {
+        window.clearTimeout(setStatusMessage._timer);
+        setStatusMessage._timer = window.setTimeout(() => {
+            if (status.textContent.includes(message)) {
+                status.innerHTML = "";
+            }
+        }, timeoutMs);
+    }
+}
+
+async function fetchValidationRules(specialDays = {}) {
+    const res = await fetch("/api/validation_rules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ special_days: specialDays || {} })
+    });
+    if (!res.ok) {
+        throw new Error(`API returned ${res.status}`);
+    }
+    return res.json();
+}
+
+async function refreshBaseValidationRules() {
+    baseValidationRules = await fetchValidationRules({});
+    SHIFT_OPTIONS = baseValidationRules.shift_options;
+    SHIFT_HOURS = baseValidationRules.shift_hours;
+    if (!validationRules) {
+        validationRules = baseValidationRules;
+    }
+    return baseValidationRules;
+}
+
+async function refreshScheduleValidationRules(specialDays = getSpecialDaysPayload()) {
+    validationRules = await fetchValidationRules(specialDays);
+    return validationRules;
+}
+
+function formatSpecialDayDate(day) {
+    const weekDates = getWeekDatesMap();
+    const raw = weekDates?.[day];
+    if (!raw) return "";
+    const parts = raw.split("/");
+    if (parts.length !== 3) return raw;
+    return `${parts[0]}/${parts[1]}`;
+}
+
+function renderWeekSpecialDays() {
+    const section = document.getElementById("weekSpecialDaysSection");
+    const grid = document.getElementById("weekSpecialDaysGrid");
+    const startInput = document.getElementById("weekStartDate");
+    if (!section || !grid) return;
+
+    if (!startInput || !startInput.value) {
+        section.style.display = "none";
+        grid.innerHTML = "";
+        return;
+    }
+
+    section.style.display = "block";
+    grid.innerHTML = "";
+
+    const normalized = normalizeSpecialDaysState(weekSpecialDays);
+    weekSpecialDays = normalized;
+
+    DAYS.forEach(day => {
+        const wrapper = document.createElement("div");
+        wrapper.style.display = "grid";
+        wrapper.style.gap = "0.45rem";
+        wrapper.style.padding = "0.7rem";
+        wrapper.style.border = "1px solid var(--border)";
+        wrapper.style.borderRadius = "10px";
+        wrapper.style.background = "var(--bg-app)";
+
+        const label = document.createElement("div");
+        label.innerHTML = `
+            <strong style="font-size:0.85rem;">${day}</strong>
+            <span style="font-size:0.78rem; color:var(--text-muted); margin-left:0.35rem;">${formatSpecialDayDate(day)}</span>
+        `;
+
+        const select = document.createElement("select");
+        select.className = "custom-input";
+        select.style.width = "100%";
+        select.style.padding = "0.45rem";
+        select.style.background = "var(--bg-panel)";
+        select.style.border = "1px solid var(--border)";
+        select.style.color = "var(--text-main)";
+        select.style.borderRadius = "8px";
+        const dayOptions = day === HOLY_THURSDAY_DAY
+            ? SPECIAL_DAY_OPTIONS
+            : SPECIAL_DAY_OPTIONS.filter(option => option.value !== "holy_thursday");
+        dayOptions.forEach(option => {
+            const opt = document.createElement("option");
+            opt.value = option.value;
+            opt.textContent = option.label;
+            select.appendChild(opt);
+        });
+        select.value = normalized[day] || SPECIAL_DAY_DEFAULT;
+        select.onchange = async (event) => {
+            weekSpecialDays[day] = event.target.value;
+            weekSpecialDays = normalizeSpecialDaysState(weekSpecialDays);
+            if (event.target.value !== weekSpecialDays[day]) {
+                renderWeekSpecialDays();
+                return;
+            }
+            if (currentGeneratedSchedule && isValidationOn) {
+                try {
+                    await refreshScheduleValidationRules(currentMetadata?.special_days || getSpecialDaysPayload());
+                    applyValidationUI();
+                } catch (err) {
+                    console.error("Error refreshing validation rules:", err);
+                }
+            }
+        };
+
+        wrapper.appendChild(label);
+        wrapper.appendChild(select);
+        grid.appendChild(wrapper);
+    });
+}
 
 // OVERLAY NAVIGATION
 function openOverlay(id) {
@@ -63,20 +294,18 @@ function updateSidebarActive(id) {
 // DATA LOADING
 async function loadData() {
     try {
-        const [empRes, cfgRes, rulesRes] = await Promise.all([
+        const [empRes, cfgRes] = await Promise.all([
             fetch(`${API_URL}/employees?include_inactive=true`),
-            fetch(`${API_URL}/config`),
-            fetch(`${API_URL}/validation_rules`)
+            fetch(`${API_URL}/config`)
         ]);
         employees = await empRes.json();
         config = await cfgRes.json();
-        validationRules = await rulesRes.json();
-
-        SHIFT_OPTIONS = validationRules.shift_options;
-        SHIFT_HOURS = validationRules.shift_hours;
+        await refreshBaseValidationRules();
+        validationRules = baseValidationRules;
 
         renderEmployees();
         renderConfig();
+        renderWeekSpecialDays();
         populateShiftSelects();
     } catch (e) { console.error(e); }
 }
@@ -121,6 +350,7 @@ function renderEmployees() {
                 <div class="tags">
                     ${isInactive ? '<span class="tag inactive" style="background:#fee2e2;color:#ef4444;" title="Usuario Inactivo"><i class="fa-solid fa-ban"></i> Inactivo</span>' : ''}
                     ${emp.is_jefe_pista ? `<span class="tag success" style="${isInactive ? 'filter: grayscale(100%);' : ''}" title="Jefe de Pista"><i class="fa-solid fa-star"></i> Jefe</span>` : ''}
+                    ${emp.is_practicante ? `<span class="tag" style="background:#dbeafe;color:#2563eb;${isInactive ? 'filter: grayscale(100%);' : ''}" title="Practicante"><i class="fa-solid fa-graduation-cap"></i> Pract.</span>` : ''}
                     ${emp.can_do_night ? `<span class="tag night" style="${isInactive ? 'filter: grayscale(100%);' : ''}" title="Turno Noche"><i class="fa-solid fa-moon"></i> Noche</span>` : ''}
                     ${emp.forced_libres ? `<span class="tag forced" style="${isInactive ? 'filter: grayscale(100%);' : ''}" title="Forzar Libres"><i class="fa-solid fa-thumbtack"></i> Libres</span>` : ''}
                     ${emp.forced_quebrado ? `<span class="tag" style="background:#ede9fe;color:#7c3aed;${isInactive ? 'filter: grayscale(100%);' : ''}" title="Forzar Quebrado"><i class="fa-solid fa-bolt"></i> Q (6d)</span>` : ''}
@@ -302,10 +532,11 @@ async function updateConfig() {
     });
 
     try {
-        const rulesRes = await fetch(`${API_URL}/validation_rules`);
-        validationRules = await rulesRes.json();
-        SHIFT_OPTIONS = validationRules.shift_options;
-        SHIFT_HOURS = validationRules.shift_hours;
+        await refreshBaseValidationRules();
+        if (currentGeneratedSchedule && isValidationOn) {
+            await refreshScheduleValidationRules(currentMetadata?.special_days || getSpecialDaysPayload());
+            applyValidationUI();
+        }
     } catch (e) {
         console.error("Error refreshing validation rules:", e);
     }
@@ -368,6 +599,7 @@ function openEditModal(index) {
     document.getElementById("empForcedQuebrado").checked = emp.forced_quebrado || false;
     document.getElementById("empNoRest").checked = emp.allow_no_rest || false;
     document.getElementById("empJefePista").checked = emp.is_jefe_pista || false;
+    document.getElementById("empPracticante").checked = emp.is_practicante || false;
     document.getElementById("empStrictPreferences").checked = emp.strict_preferences || false;
     
     // Activo flag mapping
@@ -391,6 +623,7 @@ function openEditModal(index) {
             }
         }
     }
+    defaultJefeShift = getJefeBaseSelection(fixed, emp.is_jefe_pista);
     document.getElementById("jefeShiftSelect").value = defaultJefeShift;
     toggleJefeShiftSelect();
 
@@ -400,6 +633,28 @@ function openEditModal(index) {
     switchTab("tab-general");
     buildDayCards();
     document.getElementById("planillaEmpModal").classList.remove("hidden");
+}
+
+function getJefeBaseSelection(fixed = {}, isJefe = false) {
+    if (!isJefe) {
+        return "J_06-16";
+    }
+
+    const weekdays = ["Lun", "Mar", "MiÃ©", "Jue", "Vie"];
+    const weekdayValues = weekdays
+        .map(day => fixed?.[day])
+        .filter(value => typeof value === "string" && value.length > 0);
+
+    if (weekdayValues.length === 0) {
+        return "J_06-16";
+    }
+
+    const uniqueValues = [...new Set(weekdayValues)];
+    if (uniqueValues.length === 1 && uniqueValues[0].startsWith("J_")) {
+        return uniqueValues[0];
+    }
+
+    return "CUSTOM";
 }
 
 function toggleJefeShiftSelect() {
@@ -428,6 +683,7 @@ let activePillDay = null;
 // PILL_GROUPS is built dynamically from validationRules loaded from the backend.
 // This ensures that any shift added/removed in scheduler_engine.py is immediately reflected here.
 function buildPillGroups(day = null) {
+    const rules = baseValidationRules || validationRules;
     const groups = {
         special: [
             { code: "AUTO", label: "Auto", icon: "fa-robot", color: "#6366f1" },
@@ -442,38 +698,34 @@ function buildPillGroups(day = null) {
         jefe: [],
     };
 
-    if (!validationRules || !validationRules.shift_sets) return groups;
+    if (!rules || !rules.shift_sets) return groups;
 
     const SKIP = new Set(["OFF", "VAC", "PERM", "N_22-05"]);
 
-    const sundayAllowedShifts = Array.isArray(validationRules?.sunday_allowed_shifts)
-        ? new Set(validationRules.sunday_allowed_shifts)
+    const allowedForDay = Array.isArray(rules?.day_allowed_shifts?.[day])
+        ? new Set(rules.day_allowed_shifts[day])
         : null;
 
     // Helper: get the start hour from SHIFTS set
     const startOf = (code) => {
-        const hrs = validationRules.shift_sets[code];
+        const hrs = rules.shift_sets[code];
         if (!hrs || hrs.length === 0) return 99;
         return Math.min(...hrs);
     };
 
     // Classify each shift
-    const allCodes = Object.keys(validationRules.shift_sets).sort((a, b) => {
+    const allCodes = Object.keys(rules.shift_sets).sort((a, b) => {
         return startOf(a) - startOf(b) || a.localeCompare(b);
     });
 
     for (const code of allCodes) {
         if (SKIP.has(code)) continue;
 
-        if (code === "D4_13-22" && day !== "Dom") {
+        if (allowedForDay && !allowedForDay.has(code)) {
             continue;
         }
 
-        if (day === "Dom" && sundayAllowedShifts && !sundayAllowedShifts.has(code)) {
-            continue;
-        }
-
-        const hrs = validationRules.shift_sets[code] || [];
+        const hrs = rules.shift_sets[code] || [];
         const start = Math.min(...hrs);
         const end = Math.max(...hrs);
         const hours = end - start + 1;  // approx shift length
@@ -648,6 +900,7 @@ async function saveEmployee() {
         gender: gender,
         can_do_night: gender === "M",  // Auto: male can, female cannot
         is_jefe_pista: isJefe,
+        is_practicante: document.getElementById("empPracticante").checked,
         forced_libres: document.getElementById("empForcedLibres").checked,
         forced_quebrado: document.getElementById("empForcedQuebrado").checked,
         allow_no_rest: document.getElementById("empNoRest").checked,
@@ -657,6 +910,7 @@ async function saveEmployee() {
     };
 
     const selectedJefeShift = document.getElementById("jefeShiftSelect").value;
+    const isNewEmployee = index === -1;
     const weekdays = ["Lun", "Mar", "Mié", "Jue", "Vie"];
 
     document.querySelectorAll(".shift-select").forEach(sel => {
@@ -665,17 +919,15 @@ async function saveEmployee() {
 
         // Auto-assign chosen Jefe shift ONLY to empty weekdays
         // This stops UI from blocking/overwriting customized shifts like Friday
-        if (isJefe && weekdays.includes(day)) {
-            if (val === "AUTO") {
-                val = selectedJefeShift;
-            }
+        if (isJefe && weekdays.includes(day) && val === "AUTO" && isNewEmployee && selectedJefeShift !== "CUSTOM") {
+            val = selectedJefeShift;
         }
 
         // Auto-assign Jefe de Pista Saturday (T1_05-13) and Sunday (OFF) ONLY if AUTO
-        if (isJefe && day === "Sáb" && val === "AUTO") {
+        if (isJefe && day === "Sáb" && val === "AUTO" && isNewEmployee) {
             val = "T1_05-13";
         }
-        if (isJefe && day === "Dom" && val === "AUTO") {
+        if (isJefe && day === "Dom" && val === "AUTO" && isNewEmployee) {
             val = "OFF";
         }
 
@@ -724,6 +976,7 @@ async function generateSchedule() {
     config.allow_collision_quebrado = document.getElementById("allowCollisionQuebrado")?.checked || false;
     config.collision_peak_priority = document.getElementById("collisionPeakPriority")?.value || "pm";
     config.use_history = document.getElementById("useHistoryContext")?.checked ?? true;
+    const specialDays = getSpecialDaysPayload();
 
     try {
         // AUTO-SYNC: Si hay fechas de semana, sincronizar vacaciones/permisos → turnos fijos
@@ -746,7 +999,7 @@ async function generateSchedule() {
         const res = await fetch(`${API_URL}/solve`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ employees, config, target_week_start: weekStart || null })
+            body: JSON.stringify({ employees, config, target_week_start: weekStart || null, special_days: specialDays })
         });
         const result = await res.json();
 
@@ -755,6 +1008,9 @@ async function generateSchedule() {
             currentGeneratedSchedule = result.schedule;
             currentDailyTasks = result.daily_tasks; // Save tasks
             currentMetadata = result.metadata;
+            weekSpecialDays = normalizeSpecialDaysState(result.metadata?.special_days || weekSpecialDays);
+            renderWeekSpecialDays();
+            await refreshScheduleValidationRules(result.metadata?.special_days || specialDays);
 
             renderSchedule(result.schedule, "#scheduleTable", result.daily_tasks);
             if (isValidationOn) applyValidationUI(); // apply validation immediately if enabled
@@ -766,13 +1022,15 @@ async function generateSchedule() {
             document.getElementById("scheduleMeta").textContent = libresText + solutionsCount + historyText;
         } else {
             console.error("Solver Status:", result.status);
+            currentMetadata = null;
             if (result.status === "Infeasible") {
+                const infeasibleMessage = result.message || "No se encontró una solución factible con las restricciones actuales. Intenta relajar algunos turnos fijos.";
                 status.innerHTML = '<span class="error"><i class="fa-solid fa-circle-xmark"></i> Infeasible</span>';
-                document.getElementById("scheduleMeta").textContent = "Sin solución factible";
-                alert("No se encontró una solución factible con las restricciones actuales. Intenta relajar algunos turnos fijos.");
+                document.getElementById("scheduleMeta").textContent = infeasibleMessage;
+                alert(infeasibleMessage);
             } else {
                 status.textContent = `Error: ${result.status}`;
-                document.getElementById("scheduleMeta").textContent = "Error";
+                document.getElementById("scheduleMeta").textContent = result.message || "Error";
             }
         }
 
@@ -944,7 +1202,8 @@ function normalizeFlexibleShiftInput(value) {
 
 function getShiftHoursList(shiftCode) {
     const normalized = normalizeFlexibleShiftInput(shiftCode) || shiftCode;
-    const knownHours = validationRules?.shift_sets?.[normalized];
+    const rules = validationRules || baseValidationRules;
+    const knownHours = rules?.shift_sets?.[normalized];
     if (knownHours && knownHours.length) {
         return [...knownHours];
     }
@@ -1121,7 +1380,7 @@ function renderSchedule(schedule, tableSelector, tasks = {}) {
 
                     if (belongsInRow) {
                         const emp = employees.find(e => e.name === name);
-                        const role = name === "Refuerzo" ? "REF" : (emp && emp.is_jefe_pista ? "JEFE" : "");
+                        const role = name === "Refuerzo" ? "REF" : (emp && emp.is_jefe_pista ? "JEFE" : (emp && emp.is_practicante ? "PRACT" : ""));
                         const nightBadge = emp && emp.can_do_night ? '<i class="fa-solid fa-moon" style="font-size:0.7em;"></i> ' : '';
 
                         let info = getShiftInfo(s); // To get colors
@@ -1129,11 +1388,22 @@ function renderSchedule(schedule, tableSelector, tasks = {}) {
                         let tagHtml = role ? `<div style="font-size:0.6rem; opacity:0.8; margin-top:2px;">${role}</div>` : "";
                         let taskHtml = getTaskLabelHTML(tasks, name, d);
 
-                        let editAttr = isHistory ? `onclick="editHistoryShift('${name}', '${d}', ${historyIndex})"` : "";
-                        let cursorStyle = isHistory ? "cursor:pointer" : "";
+                        let historyAttrs = "";
+                        let cursorStyle = "";
+                        if (isHistory) {
+                            historyAttrs = `
+                                data-history-index="${historyIndex}"
+                                data-employee-name="${escapeHtmlAttr(name)}"
+                                data-day="${escapeHtmlAttr(d)}"
+                                onmousedown="beginHistorySelection(event, this)"
+                                onmouseenter="extendHistorySelection(event, this)"
+                                onclick="handleHistoryCellClick(event, this)"
+                            `;
+                            cursorStyle = "cursor:pointer; user-select:none;";
+                        }
 
                         cellHtml += `
-                            <div class="shift-pill ${info.class}" ${editAttr} style="min-height:auto; padding:0.4rem; flex-direction:row; justify-content:space-between; ${cursorStyle}">
+                            <div class="shift-pill ${info.class}${isHistory ? " history-shift-pill" : ""}" ${historyAttrs} style="min-height:auto; padding:0.4rem; flex-direction:row; justify-content:space-between; ${cursorStyle}">
                                 <div style="display:flex; flex-direction:column; align-items:flex-start; text-align:left;">
                                     <span style="font-weight:700; font-size:0.9rem;">${nightBadge}${name}</span>
                                     ${tagHtml}
@@ -1191,7 +1461,7 @@ function renderSchedule(schedule, tableSelector, tasks = {}) {
                         <div class="emp-avatar" style="${name === "Refuerzo" ? 'background: var(--accent-color);' : ''}">${initials}</div>
                         <div class="emp-details">
                             <span class="emp-name">${name} ${nightBadge} ${noRestBadge} ${forcedLibresBadge} ${forcedQuebradoBadge} ${refBadge}</span>
-                            <span class="emp-role">${name === "Refuerzo" ? 'Apoyo Extra' : (emp && emp.is_jefe_pista ? 'Jefe de Pista' : 'Colaborador')}</span>
+                            <span class="emp-role">${name === "Refuerzo" ? 'Apoyo Extra' : (emp && emp.is_jefe_pista ? 'Jefe de Pista' : (emp && emp.is_practicante ? 'Practicante' : 'Colaborador'))}</span>
                         </div>
                     </div>
                 </td>
@@ -1208,12 +1478,23 @@ function renderSchedule(schedule, tableSelector, tasks = {}) {
                 let fixedClass = "";
                 if (emp && emp.fixed_shifts && emp.fixed_shifts[d]) fixedClass = "pill-fixed";
 
-                let editAttr = isHistory ? `onclick="editHistoryShift('${name}', '${d}', ${historyIndex})"` : "";
-                let cursorStyle = isHistory ? "cursor:pointer" : "";
+                let historyAttrs = "";
+                let cursorStyle = "";
+                if (isHistory) {
+                    historyAttrs = `
+                        data-history-index="${historyIndex}"
+                        data-employee-name="${escapeHtmlAttr(name)}"
+                        data-day="${escapeHtmlAttr(d)}"
+                        onmousedown="beginHistorySelection(event, this)"
+                        onmouseenter="extendHistorySelection(event, this)"
+                        onclick="handleHistoryCellClick(event, this)"
+                    `;
+                    cursorStyle = "cursor:pointer; user-select:none;";
+                }
 
                 row.innerHTML += `
                     <td>
-                        <div class="shift-pill ${info.class} ${fixedClass}" ${editAttr} style="${cursorStyle}">
+                        <div class="shift-pill ${info.class} ${fixedClass}${isHistory ? " history-shift-pill" : ""}" ${historyAttrs} style="${cursorStyle}">
                             <i class="fa-solid ${info.icon} pill-icon"></i>
                             <span class="pill-time">${info.text}</span>
                             ${getTaskLabelHTML(tasks, name, d)}
@@ -1236,94 +1517,401 @@ function renderSchedule(schedule, tableSelector, tasks = {}) {
 }
 
 // HISTORY
-async function loadHistory() {
+async function fetchHistoryEntries(forceRefresh = false) {
+    if (!forceRefresh && historyEntriesCache.length) {
+        return historyEntriesCache;
+    }
+
+    const res = await fetch('/api/history');
+    if (!res.ok) {
+        throw new Error(`API returned ${res.status}`);
+    }
+
+    historyEntriesCache = await res.json();
+    return historyEntriesCache;
+}
+
+function renderHistoryEntryTable(index) {
+    const entry = historyEntriesCache[index];
+    if (!entry) return;
+    renderSchedule(entry.schedule, `#hist-table-${index}`, entry.daily_tasks || {});
+    applyHistoryHoursVisibility(index);
+}
+
+function applyHistoryHoursVisibility(index) {
+    const table = document.getElementById(`hist-table-${index}`);
+    if (!table) return;
+    table.querySelectorAll(".col-hours").forEach(el => {
+        el.classList.toggle("hidden-col", hiddenHistoryHours.has(index));
+    });
+}
+
+function renderHistoryList() {
     const listContainer = document.getElementById('historyList');
+    if (!listContainer) return;
+
+    listContainer.innerHTML = "";
+
+    if (!historyEntriesCache.length) {
+        listContainer.innerHTML = '<div class="empty-msg">No hay historiales guardados</div>';
+        return;
+    }
+
+    historyEntriesCache.forEach((h, i) => {
+        const item = document.createElement("div");
+        item.className = "history-item";
+        item.dataset.historyIndex = String(i);
+        if (expandedHistoryItems.has(i)) {
+            item.classList.add("expanded");
+        }
+
+        const dateValue = h.timestamp ? new Date(h.timestamp) : new Date();
+        const dateStr = dateValue.toLocaleDateString() + ' ' + dateValue.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+        item.innerHTML = `
+            <div class="history-header" onclick="toggleHistory(this)">
+                <div class="h-info">
+                    <i class="fa-solid fa-calendar-week"></i>
+                    <span class="h-name">${h.name}</span>
+                    <span class="h-date">${dateStr}</span>
+                </div>
+                <div class="h-actions">
+                    <button type="button" class="btn-icon history-action-button" onclick="validateHistory(${i}, event)" title="Validar Historial">
+                        <i class="fa-solid fa-shield-check"></i>
+                        <span>Validar</span>
+                    </button>
+                    <button type="button" class="btn-icon history-action-button" onclick="reassignHistoryTasks(${i}, event)" title="Recalcular Limpieza">
+                        <i class="fa-solid fa-broom"></i>
+                        <span>Limpieza</span>
+                    </button>
+                    <button
+                        type="button"
+                        class="btn-icon history-action-button${hiddenHistoryHours.has(i) ? "" : " is-active"}"
+                        data-history-hours-button="${i}"
+                        onclick="toggleHistoryHours(${i}, event)"
+                        title="Mostrar u ocultar horas"
+                        aria-pressed="${hiddenHistoryHours.has(i) ? "false" : "true"}"
+                    >
+                        <i class="fa-solid fa-clock"></i>
+                        <span>Horas</span>
+                    </button>
+                    <button type="button" class="btn-icon" onclick="exportHistoryImage(${i}, event)" title="Exportar Foto">
+                        <i class="fa-solid fa-camera"></i>
+                    </button>
+                    <button type="button" class="btn-icon" onclick="exportHistoryExcel(${i}, event)" title="Exportar Excel">
+                        <i class="fa-solid fa-file-excel"></i>
+                    </button>
+                    <i class="fa-solid fa-chevron-down arrow"></i>
+                    <button type="button" class="btn-icon delete" onclick="deleteHistory(${i}, event)">
+                        <i class="fa-solid fa-trash"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="history-body">
+                <div class="history-table-wrapper">
+                    <table class="clean-table" id="hist-table-${i}">
+                        <thead>
+                            <tr>
+                                <th>Empleado</th>
+                                <th>Vie</th>
+                                <th>Sáb</th>
+                                <th>Dom</th>
+                                <th>Lun</th>
+                                <th>Mar</th>
+                                <th>Mié</th>
+                                <th>Jue</th>
+                                <th class="col-hours">Horas</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        `;
+        listContainer.appendChild(item);
+        renderHistoryEntryTable(i);
+    });
+}
+
+async function loadHistory(forceRefresh = true) {
+    const listContainer = document.getElementById('historyList');
+    if (!listContainer) return;
     listContainer.innerHTML = '<div class="loading"><i class="fa-solid fa-spinner fa-spin"></i> Cargando...</div>';
 
     try {
-        const res = await fetch('/api/history');
-        const data = await res.json();
-        listContainer.innerHTML = "";
-
-        if (!data.length) {
-            listContainer.innerHTML = '<div class="empty-msg">No hay historiales guardados</div>';
-            return;
-        }
-
-        data.forEach((h, i) => {
-            const item = document.createElement("div");
-            item.className = "history-item";
-
-            // Date formatting
-            const dateStr = new Date(h.timestamp).toLocaleDateString() + ' ' + new Date(h.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
-            item.innerHTML = `
-                <div class="history-header" onclick="toggleHistory(this)">
-                    <div class="h-info">
-                        <i class="fa-solid fa-calendar-week"></i>
-                        <span class="h-name">${h.name}</span>
-                        <span class="h-date">${dateStr}</span>
-                    </div>
-                    <div class="h-actions">
-                        <button class="btn-icon" onclick="validateHistory(${i}, event)" title="Validar Historial">
-                            <i class="fa-solid fa-shield-check"></i>
-                        </button>
-                        <button class="btn-icon" onclick="exportHistoryImage(${i}, event)" title="Exportar Foto">
-                            <i class="fa-solid fa-camera"></i>
-                        </button>
-                        <button class="btn-icon" onclick="exportHistoryExcel(${i}, event)" title="Exportar Excel">
-                            <i class="fa-solid fa-file-excel"></i>
-                        </button>
-                        <i class="fa-solid fa-chevron-down arrow"></i>
-                        <button class="btn-icon delete" onclick="deleteHistory(${i}, event)">
-                            <i class="fa-solid fa-trash"></i>
-                        </button>
-                    </div>
-                </div>
-                <div class="history-body">
-                    <div class="history-table-wrapper">
-                         <!-- Table injected on expand if needed, or pre-render -->
-                         <table class="clean-table" id="hist-table-${i}">
-                             <thead>
-                                 <tr>
-                                     <th>Empleado</th>
-                                     <th>Vie</th>
-                                     <th>Sáb</th>
-                                     <th>Dom</th>
-                                     <th>Lun</th>
-                                     <th>Mar</th>
-                                     <th>Mié</th>
-                                     <th>Jue</th>
-                                     <th class="col-hours">Horas</th>
-                                 </tr>
-                             </thead>
-                             <tbody>
-                             </tbody>
-                         </table>
-                    </div>
-                </div>
-            `;
-            listContainer.appendChild(item);
-
-            // Render the table immediately (or lazy load)
-            renderSchedule(h.schedule, `#hist-table-${i}`, h.daily_tasks);
-        });
+        await fetchHistoryEntries(forceRefresh);
+        renderHistoryList();
     } catch (e) {
+        console.error(e);
         listContainer.innerHTML = '<div class="error-msg">Error al cargar historial</div>';
     }
 }
 
 function toggleHistory(header) {
     const item = header.parentElement;
+    const index = Number(item.dataset.historyIndex);
     item.classList.toggle('expanded');
+    if (item.classList.contains('expanded')) {
+        expandedHistoryItems.add(index);
+    } else {
+        expandedHistoryItems.delete(index);
+    }
+}
+
+function clearHistorySelectionStyles() {
+    document.querySelectorAll('.history-shift-pill.history-pill-selected').forEach(el => {
+        el.classList.remove('history-pill-selected');
+    });
+}
+
+function getHistorySelectionRange(startDay, endDay) {
+    const startIndex = DAY_INDEX[startDay];
+    const endIndex = DAY_INDEX[endDay];
+    if (startIndex === undefined || endIndex === undefined) {
+        return startDay ? [startDay] : [];
+    }
+    const from = Math.min(startIndex, endIndex);
+    const to = Math.max(startIndex, endIndex);
+    return DAYS.slice(from, to + 1);
+}
+
+function applyHistorySelectionStyles() {
+    clearHistorySelectionStyles();
+    if (
+        historySelectionState.histIndex === null ||
+        !historySelectionState.empName ||
+        !historySelectionState.days.length
+    ) {
+        return;
+    }
+
+    document.querySelectorAll('.history-shift-pill').forEach(el => {
+        if (
+            Number(el.dataset.historyIndex) === historySelectionState.histIndex &&
+            el.dataset.employeeName === historySelectionState.empName &&
+            historySelectionState.days.includes(el.dataset.day)
+        ) {
+            el.classList.add('history-pill-selected');
+        }
+    });
+}
+
+function beginHistorySelection(event, element) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+
+    historySelectionState.active = true;
+    historySelectionState.histIndex = Number(element.dataset.historyIndex);
+    historySelectionState.empName = element.dataset.employeeName || "";
+    historySelectionState.anchorDay = element.dataset.day || null;
+    historySelectionState.currentDay = element.dataset.day || null;
+    historySelectionState.days = element.dataset.day ? [element.dataset.day] : [];
+    historySelectionState.dragged = false;
+
+    applyHistorySelectionStyles();
+    document.addEventListener('mouseup', finishHistorySelection, { once: true });
+}
+
+function extendHistorySelection(event, element) {
+    if (!historySelectionState.active) return;
+    if ((event.buttons & 1) !== 1) return;
+
+    const histIndex = Number(element.dataset.historyIndex);
+    const empName = element.dataset.employeeName || "";
+    const day = element.dataset.day || null;
+
+    if (
+        histIndex !== historySelectionState.histIndex ||
+        empName !== historySelectionState.empName ||
+        !day
+    ) {
+        return;
+    }
+
+    if (day !== historySelectionState.currentDay) {
+        historySelectionState.dragged = true;
+        historySelectionState.currentDay = day;
+        historySelectionState.days = getHistorySelectionRange(historySelectionState.anchorDay, day);
+        applyHistorySelectionStyles();
+    }
+}
+
+function finishHistorySelection() {
+    if (!historySelectionState.active) return;
+
+    const selection = {
+        histIndex: historySelectionState.histIndex,
+        empName: historySelectionState.empName,
+        days: [...historySelectionState.days],
+        dragged: historySelectionState.dragged,
+    };
+
+    historySelectionState.active = false;
+
+    if (selection.dragged && selection.days.length > 1) {
+        historySelectionState.suppressClick = true;
+        window.setTimeout(() => {
+            editHistoryShiftBatch(selection.empName, selection.days, selection.histIndex);
+        }, 0);
+        return;
+    }
+
+    clearHistorySelectionStyles();
+    historySelectionState.anchorDay = null;
+    historySelectionState.currentDay = null;
+    historySelectionState.days = [];
+}
+
+function handleHistoryCellClick(event, element) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (historySelectionState.suppressClick) {
+        historySelectionState.suppressClick = false;
+        clearHistorySelectionStyles();
+        return;
+    }
+
+    editHistoryShift(
+        element.dataset.employeeName,
+        element.dataset.day,
+        Number(element.dataset.historyIndex)
+    );
+}
+
+function buildHistoryShiftPromptMessage(empName, days) {
+    const codes = Object.keys(SHIFT_HOURS);
+    const dayLabel = days.length === 1 ? days[0] : days.join(", ");
+    return `Cambiar turno para ${empName} en ${dayLabel}:\n\nOpciones:\n${codes.join(", ")}\n\nTambien puedes escribir un horario manual, por ejemplo:\n13-22\n1pm - 10pm\n5am-11am + 5pm-8pm`;
+}
+
+function getHistoryPromptDefaultValue(shiftCode) {
+    if (!shiftCode) return "";
+    return shiftCode.startsWith(MANUAL_SHIFT_PREFIX)
+        ? shiftCode.slice(MANUAL_SHIFT_PREFIX.length)
+        : shiftCode;
+}
+
+function promptHistoryShiftValue(empName, days, currentValue = "") {
+    const input = prompt(
+        buildHistoryShiftPromptMessage(empName, days),
+        getHistoryPromptDefaultValue(currentValue)
+    );
+
+    if (input === null) {
+        return null;
+    }
+
+    const trimmed = input.trim();
+    if (!trimmed) {
+        return null;
+    }
+
+    const normalized = normalizeFlexibleShiftInput(trimmed);
+    if (!normalized || normalized === "AUTO") {
+        alert("Formato no reconocido. Usa un codigo interno o un rango como 1pm-10pm, 13-22 o 5am-11am + 5pm-8pm.");
+        return promptHistoryShiftValue(empName, days, currentValue);
+    }
+
+    return normalized;
+}
+
+async function persistHistoryEntry(index, nextEntry) {
+    const payload = {
+        name: nextEntry.name,
+        schedule: nextEntry.schedule || {},
+        daily_tasks: nextEntry.daily_tasks || {},
+        next_sunday_cycle_index: nextEntry.next_sunday_cycle_index ?? null,
+        next_sunday_rotation_queue: nextEntry.next_sunday_rotation_queue ?? null,
+        week_dates: nextEntry.week_dates ?? null,
+        special_days: nextEntry.special_days || {},
+        timestamp: nextEntry.timestamp || "",
+    };
+
+    const res = await fetch(`/api/history/${index}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) {
+        let detail = "No se pudo guardar el historial.";
+        try {
+            const err = await res.json();
+            detail = err.detail || detail;
+        } catch (_) {}
+        throw new Error(detail);
+    }
+
+    historyEntriesCache[index] = nextEntry;
+}
+
+async function editHistoryShiftBatch(empName, days, histIndex) {
+    try {
+        const entry = historyEntriesCache[histIndex];
+        if (!entry || !empName || !days?.length) {
+            clearHistorySelectionStyles();
+            return;
+        }
+
+        const currentValues = days.map(day => entry.schedule?.[empName]?.[day] || "OFF");
+        const sharedValue = currentValues.every(value => value === currentValues[0]) ? currentValues[0] : "";
+        const newShift = promptHistoryShiftValue(empName, days, sharedValue);
+        if (!newShift) {
+            clearHistorySelectionStyles();
+            return;
+        }
+
+        const nextEntry = cloneHistoryEntry(entry);
+        nextEntry.schedule[empName] = nextEntry.schedule[empName] || {};
+        nextEntry.daily_tasks = nextEntry.daily_tasks || {};
+        nextEntry.daily_tasks[empName] = nextEntry.daily_tasks[empName] || {};
+        days.forEach(day => {
+            nextEntry.schedule[empName][day] = newShift;
+            nextEntry.daily_tasks[empName][day] = null;
+        });
+
+        await persistHistoryEntry(histIndex, nextEntry);
+        renderHistoryEntryTable(histIndex);
+        setStatusMessage(`Historial actualizado para ${empName}.`, "success");
+    } catch (err) {
+        console.error(err);
+        alert(err.message || "Error al guardar el historial");
+    } finally {
+        historySelectionState.suppressClick = false;
+        historySelectionState.anchorDay = null;
+        historySelectionState.currentDay = null;
+        historySelectionState.days = [];
+        clearHistorySelectionStyles();
+    }
 }
 
 async function deleteHistory(i, event) {
-    if (event) event.stopPropagation(); // prevent toggle
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
     if (!confirm("¿Borrar este historial permanentemente?")) return;
 
-    await fetch(`/api/history/${i}`, { method: 'DELETE' });
-    loadHistory();
+    const res = await fetch(`/api/history/${i}`, { method: 'DELETE' });
+    if (!res.ok) {
+        alert("No se pudo borrar el historial.");
+        return;
+    }
+    historyEntriesCache.splice(i, 1);
+    expandedHistoryItems = new Set(
+        [...expandedHistoryItems]
+            .filter(index => index !== i)
+            .map(index => (index > i ? index - 1 : index))
+    );
+    hiddenHistoryHours = new Set(
+        [...hiddenHistoryHours]
+            .filter(index => index !== i)
+            .map(index => (index > i ? index - 1 : index))
+    );
+    renderHistoryList();
+    setStatusMessage("Historial eliminado.", "success");
 }
 
 async function downloadExcel(url) {
@@ -1381,51 +1969,96 @@ function exportToExcel() {
     downloadExcel("/api/export_excel");
 }
 
-function exportToImage() {
-    // Temporarily expand height/width and remove shadows for a clean capture
+async function renderScheduleCaptureCanvas(captureElement) {
+    if (!captureElement) {
+        throw new Error("No se encontro el contenedor para exportar.");
+    }
+
+    const rect = captureElement.getBoundingClientRect();
+    const captureWidth = Math.ceil(Math.max(captureElement.scrollWidth || 0, rect.width || 0));
+    const captureHeight = Math.ceil(Math.max(captureElement.scrollHeight || 0, rect.height || 0));
+    const exportToken = `export-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const bodyBg = getComputedStyle(document.body).backgroundColor || (
+        document.body.classList.contains("dark-mode") ? "#0f172a" : "#ffffff"
+    );
+
+    captureElement.dataset.exportCaptureId = exportToken;
+
+    try {
+        return await html2canvas(captureElement, {
+            scale: 2,
+            useCORS: true,
+            backgroundColor: bodyBg,
+            width: captureWidth,
+            height: captureHeight,
+            windowWidth: Math.max(window.innerWidth, captureWidth),
+            windowHeight: Math.max(window.innerHeight, captureHeight),
+            onclone: (clonedDocument) => {
+                const clone = clonedDocument.querySelector(`[data-export-capture-id="${exportToken}"]`);
+                if (!clone) return;
+
+                clone.style.overflow = "visible";
+                clone.style.width = `${captureWidth}px`;
+                clone.style.minWidth = `${captureWidth}px`;
+                clone.style.maxWidth = "none";
+                clone.style.height = "auto";
+                clone.style.maxHeight = "none";
+                clone.style.margin = "0";
+                clone.style.transform = "none";
+                clone.style.contain = "none";
+
+                clone.querySelectorAll(".shift-pill").forEach((element) => {
+                    element.style.boxShadow = "none";
+                    element.style.filter = "none";
+                    element.style.transform = "none";
+                    element.style.transition = "none";
+                    element.style.outline = "none";
+                    element.style.willChange = "auto";
+                    element.style.boxSizing = "border-box";
+                });
+
+                clone.querySelectorAll(".history-shift-pill.history-pill-selected").forEach((element) => {
+                    element.style.outline = "none";
+                    element.style.boxShadow = "none";
+                    element.style.transform = "none";
+                });
+
+                clone.querySelectorAll("*").forEach((element) => {
+                    const computed = clonedDocument.defaultView.getComputedStyle(element);
+                    if (computed.position === "sticky") {
+                        element.style.position = "static";
+                        element.style.top = "auto";
+                        element.style.left = "auto";
+                        element.style.zIndex = "auto";
+                    }
+                });
+            },
+        });
+    } finally {
+        delete captureElement.dataset.exportCaptureId;
+    }
+}
+
+async function exportToImage() {
     const captureElement = document.getElementById("scheduleCapture");
     if (!captureElement) return;
 
-    captureElement.style.overflow = "visible";
-    captureElement.style.height = "auto";
-    captureElement.style.width = "fit-content";
-
-    // Remove box-shadows (Bug: "cuadrado de otro color")
-    const pills = captureElement.querySelectorAll('.shift-pill');
-    const originalShadows = Array.from(pills).map(p => p.style.boxShadow);
-    pills.forEach(p => p.style.boxShadow = "none");
-
-    html2canvas(captureElement, {
-        scale: 2,
-        useCORS: true,
-        backgroundColor: document.body.classList.contains("dark-mode") ? "#0f172a" : "#ffffff",
-    }).then(canvas => {
-        // Restore
-        captureElement.style.overflow = "";
-        captureElement.style.height = "";
-        captureElement.style.width = "";
-        pills.forEach((p, idx) => p.style.boxShadow = originalShadows[idx]);
-
+    try {
+        const canvas = await renderScheduleCaptureCanvas(captureElement);
         const link = document.createElement('a');
         link.download = 'horario_completo.png';
         const imgData = canvas.toDataURL("image/png");
         link.href = imgData;
         link.click();
 
-        // Backup to server
         fetch(`${API_URL}/export_image`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ image_data: imgData, filename: 'horario_completo.png' })
         }).catch(err => console.error("Server backup failed:", err));
-
-    }).catch(err => {
+    } catch (err) {
         console.error("Capture failed:", err);
-        // Restore in case of error
-        captureElement.style.overflow = "";
-        captureElement.style.height = "";
-        captureElement.style.width = "";
-    });
+    }
 }
 
 function toggleHoursColumn() {
@@ -1441,10 +2074,7 @@ async function toggleValidation() {
         btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Cargando...`;
 
         try {
-            // Fetch dynamically computed rules directly from the python backend engine
-            const res = await fetch("/api/validation_rules");
-            if (!res.ok) throw new Error(`API returned ${res.status}`);
-            validationRules = await res.json();
+            await refreshScheduleValidationRules(currentMetadata?.special_days || getSpecialDaysPayload());
             btn.innerHTML = `<i class="fa-solid fa-check"></i> Validando...`;
         } catch (err) {
             console.error("Error fetching validation rules:", err);
@@ -1781,103 +2411,168 @@ function reopenValidatorOverlay() {
 
 
 function exportHistoryExcel(index, event) {
-    if (event) event.stopPropagation();
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
     downloadExcel(`/api/export_excel?history_index=${index}`);
 }
+
+window.toggleHistoryHours = function (index, event) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+
+    if (hiddenHistoryHours.has(index)) {
+        hiddenHistoryHours.delete(index);
+    } else {
+        hiddenHistoryHours.add(index);
+    }
+
+    applyHistoryHoursVisibility(index);
+
+    const button = document.querySelector(`[data-history-hours-button="${index}"]`);
+    if (button) {
+        const isVisible = !hiddenHistoryHours.has(index);
+        button.classList.toggle("is-active", isVisible);
+        button.setAttribute("aria-pressed", isVisible ? "true" : "false");
+    }
+};
+
+window.reassignHistoryTasks = async function (index, event) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+
+    try {
+        setStatusMessage("Recalculando limpieza...", "info", 0);
+        await fetchHistoryEntries();
+
+        const res = await fetch(`/api/history/${index}/reassign_tasks`, {
+            method: "POST"
+        });
+        const payload = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            throw new Error(payload.detail || `API returned ${res.status}`);
+        }
+
+        const entry = historyEntriesCache[index];
+        if (!entry) return;
+
+        entry.daily_tasks = payload.daily_tasks || {};
+        entry.special_days = payload.special_days || entry.special_days || {};
+
+        renderHistoryEntryTable(index);
+        setStatusMessage("Limpieza recalculada para esta semana.", "success");
+    } catch (err) {
+        console.error(err);
+        setStatusMessage("No se pudo recalcular la limpieza.", "error");
+        alert(err.message || "Error al recalcular limpieza");
+    }
+};
 
 window.validateHistory = async function (index, event) {
     if (event) event.stopPropagation();
     try {
-        const res = await fetch('/api/history');
-        const history = await res.json();
-        const entry = history[index];
+        await fetchHistoryEntries();
+        const entry = historyEntriesCache[index];
         if (!entry) return;
 
         const oldSchedule = currentGeneratedSchedule;
+        const oldRules = validationRules;
         currentGeneratedSchedule = entry.schedule;
 
-        if (!validationRules) {
-            const rulesRes = await fetch("/api/validation_rules");
-            validationRules = await rulesRes.json();
-        }
+        validationRules = await fetchValidationRules(entry.special_days || {});
 
         isValidationOn = true;
         applyValidationUI();
 
         currentGeneratedSchedule = oldSchedule;
+        validationRules = oldRules || baseValidationRules;
     } catch (err) {
         console.error(err);
         alert("Error al validar historial");
     }
 };
 
-window.exportHistoryImage = function (index, event) {
-    if (event) event.stopPropagation();
+window.exportHistoryImage = async function (index, event) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+
+    try {
+        await fetchHistoryEntries();
+    } catch (err) {
+        console.error(err);
+    }
 
     const histTableWrapper = document.getElementById(`hist-table-${index}`);
     if (!histTableWrapper) return;
 
     const captureElement = histTableWrapper.parentElement;
+    const filename = `${getHistoryExportBaseName(index)}.png`;
 
-    const originalBg = captureElement.style.backgroundColor;
-    const originalPadding = captureElement.style.padding;
-    captureElement.style.backgroundColor = document.body.classList.contains("dark-mode") ? "#0f172a" : "#ffffff";
-    captureElement.style.padding = "10px";
+    try {
+        setStatusMessage("Exportando imagen del historial...", "info", 0);
+        const canvas = await renderScheduleCaptureCanvas(captureElement);
 
-    html2canvas(captureElement, {
-        scale: 2,
-        useCORS: true,
-        backgroundColor: document.body.classList.contains("dark-mode") ? "#0f172a" : "#ffffff",
-    }).then(canvas => {
-        captureElement.style.backgroundColor = originalBg;
-        captureElement.style.padding = originalPadding;
-
+        const imageData = canvas.toDataURL("image/png");
         const link = document.createElement('a');
-        link.download = `historial_${index}_horario.png`;
-        link.href = canvas.toDataURL("image/png");
+        link.download = filename;
+        link.href = imageData;
         link.click();
-    }).catch(err => {
+
+        const saveRes = await fetch(`${API_URL}/export_image`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image_data: imageData, filename })
+        });
+        if (!saveRes.ok) {
+            let detail = "No se pudo guardar la imagen en export_horarios.";
+            try {
+                const err = await saveRes.json();
+                detail = err.detail || detail;
+            } catch (_) {}
+            throw new Error(detail);
+        }
+
+        setStatusMessage("Imagen exportada y guardada en export_horarios.", "success");
+    } catch (err) {
         console.error("Capture failed:", err);
-        captureElement.style.backgroundColor = originalBg;
-        captureElement.style.padding = originalPadding;
-    });
+        setStatusMessage("No se pudo exportar la imagen del historial.", "error");
+        alert(err.message || "Error al exportar imagen del historial");
+    }
 };
 
 // EDIT HISTORY SHIFT
 async function editHistoryShift(empName, day, histIndex) {
-    const res = await fetch('/api/history');
-    const history = await res.json();
-    const entry = history[histIndex];
-    if (!entry) return;
+    try {
+        await fetchHistoryEntries();
+        const entry = historyEntriesCache[histIndex];
+        if (!entry) return;
 
-    const currentShift = entry.schedule[empName][day] || "OFF";
-    const currentShiftPromptValue = currentShift.startsWith(MANUAL_SHIFT_PREFIX)
-        ? currentShift.slice(MANUAL_SHIFT_PREFIX.length)
-        : currentShift;
+        const currentShift = entry.schedule?.[empName]?.[day] || "OFF";
+        const newShift = promptHistoryShiftValue(empName, [day], currentShift);
+        if (!newShift) return;
 
-    // Create a simple custom prompt or modal for simplicity here
-    // In a real app we'd use a nice modal
-    const codes = Object.keys(SHIFT_HOURS);
-    let msg = `Cambiar turno para ${empName} el ${day}:\n\nOpciones:\n${codes.join(", ")}\n\nTambien puedes escribir un horario manual, por ejemplo:\n13-22\n1pm - 10pm\n5am-11am + 5pm-8pm`;
-    const newShift = prompt(msg, currentShiftPromptValue);
+        const nextEntry = cloneHistoryEntry(entry);
+        nextEntry.schedule[empName] = nextEntry.schedule[empName] || {};
+        nextEntry.daily_tasks = nextEntry.daily_tasks || {};
+        nextEntry.daily_tasks[empName] = nextEntry.daily_tasks[empName] || {};
+        nextEntry.schedule[empName][day] = newShift;
+        nextEntry.daily_tasks[empName][day] = null;
 
-    if (newShift !== null && newShift.trim() !== "") {
-        const val = normalizeFlexibleShiftInput(newShift);
-        if (!val || val === "AUTO") {
-            alert("Formato no reconocido. Usa un codigo interno o un rango como 1pm-10pm, 13-22 o 5am-11am + 5pm-8pm.");
-            return;
-        }
-        entry.schedule[empName][day] = val;
-
-        // Save back
-        await fetch(`/api/history/${histIndex}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(entry)
-        });
-
-        await loadHistory();
-        await validateHistory(histIndex);
+        await persistHistoryEntry(histIndex, nextEntry);
+        renderHistoryEntryTable(histIndex);
+        setStatusMessage(`Historial actualizado para ${empName}.`, "success");
+    } catch (err) {
+        console.error(err);
+        alert(err.message || "Error al guardar el historial");
+    } finally {
+        clearHistorySelectionStyles();
     }
 }
 
@@ -1900,7 +2595,13 @@ function autoCalcWeekEnd() {
     const startInput = document.getElementById("weekStartDate");
     const endInput = document.getElementById("weekEndDate");
     const preview = document.getElementById("weekNamePreview");
-    if (!startInput || !startInput.value) return;
+    if (!startInput || !startInput.value) {
+        weekSpecialDays = createDefaultSpecialDays();
+        if (endInput) endInput.value = "";
+        if (preview) preview.style.display = "none";
+        renderWeekSpecialDays();
+        return;
+    }
 
     const start = new Date(startInput.value + "T00:00:00");
     // End = start + 6 days (Viernes→Jueves)
@@ -1912,6 +2613,9 @@ function autoCalcWeekEnd() {
     const weekNum = getAutofillWeekNumber(start);
     preview.textContent = `Semana ${weekNum}`;
     preview.style.display = "block";
+
+    weekSpecialDays = createDefaultSpecialDays();
+    renderWeekSpecialDays();
 }
 
 function getWeekDatesMap() {
@@ -1947,26 +2651,55 @@ function openSaveModal() {
     }
 }
 function closeSaveModal() { document.getElementById("saveModal").classList.add("hidden"); }
-async function confirmSaveSchedule() {
+async function confirmSaveSchedule(event) {
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+
     const name = document.getElementById("scheduleNameInput").value;
     if (!name) return;
 
     const weekDates = getWeekDatesMap();
+    const specialDays = currentMetadata?.special_days || getSpecialDaysPayload();
+    const payload = {
+        name,
+        schedule: currentGeneratedSchedule,
+        daily_tasks: currentDailyTasks,
+        next_sunday_cycle_index: currentMetadata?.next_sunday_cycle_index,
+        next_sunday_rotation_queue: currentMetadata?.next_sunday_rotation_queue,
+        week_dates: weekDates,
+        special_days: specialDays
+    };
 
-    await fetch('/api/history', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            name,
-            schedule: currentGeneratedSchedule,
-            daily_tasks: currentDailyTasks,
-            next_sunday_cycle_index: currentMetadata?.next_sunday_cycle_index,
-            next_sunday_rotation_queue: currentMetadata?.next_sunday_rotation_queue,
-            week_dates: weekDates
-        })
-    });
-    alert("Guardado!");
-    closeSaveModal();
+    try {
+        const res = await fetch('/api/history', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) {
+            let detail = "No se pudo guardar el historial.";
+            try {
+                const err = await res.json();
+                detail = err.detail || detail;
+            } catch (_) {}
+            throw new Error(detail);
+        }
+
+        historyEntriesCache.push({
+            ...cloneHistoryEntry(payload),
+            timestamp: new Date().toISOString(),
+        });
+        closeSaveModal();
+        setStatusMessage("Semana guardada.", "success");
+
+        if (!document.getElementById("overlay-history")?.classList.contains("hidden")) {
+            renderHistoryList();
+        }
+    } catch (err) {
+        console.error(err);
+        alert(err.message || "No se pudo guardar el historial");
+    }
 }
 
 // UTILS

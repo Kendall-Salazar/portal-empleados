@@ -875,6 +875,8 @@ tr:hover td {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    flex-wrap: wrap;
+    gap: 0.75rem 1rem;
     cursor: pointer;
     background: rgba(0, 0, 0, 0.01);
 }
@@ -887,6 +889,9 @@ tr:hover td {
     display: flex;
     align-items: center;
     gap: 1rem;
+    flex: 1 1 320px;
+    min-width: 0;
+    flex-wrap: wrap;
 }
 
 .h-info i {
@@ -907,7 +912,42 @@ tr:hover td {
 .h-actions {
     display: flex;
     align-items: center;
-    gap: 1rem;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    flex: 0 1 auto;
+}
+
+.h-actions .btn-icon,
+.h-actions .arrow {
+    flex: 0 0 auto;
+}
+
+.history-action-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.55rem 0.8rem;
+    border: 1px solid var(--border);
+    background: var(--bg-panel);
+    color: var(--text-main);
+    box-shadow: var(--shadow-sm);
+}
+
+.history-action-button span {
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.history-action-button.is-active {
+    background: rgba(59, 130, 246, 0.14);
+    border-color: rgba(59, 130, 246, 0.34);
+    color: var(--primary);
+}
+
+.history-action-button:hover {
+    background: rgba(59, 130, 246, 0.08);
+    border-color: rgba(59, 130, 246, 0.28);
 }
 
 .arrow {
@@ -944,6 +984,17 @@ tr:hover td {
     background: var(--bg-panel);
     border-radius: 8px;
     border: 1px solid var(--border);
+}
+
+.history-shift-pill {
+    user-select: none;
+}
+
+.history-shift-pill.history-pill-selected {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+    transform: translateY(-1px) scale(1.01);
 }
 
 /* Employee Grid in Overlay */

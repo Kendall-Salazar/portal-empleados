@@ -1,4 +1,5 @@
 import threading
+import importlib
 import uvicorn
 import webview
 import time
@@ -20,12 +21,16 @@ def get_runtime_root():
 
 # Add backend to path so it can be imported
 backend_path = os.path.join(get_resource_root(), 'webapp', 'backend')
-if os.path.exists(backend_path):
-    sys.path.append(backend_path)
+if os.path.exists(backend_path) and backend_path not in sys.path:
+    sys.path.insert(0, backend_path)
+
+
+def load_backend_main():
+    return importlib.import_module("main")
 
 def run_server():
-    import main
-    uvicorn.run(main.app, host="127.0.0.1", port=8000, log_level="error")
+    backend_main = load_backend_main()
+    uvicorn.run(backend_main.app, host="127.0.0.1", port=8000, log_level="error")
 
 if __name__ == '__main__':
     # --- WebView2 cache management ---

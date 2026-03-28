@@ -45,6 +45,8 @@ C_RED_HDR      = "B91C1C"
 
 MONEY    = '"₡"#,##0.00'
 HOURS_FMT = '0.00'
+SUMMARY_MONEY_FMT = '"₡"#,##0'
+SUMMARY_HOURS_FMT = '0'
 CCSS_RATE = 0.1067          # Aporte CCSS empleado Costa Rica
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -98,6 +100,10 @@ B_DATA  = _border()
 B_THICK_LEFT = _border(left="medium", lc="334155")
 # Borde para filas de encabezado de sección total
 B_TOTAL = _border(top="medium", tc="334155", bottom="medium", bc="334155")
+# Borde de total con separador izquierdo grueso
+B_TOTAL_THICK_LEFT = _border(left="medium", lc="334155",
+                             top="medium", tc="334155",
+                             bottom="medium", bc="334155")
 
 def sc(ws, row, col, val, font=None, fill=None, align=None, border=None, num_format=None):
     c = ws.cell(row=row, column=col)
@@ -113,6 +119,12 @@ def _row_fill(ws, row, col_start, col_end, color):
     f = _fill(color)
     for c in range(col_start, col_end + 1):
         ws.cell(row=row, column=c).fill = f
+
+def _summary_ref_or_blank(ref):
+    return f'=IF(OR({ref}="",{ref}=0),"",{ref})'
+
+def _summary_expr_or_blank(expr):
+    return f'=IF(({expr})=0,"",({expr}))'
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  UTILIDADES
@@ -499,14 +511,17 @@ def _write_fijo_section(ws, start_row, fijo_list, wb_catalog):
         import database as db
         conn = db.get_conn()
         prestamo_row = conn.execute("""
-            SELECT p.pago_semanal 
+            SELECT p.pago_semanal, p.saldo
             FROM prestamos p
             JOIN empleados e ON p.empleado_id = e.id
             WHERE e.nombre = ? AND p.estado = 'activo'
         """, (emp,)).fetchone()
         conn.close()
-        
-        prest_val = prestamo_row["pago_semanal"] if prestamo_row else None
+
+        prest_val = (
+            min(prestamo_row["pago_semanal"], prestamo_row["saldo"])
+            if prestamo_row else None
+        )
 
         for col in range(13, 17):
             c2 = ws.cell(row=r, column=col)
@@ -724,19 +739,21 @@ def crear_resumen_semanal(wb, nombre_hoja_sem, sem_num, viernes_date):
     ws = wb.create_sheet(sheet_name)
     ws.sheet_properties.tabColor = "0369A1"
 
-    col_widths = {"A": 24, "B": 13, "C": 13, "D": 14,
-                  "E": 14, "F": 15, "G": 13, "H": 13, "I": 15}
+    col_widths = {
+        "A": 24, "B": 13, "C": 13, "D": 14, "E": 16, "F": 13,
+        "G": 14, "H": 15, "I": 13, "J": 13, "K": 15,
+    }
     for col, w in col_widths.items():
         ws.column_dimensions[col].width = w
 
     ws.row_dimensions[1].height = 36
-    ws.merge_cells("A1:I1")
+    ws.merge_cells("A1:K1")
     sc(ws, 1, 1, f"RESUMEN SEMANAL — Semana {sem_num}",
        _font(14, True, C_WHITE), _fill(C_DARK_BLUE), al_c)
 
     fin = viernes_date + timedelta(days=6)
     ws.row_dimensions[2].height = 20
-    ws.merge_cells("A2:I2")
+    ws.merge_cells("A2:K2")
     sc(ws, 2, 1,
        f"{viernes_date.strftime('%d/%m/%Y')}  →  {fin.strftime('%d/%m/%Y')}",
        _font(10, False, C_SUBTITLE), _fill(C_DARK_BLUE), al_c)
@@ -749,15 +766,19 @@ def crear_resumen_semanal(wb, nombre_hoja_sem, sem_num, viernes_date):
         (2, "Hrs Diurnas",   C_OCEAN),
         (3, "Hrs Mixtas",    C_OCEAN),
         (4, "Hrs Nocturnas", C_OCEAN),
-        (5, "Total Hrs",     C_OCEAN),
-        (6, "Bruto (₡)",     C_BRUTO_HDR),
-        (7, "Rebajos (₡)",   C_RED_HDR),
-        (8, "Seguro (₡)",    C_SEGURO_HDR),
-        (9, "NETO (₡)",      C_NETO_HDR),
+        (5, "Monto Extra (₡)", C_BRUTO_HDR),
+        (6, "Hrs Extra",     C_OCEAN),
+        (7, "Total Hrs",     C_OCEAN),
+        (8, "Bruto (₡)",     C_BRUTO_HDR),
+        (9, "Rebajos (₡)",   C_RED_HDR),
+        (10, "Seguro (₡)",   C_SEGURO_HDR),
+        (11, "NETO (₡)",     C_NETO_HDR),
     ]
+    hour_cols = {2, 3, 4, 6, 7}
+    money_cols = {5, 8, 9, 10, 11}
     for col, txt, bg in hdrs:
         sc(ws, 4, col, txt, _font(9, True, C_WHITE), _fill(bg), al_c,
-           B_THICK_LEFT if col == 6 else B_DATA)
+           B_THICK_LEFT if col == 8 else B_DATA)
 
     try:
         hs = wb[nombre_hoja_sem]
@@ -767,7 +788,7 @@ def crear_resumen_semanal(wb, nombre_hoja_sem, sem_num, viernes_date):
     def _write_sem_section(start_r, sec_label, sec_color):
         ws.row_dimensions[start_r].height = 24
         ws.merge_cells(start_row=start_r, start_column=1,
-                       end_row=start_r, end_column=9)
+                       end_row=start_r, end_column=11)
         sc(ws, start_r, 1, f"  {sec_label}",
            _font(11, True, C_WHITE), _fill(sec_color), al_l)
         r = start_r + 1
@@ -788,26 +809,28 @@ def crear_resumen_semanal(wb, nombre_hoja_sem, sem_num, viernes_date):
                 alt = (len(emp_rows) % 2 == 0)
                 bg  = "F7F9FC" if alt else C_WHITE
                 sc(ws, r, 1, emp_name, _font(10), _fill(bg), al_l, B_DATA)
-                # Horas por tipo
-                ws.cell(row=r, column=2).value = f"='{sn}'!J{rd}"
-                ws.cell(row=r, column=3).value = f"='{sn}'!J{rm}"
-                ws.cell(row=r, column=4).value = f"='{sn}'!J{rn}"
-                # Total hrs = suma de los 4 tipos (sin fila TOTAL HORAS)
-                ws.cell(row=r, column=5).value = (
-                    f"='{sn}'!J{rd}+'{sn}'!J{rm}+'{sn}'!J{rn}+'{sn}'!J{re}")
-                ws.cell(row=r, column=6).value = f"='{sn}'!L{rd}"
-                ws.cell(row=r, column=7).value = f"='{sn}'!R{rd}-'{sn}'!Q{rd}"
-                ws.cell(row=r, column=8).value = f"='{sn}'!Q{rd}"
-                ws.cell(row=r, column=9).value = f"='{sn}'!S{rd}"
-                for ci in range(1, 10):
+                ws.cell(row=r, column=2).value = _summary_ref_or_blank(f"'{sn}'!J{rd}")
+                ws.cell(row=r, column=3).value = _summary_ref_or_blank(f"'{sn}'!J{rm}")
+                ws.cell(row=r, column=4).value = _summary_ref_or_blank(f"'{sn}'!J{rn}")
+                ws.cell(row=r, column=5).value = _summary_expr_or_blank(
+                    f"'{sn}'!J{re}*'{sn}'!$J$3")
+                ws.cell(row=r, column=6).value = _summary_ref_or_blank(f"'{sn}'!J{re}")
+                ws.cell(row=r, column=7).value = _summary_expr_or_blank(
+                    f"SUM('{sn}'!J{rd},'{sn}'!J{rm},'{sn}'!J{rn},'{sn}'!J{re})")
+                ws.cell(row=r, column=8).value = _summary_ref_or_blank(f"'{sn}'!L{rd}")
+                ws.cell(row=r, column=9).value = _summary_expr_or_blank(
+                    f"'{sn}'!R{rd}-'{sn}'!Q{rd}")
+                ws.cell(row=r, column=10).value = _summary_ref_or_blank(f"'{sn}'!Q{rd}")
+                ws.cell(row=r, column=11).value = _summary_ref_or_blank(f"'{sn}'!S{rd}")
+                for ci in range(1, 12):
                     ws.cell(row=r, column=ci).fill      = _fill(bg)
                     ws.cell(row=r, column=ci).alignment = al_c if ci > 1 else al_l
                     ws.cell(row=r, column=ci).border    = (
-                        B_THICK_LEFT if ci == 6 else B_DATA)
-                    if ci >= 6:
-                        ws.cell(row=r, column=ci).number_format = MONEY
-                    if 2 <= ci <= 5:
-                        ws.cell(row=r, column=ci).number_format = HOURS_FMT
+                        B_THICK_LEFT if ci == 8 else B_DATA)
+                    if ci in hour_cols:
+                        ws.cell(row=r, column=ci).number_format = SUMMARY_HOURS_FMT
+                    if ci in money_cols:
+                        ws.cell(row=r, column=ci).number_format = SUMMARY_MONEY_FMT
                 emp_rows.append(r)
                 r += 1
 
@@ -819,15 +842,19 @@ def crear_resumen_semanal(wb, nombre_hoja_sem, sem_num, viernes_date):
            _font(10, True, C_WHITE), _fill(sec_color), al_r, B_TOTAL)
         if emp_rows:
             fr, lr = emp_rows[0], emp_rows[-1]
-            for ci in range(2, 10):
+            for ci in range(2, 12):
                 cl = get_column_letter(ci)
-                ws.cell(row=r, column=ci).value       = f"=SUM({cl}{fr}:{cl}{lr})"
+                ws.cell(row=r, column=ci).value       = _summary_expr_or_blank(
+                    f"SUM({cl}{fr}:{cl}{lr})")
                 ws.cell(row=r, column=ci).font        = _font(10, True, C_WHITE)
                 ws.cell(row=r, column=ci).fill        = _fill(sec_color)
                 ws.cell(row=r, column=ci).alignment   = al_c
-                ws.cell(row=r, column=ci).border      = B_TOTAL
-                if ci >= 6:
-                    ws.cell(row=r, column=ci).number_format = MONEY
+                ws.cell(row=r, column=ci).border      = (
+                    B_TOTAL_THICK_LEFT if ci == 8 else B_TOTAL)
+                if ci in hour_cols:
+                    ws.cell(row=r, column=ci).number_format = SUMMARY_HOURS_FMT
+                if ci in money_cols:
+                    ws.cell(row=r, column=ci).number_format = SUMMARY_MONEY_FMT
         return r + 1, tot
 
     r5 = 5
@@ -846,7 +873,7 @@ def crear_resumen_semanal(wb, nombre_hoja_sem, sem_num, viernes_date):
                 # Encontramos la sección; extraer empleados de ella
                 r5 += 1
                 ws.row_dimensions[r5].height = 22
-                ws.merge_cells(start_row=r5, start_column=1, end_row=r5, end_column=9)
+                ws.merge_cells(start_row=r5, start_column=1, end_row=r5, end_column=11)
                 sc(ws, r5, 1, "  SALARIO FIJO",
                    _font(11, True, C_WHITE), _fill(C_FIJO_HDR), al_l)
                 r5 += 1
@@ -861,23 +888,25 @@ def crear_resumen_semanal(wb, nombre_hoja_sem, sem_num, viernes_date):
                         alt = (len(emp_fijo_rows) % 2 == 0)
                         bg  = "F5F3FF" if alt else "EDE9FE"
                         sc(ws, r5, 1, v2, _font(10), _fill(bg), al_l, B_DATA)
-                        # Hrs = 0 (salario fijo no tiene horas)
-                        for ci in range(2, 6):
-                            ws.cell(row=r5, column=ci).value       = 0
+                        for ci in range(2, 8):
+                            ws.cell(row=r5, column=ci).value       = None
                             ws.cell(row=r5, column=ci).fill        = _fill(bg)
                             ws.cell(row=r5, column=ci).alignment   = al_c
                             ws.cell(row=r5, column=ci).border      = B_DATA
-                            ws.cell(row=r5, column=ci).number_format = HOURS_FMT
-                        # Bruto, rebajos, seguro, neto desde hoja semanal
-                        ws.cell(row=r5, column=6).value  = f"='{sn}'!L{fr2}"
-                        ws.cell(row=r5, column=7).value  = f"='{sn}'!R{fr2}-'{sn}'!Q{fr2}"
-                        ws.cell(row=r5, column=8).value  = f"='{sn}'!Q{fr2}"
-                        ws.cell(row=r5, column=9).value  = f"='{sn}'!S{fr2}"
-                        for ci in range(6, 10):
+                            if ci in hour_cols:
+                                ws.cell(row=r5, column=ci).number_format = SUMMARY_HOURS_FMT
+                            if ci in money_cols:
+                                ws.cell(row=r5, column=ci).number_format = SUMMARY_MONEY_FMT
+                        ws.cell(row=r5, column=8).value  = _summary_ref_or_blank(f"'{sn}'!L{fr2}")
+                        ws.cell(row=r5, column=9).value  = _summary_expr_or_blank(
+                            f"'{sn}'!R{fr2}-'{sn}'!Q{fr2}")
+                        ws.cell(row=r5, column=10).value = _summary_ref_or_blank(f"'{sn}'!Q{fr2}")
+                        ws.cell(row=r5, column=11).value = _summary_ref_or_blank(f"'{sn}'!S{fr2}")
+                        for ci in range(8, 12):
                             ws.cell(row=r5, column=ci).fill      = _fill(bg)
                             ws.cell(row=r5, column=ci).alignment = al_c
-                            ws.cell(row=r5, column=ci).border    = B_THICK_LEFT if ci == 6 else B_DATA
-                            ws.cell(row=r5, column=ci).number_format = MONEY
+                            ws.cell(row=r5, column=ci).border    = B_THICK_LEFT if ci == 8 else B_DATA
+                            ws.cell(row=r5, column=ci).number_format = SUMMARY_MONEY_FMT
                         emp_fijo_rows.append(r5)
                         r5 += 1
                     fr2 += 1
@@ -889,15 +918,19 @@ def crear_resumen_semanal(wb, nombre_hoja_sem, sem_num, viernes_date):
                     sc(ws, r5, 1, "TOTAL SALARIO FIJO",
                        _font(10, True, C_WHITE), _fill(C_FIJO_HDR), al_r, B_TOTAL)
                     frf, lrf = emp_fijo_rows[0], emp_fijo_rows[-1]
-                    for ci in range(2, 10):
+                    for ci in range(2, 12):
                         cl = get_column_letter(ci)
-                        ws.cell(row=r5, column=ci).value       = f"=SUM({cl}{frf}:{cl}{lrf})"
+                        ws.cell(row=r5, column=ci).value       = _summary_expr_or_blank(
+                            f"SUM({cl}{frf}:{cl}{lrf})")
                         ws.cell(row=r5, column=ci).font        = _font(10, True, C_WHITE)
                         ws.cell(row=r5, column=ci).fill        = _fill(C_FIJO_HDR)
                         ws.cell(row=r5, column=ci).alignment   = al_c
-                        ws.cell(row=r5, column=ci).border      = B_TOTAL
-                        if ci >= 6:
-                            ws.cell(row=r5, column=ci).number_format = MONEY
+                        ws.cell(row=r5, column=ci).border      = (
+                            B_TOTAL_THICK_LEFT if ci == 8 else B_TOTAL)
+                        if ci in hour_cols:
+                            ws.cell(row=r5, column=ci).number_format = SUMMARY_HOURS_FMT
+                        if ci in money_cols:
+                            ws.cell(row=r5, column=ci).number_format = SUMMARY_MONEY_FMT
                     r5 += 1
                 break
 
@@ -908,18 +941,22 @@ def crear_resumen_semanal(wb, nombre_hoja_sem, sem_num, viernes_date):
     ws.merge_cells(start_row=gt, start_column=1, end_row=gt, end_column=1)
     sc(ws, gt, 1, "GRAN TOTAL SEMANAL",
        _font(11, True, C_WHITE), _fill(C_DARK_BLUE), al_r, B_TOTAL)
-    for ci in range(2, 10):
+    for ci in range(2, 12):
         cl = get_column_letter(ci)
-        base = f"={cl}{tot_tarjeta}+{cl}{tot_efectivo}"
+        refs = [f"{cl}{tot_tarjeta}", f"{cl}{tot_efectivo}"]
         if tot_fijo:
-            base += f"+{cl}{tot_fijo}"
-        ws.cell(row=gt, column=ci).value       = base
+            refs.append(f"{cl}{tot_fijo}")
+        ws.cell(row=gt, column=ci).value       = _summary_expr_or_blank(
+            f"SUM({','.join(refs)})")
         ws.cell(row=gt, column=ci).font        = _font(10, True, C_WHITE)
         ws.cell(row=gt, column=ci).fill        = _fill(C_DARK_BLUE)
         ws.cell(row=gt, column=ci).alignment   = al_c
-        ws.cell(row=gt, column=ci).border      = B_TOTAL
-        if ci >= 6:
-            ws.cell(row=gt, column=ci).number_format = MONEY
+        ws.cell(row=gt, column=ci).border      = (
+            B_TOTAL_THICK_LEFT if ci == 8 else B_TOTAL)
+        if ci in hour_cols:
+            ws.cell(row=gt, column=ci).number_format = SUMMARY_HOURS_FMT
+        if ci in money_cols:
+            ws.cell(row=gt, column=ci).number_format = SUMMARY_MONEY_FMT
 
     ws.freeze_panes = "B5"
 
@@ -934,18 +971,20 @@ def crear_resumen_mensual(wb):
     ws = wb.create_sheet(sheet_name)
     ws.sheet_properties.tabColor = "374151"
 
-    col_widths = {"A": 24, "B": 18, "C": 12, "D": 12,
-                  "E": 12, "F": 12, "G": 16, "H": 15, "I": 15, "J": 16}
+    col_widths = {
+        "A": 24, "B": 18, "C": 12, "D": 12, "E": 12, "F": 16,
+        "G": 12, "H": 12, "I": 16, "J": 15, "K": 15, "L": 16,
+    }
     for col, w in col_widths.items():
         ws.column_dimensions[col].width = w
 
     ws.row_dimensions[1].height = 36
-    ws.merge_cells("A1:J1")
+    ws.merge_cells("A1:L1")
     sc(ws, 1, 1, "RESUMEN MENSUAL DE PLANILLA",
        _font(14, True, C_WHITE), _fill(C_DARK_BLUE), al_c)
 
     ws.row_dimensions[2].height = 20
-    ws.merge_cells("A2:J2")
+    ws.merge_cells("A2:L2")
     sc(ws, 2, 1, "Totales acumulados del mes por empleado",
        _font(9, False, C_SUBTITLE), _fill(C_DARK_BLUE), al_c)
 
@@ -956,17 +995,21 @@ def crear_resumen_mensual(wb):
         (1,  "Empleado",       C_HDR_DARK),
         (2,  "Semana",         C_HDR_DARK),
         (3,  "Hrs Diurnas",    C_OCEAN),
-        (4,  "Hrs Nocturnas",  C_OCEAN),
-        (5,  "Hrs Mixtas",     C_OCEAN),
-        (6,  "Hrs Totales",    C_OCEAN),
-        (7,  "Salario Bruto",  C_BRUTO_HDR),
-        (8,  "Rebajos",        C_RED_HDR),
-        (9,  "Seguro",         C_SEGURO_HDR),
-        (10, "Neto a Pagar",   C_NETO_HDR),
+        (4,  "Hrs Mixtas",     C_OCEAN),
+        (5,  "Hrs Nocturnas",  C_OCEAN),
+        (6,  "Monto Extra (₡)", C_BRUTO_HDR),
+        (7,  "Hrs Extra",      C_OCEAN),
+        (8,  "Hrs Totales",    C_OCEAN),
+        (9,  "Salario Bruto",  C_BRUTO_HDR),
+        (10, "Rebajos",        C_RED_HDR),
+        (11, "Seguro",         C_SEGURO_HDR),
+        (12, "Neto a Pagar",   C_NETO_HDR),
     ]
+    hour_cols = {3, 4, 5, 7, 8}
+    money_cols = {6, 9, 10, 11, 12}
     for col, txt, bg in hdrs:
         sc(ws, 4, col, txt, _font(9, True, C_WHITE), _fill(bg), al_c,
-           B_THICK_LEFT if col == 7 else B_DATA)
+           B_THICK_LEFT if col == 9 else B_DATA)
 
     cur_r = 5
     empleados = leer_catalogo(wb)
@@ -980,10 +1023,11 @@ def crear_resumen_mensual(wb):
     for sec_label, emp_list, sec_color, emp_bg in sections:
         ws.row_dimensions[cur_r].height = 24
         ws.merge_cells(start_row=cur_r, start_column=1,
-                       end_row=cur_r, end_column=10)
+                       end_row=cur_r, end_column=12)
         sc(ws, cur_r, 1, f"  {sec_label}",
            _font(11, True, C_WHITE), _fill(sec_color), al_l)
         cur_r += 1
+        sec_emp_total_rows = []
 
         for emp in emp_list:
             emp_data_rows = []
@@ -999,16 +1043,21 @@ def crear_resumen_mensual(wb):
                         sc(ws, cur_r, 2,
                            sname.replace("Res. Sem. ", "Semana "),
                            _font(10), _fill(bg), al_c, B_DATA)
-                        col_map = {3: 2, 4: 4, 5: 3, 6: 5,
-                                   7: 6, 8: 7, 9: 8, 10: 9}
+                        col_map = {
+                            3: 2, 4: 3, 5: 4, 6: 5, 7: 6,
+                            8: 7, 9: 8, 10: 9, 11: 10, 12: 11,
+                        }
                         for dst, src in col_map.items():
                             c = ws.cell(row=cur_r, column=dst)
-                            c.value     = sws.cell(row=sr, column=src).value
+                            ref = f"'{sname}'!{get_column_letter(src)}{sr}"
+                            c.value     = _summary_ref_or_blank(ref)
                             c.fill      = _fill(bg)
                             c.alignment = al_c
-                            c.border    = B_THICK_LEFT if dst == 7 else B_DATA
-                            if dst >= 7:
-                                c.number_format = MONEY
+                            c.border    = B_THICK_LEFT if dst == 9 else B_DATA
+                            if dst in hour_cols:
+                                c.number_format = SUMMARY_HOURS_FMT
+                            if dst in money_cols:
+                                c.number_format = SUMMARY_MONEY_FMT
                         emp_data_rows.append(cur_r)
                         cur_r += 1
 
@@ -1019,20 +1068,23 @@ def crear_resumen_mensual(wb):
                 sc(ws, cur_r, 1, "TOTAL MENSUAL",
                    _font(10, True), _fill(emp_bg), al_r, B_DATA)
                 fr, lr = emp_data_rows[0], emp_data_rows[-1]
-                for ci in range(3, 11):
+                for ci in range(3, 13):
                     cl = get_column_letter(ci)
-                    fg = (C_SEGURO_FG if ci == 9 else
-                          C_NETO_FG   if ci == 10 else "1F2937")
-                    bg2 = (C_SEGURO_CELL if ci == 9 else
-                           C_NETO_CELL   if ci == 10 else emp_bg)
+                    fg = (C_SEGURO_FG if ci == 11 else
+                          C_NETO_FG   if ci == 12 else "1F2937")
+                    bg2 = (C_SEGURO_CELL if ci == 11 else
+                           C_NETO_CELL   if ci == 12 else emp_bg)
                     c = ws.cell(row=cur_r, column=ci)
-                    c.value       = f"=SUM({cl}{fr}:{cl}{lr})"
+                    c.value       = _summary_expr_or_blank(f"SUM({cl}{fr}:{cl}{lr})")
                     c.font        = _font(10, True, fg)
                     c.fill        = _fill(bg2)
                     c.alignment   = al_c
-                    c.border      = B_THICK_LEFT if ci == 7 else B_DATA
-                    if ci >= 7:
-                        c.number_format = MONEY
+                    c.border      = B_THICK_LEFT if ci == 9 else B_DATA
+                    if ci in hour_cols:
+                        c.number_format = SUMMARY_HOURS_FMT
+                    if ci in money_cols:
+                        c.number_format = SUMMARY_MONEY_FMT
+                sec_emp_total_rows.append(cur_r)
                 cur_r += 1
 
         sec_tot = cur_r
@@ -1041,6 +1093,20 @@ def crear_resumen_mensual(wb):
                        end_row=cur_r, end_column=2)
         sc(ws, cur_r, 1, f"TOTAL {sec_label}",
            _font(10, True, C_WHITE), _fill(sec_color), al_r, B_TOTAL)
+        if sec_emp_total_rows:
+            for ci in range(3, 13):
+                cl = get_column_letter(ci)
+                expr = f"SUM({','.join(f'{cl}{row}' for row in sec_emp_total_rows)})"
+                c = ws.cell(row=cur_r, column=ci)
+                c.value       = _summary_expr_or_blank(expr)
+                c.font        = _font(10, True, C_WHITE)
+                c.fill        = _fill(sec_color)
+                c.alignment   = al_c
+                c.border      = B_TOTAL_THICK_LEFT if ci == 9 else B_TOTAL
+                if ci in hour_cols:
+                    c.number_format = SUMMARY_HOURS_FMT
+                if ci in money_cols:
+                    c.number_format = SUMMARY_MONEY_FMT
         sec_total_rows.append(cur_r)
         cur_r += 1
 
@@ -1050,17 +1116,19 @@ def crear_resumen_mensual(wb):
                    end_row=cur_r, end_column=2)
     sc(ws, cur_r, 1, "GRAN TOTAL MENSUAL",
        _font(11, True, C_WHITE), _fill(C_DARK_BLUE), al_r, B_TOTAL)
-    for ci in range(3, 11):
+    for ci in range(3, 13):
         cl = get_column_letter(ci)
-        refs = "+".join(f"{cl}{tr}" for tr in sec_total_rows)
+        refs = ",".join(f"{cl}{tr}" for tr in sec_total_rows)
         c = ws.cell(row=cur_r, column=ci)
-        c.value       = f"={refs}"
+        c.value       = _summary_expr_or_blank(f"SUM({refs})")
         c.font        = _font(10, True, C_WHITE)
         c.fill        = _fill(C_DARK_BLUE)
         c.alignment   = al_c
-        c.border      = B_TOTAL
-        if ci >= 7:
-            c.number_format = MONEY
+        c.border      = B_TOTAL_THICK_LEFT if ci == 9 else B_TOTAL
+        if ci in hour_cols:
+            c.number_format = SUMMARY_HOURS_FMT
+        if ci in money_cols:
+            c.number_format = SUMMARY_MONEY_FMT
 
     ws.freeze_panes = "C5"
 
@@ -1126,8 +1194,8 @@ def crear_dashboard(wb):
            sname.replace("Res. Sem. ", "Sem. "),
            _font(10), _fill("F7F9FC" if alt else C_WHITE), al_c, B_DATA)
         for ci, src_col, bg_cell, fc in [
-            (2, "F", C_EMP_TARJETA, "1E3A5F"),
-            (3, "I", C_NETO_CELL,   C_NETO_FG),
+            (2, "H", C_EMP_TARJETA, "1E3A5F"),
+            (3, "K", C_NETO_CELL,   C_NETO_FG),
         ]:
             c = ws.cell(row=row_idx, column=ci)
             c.value        = f"='{sname}'!{src_col}{gt_row}"
@@ -1158,10 +1226,10 @@ def crear_dashboard(wb):
                 break
 
     totals_panel = [
-        (15, "Total Bruto",  "F7F9FC",    7,  "1E3A5F", C_EMP_TARJETA),
-        (16, "Tot. Rebajos", C_WHITE,     8,  C_DED_FG,  C_DED_CELL),
-        (17, "Tot. Seguros", "F7F9FC",    9,  C_SEGURO_FG, C_SEGURO_CELL),
-        (18, "TOTAL NETO",   C_NETO_HDR,  10, C_WHITE,   C_NETO_CELL),
+        (15, "Total Bruto",  "F7F9FC",    9,  "1E3A5F", C_EMP_TARJETA),
+        (16, "Tot. Rebajos", C_WHITE,     10, C_DED_FG,  C_DED_CELL),
+        (17, "Tot. Seguros", "F7F9FC",    11, C_SEGURO_FG, C_SEGURO_CELL),
+        (18, "TOTAL NETO",   C_NETO_HDR,  12, C_WHITE,   C_NETO_CELL),
     ]
     for row_n, lbl, bg_lbl, src_ci, fc_val, bg_val in totals_panel:
         ws.row_dimensions[row_n].height = 22
@@ -1186,13 +1254,13 @@ def crear_dashboard(wb):
     if gt_rm:
         # Tarjeta total neto
         c16 = ws.cell(row=16, column=7)
-        c16.value       = f"='Resumen Mensual'!J{gt_rm}"
+        c16.value       = f"='Resumen Mensual'!L{gt_rm}"
         c16.fill        = _fill(C_EMP_TARJETA)
         c16.alignment   = al_c
         c16.number_format = MONEY
         # Efectivo total neto
         c17 = ws.cell(row=17, column=7)
-        c17.value       = f"='Resumen Mensual'!J{gt_rm}"
+        c17.value       = f"='Resumen Mensual'!L{gt_rm}"
         c17.fill        = _fill(C_EMP_EFECT)
         c17.alignment   = al_c
         c17.number_format = MONEY

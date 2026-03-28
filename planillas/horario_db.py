@@ -422,13 +422,13 @@ def rellenar_horas_en_excel(excel_path, nombre_hoja, horario_dict):
     # Obtener préstamos activos para rellenar la deducción de planilla (col 13)
     prestamos_activos = {}
     prest_rows = conn.execute("""
-        SELECT e.nombre, p.pago_semanal 
+        SELECT e.nombre, p.pago_semanal, p.saldo
         FROM prestamos p
         JOIN empleados e ON p.empleado_id = e.id
         WHERE p.estado = 'activo'
     """).fetchall()
     for pr in prest_rows:
-        prestamos_activos[pr["nombre"]] = pr["pago_semanal"]
+        prestamos_activos[pr["nombre"]] = min(pr["pago_semanal"], pr["saldo"])
 
     conn.close()
 

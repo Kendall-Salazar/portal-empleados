@@ -1,5 +1,5 @@
 /**
-// ─── Toast Notification Utility ──────────────────────────────────────────────
+// â”€â”€â”€ Toast Notification Utility â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 /**
  * showToast(message, type)
  * type: 'success' | 'error' | 'warning' | 'info'
@@ -138,8 +138,8 @@ async function loadVacSubEquipo() {
     content.innerHTML = `
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.5rem;">
             <div>
-                <h3 style="color:var(--text-main); margin:0;"><i class="fa-solid fa-users" style="color:var(--primary); margin-right:8px;"></i> Nómina de Colaboradores</h3>
-                <p style="color:var(--text-muted); font-size:0.85rem; margin-top:4px;">Directorio y gestión del equipo</p>
+                <h3 style="color:var(--text-main); margin:0;"><i class="fa-solid fa-users" style="color:var(--primary); margin-right:8px;"></i> NÃ³mina de Colaboradores</h3>
+                <p style="color:var(--text-muted); font-size:0.85rem; margin-top:4px;">Directorio y gestiÃ³n del equipo</p>
             </div>
             <div style="display:flex; gap:10px; align-items:center;">
                 <div class="portal-stat-chip" id="equipoCountChip">
@@ -177,9 +177,9 @@ async function loadVacSubEquipo() {
             if (emp.telefono) chips.push(`<span class="ecard-chip"><i class="fa-solid fa-phone"></i>${emp.telefono}</span>`);
             if (emp.correo) chips.push(`<span class="ecard-chip"><i class="fa-solid fa-envelope"></i>${emp.correo}</span>`);
             if (emp.fecha_inicio) chips.push(`<span class="ecard-chip"><i class="fa-solid fa-calendar-check"></i>${emp.fecha_inicio}</span>`);
-            if (emp.salario_fijo) chips.push(`<span class="ecard-chip ecard-chip-fijo"><i class="fa-solid fa-coins"></i>₡${_money(emp.salario_fijo)}/mes</span>`);
+            if (emp.salario_fijo) chips.push(`<span class="ecard-chip ecard-chip-fijo"><i class="fa-solid fa-coins"></i>â‚¡${_money(emp.salario_fijo)}/mes</span>`);
 
-            // Badge de tipo de pago con icono y color según tipo
+            // Badge de tipo de pago con icono y color segÃºn tipo
             const tipoBadgeMap = {
                 tarjeta: { icon: 'fa-credit-card', color: '#1d4ed8', bg: 'rgba(29,78,216,0.12)', label: 'Tarjeta' },
                 efectivo: { icon: 'fa-money-bill-wave', color: '#059669', bg: 'rgba(5,150,105,0.12)', label: 'Efectivo' },
@@ -231,7 +231,7 @@ async function loadVacSubInactivos() {
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.5rem;">
             <div>
                 <h3 style="color:var(--text-main); margin:0;"><i class="fa-solid fa-user-slash" style="color:#ef4444; margin-right:8px;"></i> Papelera de Inactivos</h3>
-                <p style="color:var(--text-muted); font-size:0.85rem; margin-top:4px;">Colaboradores desactivados y opción de eliminación total</p>
+                <p style="color:var(--text-muted); font-size:0.85rem; margin-top:4px;">Colaboradores desactivados y opciÃ³n de eliminaciÃ³n total</p>
             </div>
             <div style="display:flex; gap:10px; align-items:center;">
                 <div class="portal-stat-chip" id="equipoCountChip">
@@ -285,7 +285,7 @@ async function loadVacSubInactivos() {
                 </div>
                 <div class="ecard-divider"></div>
                 <div class="ecard-bottom" style="filter: grayscale(100%); opacity: 0.8;">
-                    <span style="font-size: 0.8rem; color: #9ca3af;"><i class="fa-solid fa-triangle-exclamation"></i> Borrar aquí elimina todo su historial para siempre</span>
+                    <span style="font-size: 0.8rem; color: #9ca3af;"><i class="fa-solid fa-triangle-exclamation"></i> Borrar aquÃ­ elimina todo su historial para siempre</span>
                 </div>`;
             grid.appendChild(card);
         });
@@ -327,6 +327,7 @@ function openUnifiedEmpModal(emp = null) {
     document.getElementById('empForcedQuebrado').checked = isEdit ? !!emp.forced_quebrado : false;
     document.getElementById('empNoRest').checked = isEdit ? !!emp.allow_no_rest : false;
     document.getElementById('empJefePista').checked = isEdit ? !!emp.es_jefe_pista : false;
+    document.getElementById('empPracticante').checked = isEdit ? !!emp.es_practicante : false;
     document.getElementById('empStrictPreferences').checked = isEdit ? !!emp.strict_preferences : false;
 
     // Fixed Shifts & Vaccations need their specific UI rendering functions
@@ -397,6 +398,7 @@ async function guardarPlanillaEmp() {
         forced_quebrado: document.getElementById('empForcedQuebrado').checked ? 1 : 0,
         allow_no_rest: document.getElementById('empNoRest').checked ? 1 : 0,
         es_jefe_pista: document.getElementById('empJefePista').checked ? 1 : 0,
+        es_practicante: document.getElementById('empPracticante').checked ? 1 : 0,
         strict_preferences: document.getElementById('empStrictPreferences').checked ? 1 : 0,
         activo: document.getElementById('empActiveStatus') ? (document.getElementById('empActiveStatus').checked ? 1 : 0) : 1,
         turnos_fijos: '{}'
@@ -416,12 +418,15 @@ async function guardarPlanillaEmp() {
         if (checkedVacDays.includes(d)) {
             shifts[d] = 'VAC';
         } else if (isJefe) {
-            // If they are Jefe, we override their week with the selected J_ shift, except weekend logic
-            // Assuming weekend is Saturday T1 / Sunday OFF based on previous logic, but we can respect the UI:
-            if (sel.value === 'OFF') shifts[d] = 'OFF';
-            else if (sel.value === 'VAC') shifts[d] = 'VAC';
-            else if (sel.value.startsWith('J_') || ['Lun', 'Mar', 'Mié', 'Jue', 'Vie'].includes(d)) shifts[d] = jefeVal;
-            else if (sel.value !== 'AUTO') shifts[d] = sel.value;
+            // Jefe de pista: respect whatever the user picked per-day.
+            // Only fill in the jefeVal default when the day is still AUTO and
+            // jefeShiftSelect is not CUSTOM (same logic as app.js saveEmployee).
+            const weekdays = ['Lun', 'Mar', 'MiÃ©', 'Jue', 'Vie'];
+            if (sel.value === 'AUTO' && weekdays.includes(d) && jefeVal !== 'CUSTOM') {
+                shifts[d] = jefeVal;
+            } else if (sel.value !== 'AUTO') {
+                shifts[d] = sel.value;
+            }
         } else {
             if (sel.value !== 'AUTO') {
                 shifts[d] = sel.value;
@@ -452,7 +457,7 @@ async function guardarPlanillaEmp() {
 }
 
 async function deletePlanillaEmp(id) {
-    if (!confirm('¡ATENCIÓN! La eliminación borrará permanentemente a este empleado, su historial de horarios, vacaciones y préstamos. ¿Estás absolutamente seguro de que deseas eliminarlo del sistema?')) return;
+    if (!confirm('Â¡ATENCIÃ“N! La eliminaciÃ³n borrarÃ¡ permanentemente a este empleado, su historial de horarios, vacaciones y prÃ©stamos. Â¿EstÃ¡s absolutamente seguro de que deseas eliminarlo del sistema?')) return;
     try {
         const res = await fetch(`/api/planillas/empleados/${id}`, { method: 'DELETE' });
         if (!res.ok) throw new Error('Error al eliminar');
@@ -466,7 +471,7 @@ async function deletePlanillaEmp(id) {
 // =============================================================================
 
 function _formatDateEs(dateStr) {
-    if (!dateStr) return '—';
+    if (!dateStr) return 'â€”';
     try {
         const d = new Date(dateStr + 'T00:00:00');
         return d.toLocaleDateString('es-CR', { day: '2-digit', month: 'short', year: 'numeric' });
@@ -484,8 +489,8 @@ async function loadGestionPersonalTab() {
                             <i class="fa-solid fa-users-gear"></i>
                         </div>
                         <div>
-                            <h2 class="portal-title">Gestión de Personal</h2>
-                            <p class="portal-subtitle">Directorio de equipo, vacaciones, permisos y préstamos</p>
+                            <h2 class="portal-title">GestiÃ³n de Personal</h2>
+                            <p class="portal-subtitle">Directorio de equipo, vacaciones, permisos y prÃ©stamos</p>
                         </div>
                     </div>
                 </div>
@@ -502,7 +507,7 @@ async function loadGestionPersonalTab() {
                     <i class="fa-solid fa-hand"></i> Permisos
                 </button>
                 <button id="vst-prestamos" class="vac-subtab" onclick="switchVacSubTab('prestamos')">
-                    <i class="fa-solid fa-hand-holding-dollar"></i> Préstamos
+                    <i class="fa-solid fa-hand-holding-dollar"></i> PrÃ©stamos
                 </button>
                 <button id="vst-inactivos" class="vac-subtab" onclick="switchVacSubTab('inactivos')" style="margin-left: auto;">
                     <i class="fa-solid fa-user-slash"></i> Inactivos
@@ -527,7 +532,7 @@ function switchVacSubTab(tab) {
     else if (tab === 'inactivos') loadVacSubInactivos();
 }
 
-// ── SUB-TAB: VACACIONES ──
+// â”€â”€ SUB-TAB: VACACIONES â”€â”€
 async function loadVacSubVacaciones() {
     const content = document.getElementById('vacSubTabContent');
     content.innerHTML = '<div class="portal-loading"><div class="portal-spinner"></div><span>Cargando...</span></div>';
@@ -568,12 +573,12 @@ async function loadVacSubVacaciones() {
                     <div class="vac-emp-avatar" style="background:${_grad(emp.id)};">${_initials(emp.nombre)}</div>
                     <div class="vac-emp-info">
                         <span class="vac-emp-name">${emp.nombre}</span>
-                        <span class="vac-emp-meta"><i class="fa-solid fa-calendar-day"></i> ${emp.fecha_inicio || '—'} · <span class="vac-emp-antig">${antiguedad}</span></span>
+                        <span class="vac-emp-meta"><i class="fa-solid fa-calendar-day"></i> ${emp.fecha_inicio || 'â€”'} Â· <span class="vac-emp-antig">${antiguedad}</span></span>
                     </div>
                 </div>
                 <div class="vac-emp-hero-num">
                     <span class="vac-emp-hero-val" style="color:${dispColor};">${disp}</span>
-                    <span class="vac-emp-hero-label">días disponibles</span>
+                    <span class="vac-emp-hero-label">dÃ­as disponibles</span>
                 </div>
                 <div class="vac-emp-bar-wrap">
                     <div class="vac-emp-bar-bg">
@@ -605,7 +610,7 @@ async function loadVacSubVacaciones() {
     }
 }
 
-// ── SUB-TAB: PERMISOS ──
+// â”€â”€ SUB-TAB: PERMISOS â”€â”€
 async function loadVacSubPermisos() {
     const content = document.getElementById('vacSubTabContent');
     content.innerHTML = '<div class="portal-loading"><div class="portal-spinner"></div><span>Cargando...</span></div>';
@@ -619,7 +624,6 @@ async function loadVacSubPermisos() {
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
             <h3 style="color:var(--text-main); margin:0;"><i class="fa-solid fa-hand" style="color:#f59e0b;"></i> Permisos ${anio}</h3>
         </div>`;
-
         html += '<div class="vac-cards-grid">';
         for (const emp of emps) {
             const permRes = await fetch(`/api/planillas/permisos/${emp.id}?anio=${anio}`);
@@ -679,24 +683,43 @@ async function loadVacSubPermisos() {
     }
 }
 
-// ── SUB-TAB: PRÉSTAMOS ──
+// â”€â”€ SUB-TAB: PRÃ‰STAMOS â”€â”€
+async function syncPrestamoRebajosPlanilla(mesId = null) {
+    let url = '/api/planillas/prestamos/sync-planilla-rebajos';
+    if (mesId) url += `?mes_id=${encodeURIComponent(mesId)}`;
+    try {
+        await fetch(url, { method: 'POST' });
+    } catch (_) {
+        // Silent sync: prestamos UI should still load even if sync fails.
+    }
+}
+
 async function loadVacSubPrestamos() {
     const content = document.getElementById('vacSubTabContent');
     content.innerHTML = '<div class="portal-loading"><div class="portal-spinner"></div><span>Cargando...</span></div>';
 
     try {
+        await syncPrestamoRebajosPlanilla();
+
         const empsRes = await fetch('/api/planillas/empleados');
         const emps = await empsRes.json();
 
         let html = `
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
-            <h3 style="color:var(--text-main); margin:0;"><i class="fa-solid fa-hand-holding-dollar" style="color:#8b5cf6;"></i> Préstamos Activos</h3>
+            <h3 style="color:var(--text-main); margin:0;"><i class="fa-solid fa-hand-holding-dollar" style="color:#8b5cf6;"></i> PrÃ©stamos Activos</h3>
             <button class="vac-btn vac-btn-primary" onclick="openNuevoPrestamo()">
-                <i class="fa-solid fa-plus"></i> Nuevo Préstamo
+                <i class="fa-solid fa-plus"></i> Nuevo PrÃ©stamo
             </button>
         </div>`;
 
+        html += `
+        <div style="margin-bottom:1rem; padding:0.85rem 1rem; border:1px solid rgba(16,185,129,0.18); border-radius:12px; background:rgba(16,185,129,0.08); color:var(--text-main); font-size:0.82rem; line-height:1.45;">
+            El rebajo normal de planilla ahora se sincroniza automaticamente desde cada semana del Excel.
+            Si una semana no tiene monto en la columna de prestamo, no se descuenta del saldo.
+        </div>`;
+
         html += '<div class="vac-cards-grid">';
+        let tienePrestamos = false;
         for (const emp of emps) {
             const prestRes = await fetch(`/api/planillas/prestamos/${emp.id}`);
             const prestamos = await prestRes.json();
@@ -705,6 +728,7 @@ async function loadVacSubPrestamos() {
             const eName = emp.nombre.replace(/'/g, "\\'");
 
             for (const p of prestamos) {
+                tienePrestamos = true;
                 const progreso = p.monto_total > 0 ? Math.round(((p.monto_total - p.saldo) / p.monto_total) * 100) : 0;
                 const isLiquidado = p.estado === 'liquidado';
                 const statusColor = isLiquidado ? '#10b981' : '#8b5cf6';
@@ -727,15 +751,15 @@ async function loadVacSubPrestamos() {
                     <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:0.5rem; margin-top:0.7rem;">
                         <div style="text-align:center;">
                             <div style="font-size:0.65rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">Total</div>
-                            <div style="font-size:1rem; font-weight:800; color:var(--text-main);">₡${_fmtMoney(p.monto_total)}</div>
+                            <div style="font-size:1rem; font-weight:800; color:var(--text-main);">â‚¡${_fmtMoney(p.monto_total)}</div>
                         </div>
                         <div style="text-align:center;">
                             <div style="font-size:0.65rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">Semanal</div>
-                            <div style="font-size:1rem; font-weight:800; color:#f59e0b;">₡${_fmtMoney(p.pago_semanal)}</div>
+                            <div style="font-size:1rem; font-weight:800; color:#f59e0b;">â‚¡${_fmtMoney(p.pago_semanal)}</div>
                         </div>
                         <div style="text-align:center;">
                             <div style="font-size:0.65rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">Saldo</div>
-                            <div style="font-size:1rem; font-weight:800; color:${isLiquidado ? '#10b981' : '#ef4444'};">₡${_fmtMoney(p.saldo)}</div>
+                            <div style="font-size:1rem; font-weight:800; color:${isLiquidado ? '#10b981' : '#ef4444'};">â‚¡${_fmtMoney(p.saldo)}</div>
                         </div>
                     </div>
                     <!-- Progress bar -->
@@ -754,9 +778,6 @@ async function loadVacSubPrestamos() {
                             <i class="fa-solid fa-list"></i> Historial
                         </button>
                         ${!isLiquidado ? `
-                        <button class="vac-btn vac-btn-primary" style="font-size:0.78rem; background:#8b5cf6;" onclick="registrarAbono(${p.id}, ${p.pago_semanal}, '${eName}', 'planilla')">
-                            <i class="fa-solid fa-money-bill-transfer"></i> Abono Planilla
-                        </button>
                         <button class="vac-btn vac-btn-ghost" style="font-size:0.78rem; color:#f59e0b; border-color:rgba(245,158,11,0.3);" onclick="registrarAbono(${p.id}, 0, '${eName}', 'extraordinario')">
                             <i class="fa-solid fa-star"></i> Extraordinario
                         </button>` : ''}
@@ -770,12 +791,12 @@ async function loadVacSubPrestamos() {
         html += '</div>';
 
         // If no loans exist at all
-        if (!html.includes('vac-emp-card')) {
+        if (!tienePrestamos) {
             html += `
             <div class="portal-empty-box" style="padding:40px 20px; text-align:center;">
                 <i class="fa-solid fa-hand-holding-dollar" style="font-size:2.5rem; color:var(--text-muted); opacity:0.3; margin-bottom:15px;"></i>
-                <h3 style="color:var(--text-main); font-size:1rem; margin-bottom:8px;">Sin préstamos activos</h3>
-                <p style="color:var(--text-muted); font-size:0.85rem;">Registra un nuevo préstamo para comenzar el seguimiento.</p>
+                <h3 style="color:var(--text-main); font-size:1rem; margin-bottom:8px;">Sin prÃ©stamos activos</h3>
+                <p style="color:var(--text-muted); font-size:0.85rem;">Registra un nuevo prÃ©stamo para comenzar el seguimiento.</p>
             </div>`;
         }
 
@@ -802,7 +823,7 @@ function goToVacacionesConstancia(empId) {
 }
 
 // =============================================================================
-// VACACIONES MODAL — History with Timeline Cards
+// VACACIONES MODAL â€” History with Timeline Cards
 // =============================================================================
 async function openVacHistorial(empId, empName) {
     document.getElementById('vacHistName').textContent = empName;
@@ -819,7 +840,7 @@ async function openVacHistorial(empId, empName) {
         const disp = data.disponibles || 0;
         const dispColor = disp > 0 ? '#10b981' : (disp < 0 ? '#ef4444' : '#94a3b8');
 
-        // ── Hero Stats ──
+        // â”€â”€ Hero Stats â”€â”€
         let html = `
         <div class="vhist-hero">
             <div class="vhist-hero-card vhist-hero-main" style="--accent:${dispColor};">
@@ -839,21 +860,21 @@ async function openVacHistorial(empId, empName) {
             </div>
         </div>`;
 
-        // ── Empty State ──
+        // â”€â”€ Empty State â”€â”€
         if (registros.length === 0) {
             html += `
             <div class="vhist-empty">
                 <i class="fa-solid fa-sun" style="font-size:3rem;color:#f59e0b;opacity:0.3;"></i>
-                <p>Este colaborador aún no tiene registros de vacaciones.</p>
+                <p>Este colaborador aÃºn no tiene registros de vacaciones.</p>
                 <button class="vac-btn vac-btn-primary" onclick="closeVacHistorial(); openRegistrarVacacion(${empId}, '${empName.replace(/'/g, "\\'")}')">
-                    <i class="fa-solid fa-plus"></i> Registrar Primer Período
+                    <i class="fa-solid fa-plus"></i> Registrar Primer PerÃ­odo
                 </button>
             </div>`;
             content.innerHTML = html;
             return;
         }
 
-        // ── Timeline ──
+        // â”€â”€ Timeline â”€â”€
         html += '<div class="vhist-timeline">';
         for (const r of registros) {
             const escapedName = empName.replace(/'/g, "\\'");
@@ -866,9 +887,9 @@ async function openVacHistorial(empId, empName) {
                         <div class="vhist-card-dates">
                             <span class="vhist-date-range">
                                 <i class="fa-regular fa-calendar"></i>
-                                ${_formatDateEs(r.fecha_inicio)} → ${_formatDateEs(r.fecha_fin)}
+                                ${_formatDateEs(r.fecha_inicio)} â†’ ${_formatDateEs(r.fecha_fin)}
                             </span>
-                            <span class="vhist-days-pill">${r.dias} día${r.dias !== 1 ? 's' : ''}</span>
+                            <span class="vhist-days-pill">${r.dias} dÃ­a${r.dias !== 1 ? 's' : ''}</span>
                         </div>
                         <div class="vhist-card-menu">
                             <button class="vhist-btn-icon" onclick="editVacRecord(${r.id}, ${empId}, '${escapedName}')" title="Editar">
@@ -896,7 +917,7 @@ function closeVacHistorial() {
 }
 
 async function deleteVacRecord(vacId, empId, empName) {
-    if (!confirm('¿Estás seguro de eliminar este registro de vacaciones?')) return;
+    if (!confirm('Â¿EstÃ¡s seguro de eliminar este registro de vacaciones?')) return;
     try {
         const res = await fetch(`/api/planillas/vacaciones/${vacId}`, { method: 'DELETE' });
         if (!res.ok) throw new Error('Error al eliminar');
@@ -936,7 +957,7 @@ async function editVacRecord(vacId, empId, empName) {
                         <input type="date" id="editVacFin-${vacId}" value="${rec.fecha_fin || ''}">
                     </div>
                     <div class="vhist-edit-field">
-                        <label>Días</label>
+                        <label>DÃ­as</label>
                         <input type="number" step="0.5" id="editVacDias-${vacId}" value="${rec.dias || 0}">
                     </div>
                     <div class="vhist-edit-field">
@@ -980,7 +1001,7 @@ async function saveVacEdit(vacId, empId, empName) {
     } catch (e) { alert(e.message); }
 }
 
-// ── Registro de Vacaciones (Modal) ──
+// â”€â”€ Registro de Vacaciones (Modal) â”€â”€
 function openRegistrarVacacion(empId, empName) {
     document.getElementById('vacEmpId').value = empId;
     document.getElementById('vacEmpName').textContent = empName;
@@ -1008,7 +1029,7 @@ async function guardarVacacion() {
     };
 
     if (!data.fecha_inicio || !data.fecha_fin || data.dias <= 0) {
-        alert('Por favor complete las fechas y asegúrese de que los días sean mayores a 0.');
+        alert('Por favor complete las fechas y asegÃºrese de que los dÃ­as sean mayores a 0.');
         return;
     }
 
@@ -1024,7 +1045,7 @@ async function guardarVacacion() {
         }
         closeRegistrarVacacion();
         loadVacacionesTab();
-        alert('Vacación registrada exitosamente.');
+        alert('VacaciÃ³n registrada exitosamente.');
     } catch (e) {
         alert(e.message);
     }
@@ -1067,7 +1088,7 @@ async function openPermHistorial(empId, empName, anio) {
         const permisos = data.permisos || [];
 
         if (permisos.length === 0) {
-            content.innerHTML = '<div class="portal-empty"><i class="fa-solid fa-hand"></i><p>No hay permisos registrados en este año.</p></div>';
+            content.innerHTML = '<div class="portal-empty"><i class="fa-solid fa-hand"></i><p>No hay permisos registrados en este aÃ±o.</p></div>';
             return;
         }
 
@@ -1175,11 +1196,11 @@ async function guardarPermiso() {
 }
 
 async function deletePermiso(permisoId, isDescontado) {
-    if (!confirm('¿Está seguro de que desea eliminar este permiso del historial?')) return;
+    if (!confirm('Â¿EstÃ¡ seguro de que desea eliminar este permiso del historial?')) return;
     
     let restaurar = false;
     if (isDescontado) {
-        restaurar = confirm('Este permiso fue descontado de vacaciones.\n\n¿Desea RESTAURAR los días al saldo de vacaciones del empleado?\n[Aceptar] = Sí, restaurar\n[Cancelar] = No restaurar');
+        restaurar = confirm('Este permiso fue descontado de vacaciones.\n\nÂ¿Desea RESTAURAR los dÃ­as al saldo de vacaciones del empleado?\n[Aceptar] = SÃ­, restaurar\n[Cancelar] = No restaurar');
     }
 
     try {
@@ -1232,7 +1253,7 @@ async function descontarPermisos(empId, empName, pendientes, anio) {
 }
 
 // =============================================================================
-// PRÉSTAMOS FUNCTIONS
+// PRÃ‰STAMOS FUNCTIONS
 // =============================================================================
 
 async function openNuevoPrestamo() {
@@ -1248,7 +1269,7 @@ async function openNuevoPrestamo() {
             <button class="vac-btn vac-btn-ghost" onclick="loadVacSubPrestamos()" style="padding:6px 10px;">
                 <i class="fa-solid fa-arrow-left"></i>
             </button>
-            <h3 style="color:var(--text-main); margin:0;"><i class="fa-solid fa-hand-holding-dollar" style="color:#8b5cf6;"></i> Nuevo Préstamo</h3>
+            <h3 style="color:var(--text-main); margin:0;"><i class="fa-solid fa-hand-holding-dollar" style="color:#8b5cf6;"></i> Nuevo PrÃ©stamo</h3>
         </div>
         <div class="vac-emp-card" style="padding:1.5rem;">
             <div class="input-group" style="margin-bottom:1rem;">
@@ -1259,12 +1280,12 @@ async function openNuevoPrestamo() {
             </div>
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem; margin-bottom:1rem;">
                 <div class="input-group">
-                    <label style="font-size:0.8rem; color:var(--text-muted); margin-bottom:4px; display:block;">Monto Total (₡)</label>
+                    <label style="font-size:0.8rem; color:var(--text-muted); margin-bottom:4px; display:block;">Monto Total (â‚¡)</label>
                     <input type="number" id="npMontoTotal" placeholder="Ej: 100000" oninput="calcNuevoPrestamo()"
                         style="width:100%; padding:0.7rem; background:var(--bg-app); border:1px solid var(--border); color:var(--text-main); border-radius:8px;">
                 </div>
                 <div class="input-group">
-                    <label style="font-size:0.8rem; color:var(--text-muted); margin-bottom:4px; display:block;">Pago Semanal (₡)</label>
+                    <label style="font-size:0.8rem; color:var(--text-muted); margin-bottom:4px; display:block;">Pago Semanal (â‚¡)</label>
                     <input type="number" id="npPagoSemanal" placeholder="Ej: 10000" oninput="calcNuevoPrestamo()"
                         style="width:100%; padding:0.7rem; background:var(--bg-app); border:1px solid var(--border); color:var(--text-main); border-radius:8px;">
                 </div>
@@ -1278,7 +1299,7 @@ async function openNuevoPrestamo() {
             </div>
             <div style="display:flex; gap:0.5rem;">
                 <button class="vac-btn vac-btn-primary" style="flex:1; background:#8b5cf6;" onclick="guardarNuevoPrestamo()">
-                    <i class="fa-solid fa-check"></i> Registrar Préstamo
+                    <i class="fa-solid fa-check"></i> Registrar PrÃ©stamo
                 </button>
                 <button class="vac-btn vac-btn-ghost" onclick="loadVacSubPrestamos()">Cancelar</button>
             </div>
@@ -1320,26 +1341,21 @@ async function guardarNuevoPrestamo() {
         });
         if (!res.ok) throw new Error('Error al registrar');
         loadVacSubPrestamos();
-        if (typeof showToast === 'function') showToast('Préstamo registrado', 'success');
+        if (typeof showToast === 'function') showToast('PrÃ©stamo registrado', 'success');
     } catch (e) { alert(e.message); }
 }
 
 async function registrarAbono(prestamoId, montoSugerido, empName, tipo) {
+    if (tipo === 'planilla') {
+        return alert('El rebajo normal de planilla ahora se sincroniza automaticamente desde el Excel semanal.');
+    }
+
     let monto;
     if (tipo === 'extraordinario') {
         monto = prompt(`Abono extraordinario para ${empName}.\nIngrese el monto del abono:`);
         if (monto === null) return;
         monto = parseFloat(monto);
-        if (isNaN(monto) || monto <= 0) return alert('Monto inválido.');
-    } else {
-        // planilla — confirmación manual con monto pre-llenado
-        const confirmar = confirm(
-            `¿Confirmar abono de planilla para ${empName}?\n\n` +
-            `Monto: ₡${_fmtMoney(montoSugerido)}\n\n` +
-            `Este abono se registrará como rebajo de planilla.`
-        );
-        if (!confirmar) return;
-        monto = montoSugerido;
+        if (isNaN(monto) || monto <= 0) return alert('Monto invÃ¡lido.');
     }
 
     const notas = tipo === 'extraordinario' ? prompt('Nota para el abono extraordinario (opcional):') : null;
@@ -1354,16 +1370,17 @@ async function registrarAbono(prestamoId, montoSugerido, empName, tipo) {
         const result = await res.json();
         loadVacSubPrestamos();
         if (typeof showToast === 'function') {
-            showToast(`Abono ₡${_fmtMoney(monto)} registrado. Saldo: ₡${_fmtMoney(result.nuevo_saldo)}`, 'success');
+            showToast(`Abono â‚¡${_fmtMoney(monto)} registrado. Saldo: â‚¡${_fmtMoney(result.nuevo_saldo)}`, 'success');
         }
         if (result.estado === 'liquidado') {
-            alert(`¡Préstamo de ${empName} LIQUIDADO! 🎉`);
+            alert(`Â¡PrÃ©stamo de ${empName} LIQUIDADO! ðŸŽ‰`);
         }
     } catch (e) { alert(e.message); }
 }
 
 async function verAbonosPrestamo(prestamoId, empName) {
     try {
+        await syncPrestamoRebajosPlanilla();
         const res = await fetch(`/api/planillas/prestamos/${prestamoId}/abonos`);
         const data = await res.json();
         const abonos = data.abonos || [];
@@ -1377,28 +1394,28 @@ async function verAbonosPrestamo(prestamoId, empName) {
                     <i class="fa-solid fa-arrow-left"></i>
                 </button>
                 <h3 style="color:var(--text-main); margin:0;">
-                    <i class="fa-solid fa-list" style="color:#8b5cf6;"></i> Historial de Abonos — ${empName}
+                    <i class="fa-solid fa-list" style="color:#8b5cf6;"></i> Historial de Abonos â€” ${empName}
                 </h3>
             </div>
             <div class="vac-emp-card" style="margin-bottom:1rem;">
                 <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:0.5rem;">
                     <div style="text-align:center;">
                         <div style="font-size:0.65rem; color:var(--text-muted); text-transform:uppercase;">Total</div>
-                        <div style="font-size:1.1rem; font-weight:800; color:var(--text-main);">₡${_fmtMoney(prest.monto_total)}</div>
+                        <div style="font-size:1.1rem; font-weight:800; color:var(--text-main);">â‚¡${_fmtMoney(prest.monto_total)}</div>
                     </div>
                     <div style="text-align:center;">
                         <div style="font-size:0.65rem; color:var(--text-muted); text-transform:uppercase;">Abonado</div>
-                        <div style="font-size:1.1rem; font-weight:800; color:#10b981;">₡${_fmtMoney(prest.monto_total - prest.saldo)}</div>
+                        <div style="font-size:1.1rem; font-weight:800; color:#10b981;">â‚¡${_fmtMoney(prest.monto_total - prest.saldo)}</div>
                     </div>
                     <div style="text-align:center;">
                         <div style="font-size:0.65rem; color:var(--text-muted); text-transform:uppercase;">Saldo</div>
-                        <div style="font-size:1.1rem; font-weight:800; color:#ef4444;">₡${_fmtMoney(prest.saldo)}</div>
+                        <div style="font-size:1.1rem; font-weight:800; color:#ef4444;">â‚¡${_fmtMoney(prest.saldo)}</div>
                     </div>
                 </div>
             </div>`;
 
         if (abonos.length === 0) {
-            html += '<p style="text-align:center; color:var(--text-muted); padding:2rem;">No hay abonos registrados aún.</p>';
+            html += '<p style="text-align:center; color:var(--text-muted); padding:2rem;">No hay abonos registrados aÃºn.</p>';
         } else {
             html += `
             <div class="vac-emp-card" style="padding:0; overflow:hidden;">
@@ -1413,14 +1430,16 @@ async function verAbonosPrestamo(prestamoId, empName) {
                     ${abonos.map(a => `
                     <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
                         <td style="padding:8px 12px; color:var(--text-main);">${_formatDateEs(a.fecha)}</td>
-                        <td style="padding:8px 12px; text-align:right; font-weight:700; color:#10b981;">₡${_fmtMoney(a.monto)}</td>
+                        <td style="padding:8px 12px; text-align:right; font-weight:700; color:#10b981;">â‚¡${_fmtMoney(a.monto)}</td>
                         <td style="padding:8px 12px; text-align:center;">
                             ${a.tipo === 'planilla' ? 
-                                '<span style="background:rgba(139,92,246,0.15); color:#8b5cf6; padding:2px 8px; border-radius:5px; font-size:0.68rem; font-weight:600;">Planilla</span>' :
+                                (a.semana_planilla
+                                    ? '<span style="background:rgba(139,92,246,0.15); color:#8b5cf6; padding:2px 8px; border-radius:5px; font-size:0.68rem; font-weight:600;">Planilla auto</span>'
+                                    : '<span style="background:rgba(139,92,246,0.15); color:#8b5cf6; padding:2px 8px; border-radius:5px; font-size:0.68rem; font-weight:600;">Planilla manual</span>') :
                                 '<span style="background:rgba(245,158,11,0.15); color:#f59e0b; padding:2px 8px; border-radius:5px; font-size:0.68rem; font-weight:600;">Extraordinario</span>'
                             }
                         </td>
-                        <td style="padding:8px 12px; color:var(--text-muted); font-size:0.75rem;">${a.notas || '—'}</td>
+                        <td style="padding:8px 12px; color:var(--text-muted); font-size:0.75rem;">${a.notas || a.semana_planilla || 'â€”'}</td>
                     </tr>`).join('')}
                     </tbody>
                 </table>
@@ -1434,12 +1453,12 @@ async function verAbonosPrestamo(prestamoId, empName) {
 }
 
 async function eliminarPrestamo(prestamoId, empName) {
-    if (!confirm(`¿Eliminar el préstamo de ${empName}? Se eliminarán todos los abonos registrados.`)) return;
+    if (!confirm(`Â¿Eliminar el prÃ©stamo de ${empName}? Se eliminarÃ¡n todos los abonos registrados.`)) return;
     try {
         const res = await fetch(`/api/planillas/prestamos/${prestamoId}`, { method: 'DELETE' });
         if (!res.ok) throw new Error('Error al eliminar');
         loadVacSubPrestamos();
-        if (typeof showToast === 'function') showToast('Préstamo eliminado', 'success');
+        if (typeof showToast === 'function') showToast('PrÃ©stamo eliminado', 'success');
     } catch (e) { alert(e.message); }
 }
 
@@ -1508,18 +1527,18 @@ async function procesarAguinaldo() {
             <div class="agui-summary">
                 <div class="agui-summary-left">
                     <div class="agui-summary-label">Resumen ${anio}</div>
-                    <div class="agui-summary-sub">${data.meses_evaluados} meses evaluados · Salario Bruto</div>
+                    <div class="agui-summary-sub">${data.meses_evaluados} meses evaluados Â· Salario Bruto</div>
                 </div>
                 <div class="agui-summary-right">
                     <div class="agui-summary-label">Total Aguinaldo Proyectado</div>
-                    <div class="agui-total">₡${_money(data.total_aguinaldo)}</div>
+                    <div class="agui-total">â‚¡${_money(data.total_aguinaldo)}</div>
                 </div>
             </div>
             <div class="portal-table-wrap">
                 <table class="ptable agui-table">
                     <thead><tr>
                         <th class="ptable-left">Colaborador</th>
-                        <th>Cédula</th>
+                        <th>CÃ©dula</th>
                         <th class="ptable-right">Sal. Bruto Anual</th>
                         <th class="ptable-right">Aguinaldo</th>
                         <th style="width:40px;"></th>
@@ -1537,8 +1556,8 @@ async function procesarAguinaldo() {
                     </div>
                 </td>
                 <td><span class="ptable-muted">${row.cedula || '--'}</span></td>
-                <td class="ptable-right"><span class="ptable-mono">₡${_money(row.salario_anual)}</span></td>
-                <td class="ptable-right"><span class="ptable-mono ptable-num-ok">₡${_money(row.aguinaldo)}</span></td>
+                <td class="ptable-right"><span class="ptable-mono">â‚¡${_money(row.salario_anual)}</span></td>
+                <td class="ptable-right"><span class="ptable-mono ptable-num-ok">â‚¡${_money(row.aguinaldo)}</span></td>
                 <td style="text-align:center;">
                     ${hasDesglose ? '<i class="fa-solid fa-chevron-down agui-chevron" id="agui-chev-' + idx + '" style="transition:transform 0.2s;font-size:0.7rem;color:var(--text-muted);"></i>' : ''}
                 </td>
@@ -1549,18 +1568,18 @@ async function procesarAguinaldo() {
                 html += `<tr id="agui-detail-${idx}" class="agui-detail-row" style="display:none;">
                     <td colspan="5" style="padding:0;">
                         <div class="agui-desglose">
-                            <div class="agui-desglose-title"><i class="fa-solid fa-chart-bar"></i> Desglose Mensual — Salario Bruto</div>
+                            <div class="agui-desglose-title"><i class="fa-solid fa-chart-bar"></i> Desglose Mensual â€” Salario Bruto</div>
                             <div class="agui-desglose-grid">`;
                 row.desglose_mensual.forEach(m => {
                     html += `<div class="agui-mes-item">
                         <span class="agui-mes-label">${m.mes}</span>
-                        <span class="agui-mes-val">₡${_money(m.bruto)}</span>
+                        <span class="agui-mes-val">â‚¡${_money(m.bruto)}</span>
                     </div>`;
                 });
                 html += `
                             </div>
                             <div class="agui-desglose-calc">
-                                <span>Cálculo: ₡${_money(row.salario_anual)} ÷ 12 = <strong style="color:#10b981;">₡${_money(row.aguinaldo)}</strong></span>
+                                <span>CÃ¡lculo: â‚¡${_money(row.salario_anual)} Ã· 12 = <strong style="color:#10b981;">â‚¡${_money(row.aguinaldo)}</strong></span>
                             </div>
                         </div>
                     </td>
@@ -1577,7 +1596,7 @@ async function procesarAguinaldo() {
 
 async function sincronizarAguinaldo() {
     const anio = document.getElementById('aguiAnioSelect').value;
-    if (!confirm(`¿Sincronizar los salarios del año ${anio} desde el Excel actual?\nEsto buscará todas las hojas de semana y guardará los sueldos brutos en la base de datos.`)) return;
+    if (!confirm(`Â¿Sincronizar los salarios del aÃ±o ${anio} desde el Excel actual?\nEsto buscarÃ¡ todas las hojas de semana y guardarÃ¡ los sueldos brutos en la base de datos.`)) return;
 
     const btn = document.getElementById('btnSincronizarAguinaldo');
     const originalHTML = btn ? btn.innerHTML : null;
@@ -1635,7 +1654,7 @@ async function loadPlanillaMensualTab() {
                             <i class="fa-solid fa-file-invoice-dollar"></i>
                         </div>
                         <div>
-                            <h2 class="portal-title">Gestión de Planilla</h2>
+                            <h2 class="portal-title">GestiÃ³n de Planilla</h2>
                             <p class="portal-subtitle" id="pmensualSubtitle">Cargando mes activo...</p>
                         </div>
                     </div>
@@ -1664,7 +1683,7 @@ async function loadPlanillaMensualTab() {
         `;
 
         if (!data.mes) {
-            subtitle.textContent = "Ningún mes activo";
+            subtitle.textContent = "NingÃºn mes activo";
             actionsHtml += `<button class="btn-action primary" onclick="abrirNuevoMes()"><i class="fa-solid fa-plus"></i> Iniciar Mes</button>`;
             actions.innerHTML = actionsHtml;
             content.innerHTML = `
@@ -1679,6 +1698,7 @@ async function loadPlanillaMensualTab() {
 
         const mes = data.mes;
         const semanas = data.semanas || [];
+        await syncPrestamoRebajosPlanilla(mes.id);
 
         // Month is active
         const meses_nombres = {
@@ -1693,7 +1713,7 @@ async function loadPlanillaMensualTab() {
         actionsHtml += `
             <button class="btn-action" onclick="abrirBoletas(${mes.id})"><i class="fa-solid fa-image"></i> Boletas (WA)</button>
             <button class="btn-action" style="color: #10b981; border-color: rgba(16,185,129,0.3);" onclick="abrirExcel()"><i class="fa-solid fa-file-excel"></i> Ver Excel</button>
-            <button class="btn-action primary" onclick="abrirNuevaSemana()"><i class="fa-solid fa-plus"></i> Añadir Semana</button>
+            <button class="btn-action primary" onclick="abrirNuevaSemana()"><i class="fa-solid fa-plus"></i> AÃ±adir Semana</button>
         `;
         actions.innerHTML = actionsHtml;
 
@@ -1704,7 +1724,7 @@ async function loadPlanillaMensualTab() {
                         <th class="ptable-left">Semana</th>
                         <th>Fecha Inicial (Viernes)</th>
                         <th>Registro</th>
-                        <th>Acción</th>
+                        <th>AcciÃ³n</th>
                     </tr></thead>
                     <tbody>`;
 
@@ -1742,7 +1762,7 @@ async function loadPlanillaMensualTab() {
                     <div class="agui-summary-sub">Semanas registradas: ${semanas.length}</div>
                 </div>
                 <div class="agui-summary-right" style="display:flex; gap: 10px; align-items:center;">
-                    <span style="font-size:0.8rem; color: var(--text-muted); text-align:right;">Al cerrar el mes se considerará<br>listo para el Aguinaldo.</span>
+                    <span style="font-size:0.8rem; color: var(--text-muted); text-align:right;">Al cerrar el mes se considerarÃ¡<br>listo para el Aguinaldo.</span>
                     <button class="btn-action primary" style="background: #ef4444;" onclick="cerrarMes(${mes.id}, '${mName} ${mes.anio}')">
                         <i class="fa-solid fa-lock"></i> Cerrar Mes
                     </button>
@@ -1826,7 +1846,7 @@ async function crearNuevoMes() {
 }
 
 async function cerrarMes(id, nombre) {
-    if (!confirm(`¿Estás seguro que deseas cerrar el mes de ${nombre}? Ya no podrás agregar más semanas.`)) return;
+    if (!confirm(`Â¿EstÃ¡s seguro que deseas cerrar el mes de ${nombre}? Ya no podrÃ¡s agregar mÃ¡s semanas.`)) return;
     try {
         const res = await fetch(`/api/planillas/meses/${id}/cerrar`, { method: 'POST' });
         if (!res.ok) throw new Error("Error al cerrar");
@@ -1898,7 +1918,7 @@ async function guardarNuevaSemana() {
 }
 
 async function eliminarSemana(id, num) {
-    if (!confirm(`¿Eliminar la Semana ${num}? Se borrará del Excel también.`)) return;
+    if (!confirm(`Â¿Eliminar la Semana ${num}? Se borrarÃ¡ del Excel tambiÃ©n.`)) return;
     try {
         const res = await fetch(`/api/planillas/semanas/${id}`, { method: 'DELETE' });
         if (!res.ok) throw new Error("Error al eliminar");
@@ -2000,7 +2020,7 @@ async function ejecutarImportarHorario() {
     const horarioId = document.getElementById('importHorarioSel').value;
     const syncEmps = document.getElementById('importSyncEmps').checked;
 
-    if (!horarioId) return alert("Selecciona un horario válido.");
+    if (!horarioId) return alert("Selecciona un horario vÃ¡lido.");
 
     const btn = document.querySelector('#importarHorarioModal .btn-action.primary');
     let prevText = "";
@@ -2039,7 +2059,7 @@ async function ejecutarImportarHorario() {
 }
 
 // =============================================================================
-// TAB: UTILIDADES — GENERADOR DE DOCUMENTOS WORD
+// TAB: UTILIDADES â€” GENERADOR DE DOCUMENTOS WORD
 // =============================================================================
 let _utilEmpleados = [];
 
@@ -2069,21 +2089,21 @@ async function loadUtilidadesTab() {
             </div>
 
             <div class="util-cards-grid">
-                <!-- Card 1: Préstamo -->
+                <!-- Card 1: PrÃ©stamo -->
                 <div class="util-card" onclick="showUtilForm('prestamo')">
                     <div class="util-card-icon" style="background: linear-gradient(135deg, #6366f1, #8b5cf6);">
                         <i class="fa-solid fa-hand-holding-dollar"></i>
                     </div>
-                    <h3>Contrato de Préstamo</h3>
-                    <p>Genera un contrato con monto, pago semanal y fecha de liquidación</p>
+                    <h3>Contrato de PrÃ©stamo</h3>
+                    <p>Genera un contrato con monto, pago semanal y fecha de liquidaciÃ³n</p>
                 </div>
 
-                <!-- Card 2: Amonestación -->
+                <!-- Card 2: AmonestaciÃ³n -->
                 <div class="util-card" onclick="showUtilForm('amonestacion')">
                     <div class="util-card-icon" style="background: linear-gradient(135deg, #ef4444, #f97316);">
                         <i class="fa-solid fa-triangle-exclamation"></i>
                     </div>
-                    <h3>Carta de Amonestación</h3>
+                    <h3>Carta de AmonestaciÃ³n</h3>
                     <p>Detalla faltantes con fecha y monto en una carta formal</p>
                 </div>
 
@@ -2093,7 +2113,7 @@ async function loadUtilidadesTab() {
                         <i class="fa-solid fa-umbrella-beach"></i>
                     </div>
                     <h3>Constancia de Vacaciones</h3>
-                    <p>Genera una constancia con fechas, tipo y cálculo automático de días</p>
+                    <p>Genera una constancia con fechas, tipo y cÃ¡lculo automÃ¡tico de dÃ­as</p>
                 </div>
 
                 <!-- Card 4: Carta de Despido -->
@@ -2102,7 +2122,7 @@ async function loadUtilidadesTab() {
                         <i class="fa-solid fa-user-xmark"></i>
                     </div>
                     <h3>Carta de Despido</h3>
-                    <p>Genera la carta de despido con el cálculo de liquidación (aguinaldo y vacaciones)</p>
+                    <p>Genera la carta de despido con el cÃ¡lculo de liquidaciÃ³n (aguinaldo y vacaciones)</p>
                 </div>
 
                 <!-- Card 5: Carta de Renuncia -->
@@ -2110,27 +2130,27 @@ async function loadUtilidadesTab() {
                     <div class="util-card-icon" style="background: linear-gradient(135deg, #8b5cf6, #d946ef);">
                         <i class="fa-solid fa-file-signature"></i>
                     </div>
-                    <h3>Aceptación de Renuncia</h3>
+                    <h3>AceptaciÃ³n de Renuncia</h3>
                     <p>Documenta la renuncia voluntaria con los rubros a cancelar al colaborador</p>
                 </div>
 
-                <!-- Card 6: Carta de Recomendación -->
+                <!-- Card 6: Carta de RecomendaciÃ³n -->
                 <div class="util-card" onclick="showUtilForm('recomendacion')">
                     <div class="util-card-icon" style="background: linear-gradient(135deg, #06b6d4, #0ea5e9);">
                         <i class="fa-solid fa-award"></i>
                     </div>
-                    <h3>Carta de Recomendación</h3>
-                    <p>Genera una carta de recomendación genérica para el colaborador seleccionado</p>
+                    <h3>Carta de RecomendaciÃ³n</h3>
+                    <p>Genera una carta de recomendaciÃ³n genÃ©rica para el colaborador seleccionado</p>
                 </div>
             </div>
 
             <!-- ========== FORMS (hidden by default) ========== -->
 
 
-            <!-- PRÉSTAMO FORM -->
+            <!-- PRÃ‰STAMO FORM -->
             <div id="util-form-prestamo" class="util-form-panel hidden">
                 <div class="util-form-header">
-                    <h3><i class="fa-solid fa-hand-holding-dollar" style="color:#8b5cf6;"></i> Contrato de Préstamo</h3>
+                    <h3><i class="fa-solid fa-hand-holding-dollar" style="color:#8b5cf6;"></i> Contrato de PrÃ©stamo</h3>
                     <button class="util-form-close" onclick="hideUtilForm('prestamo')">&times;</button>
                 </div>
                 <div class="util-form-body">
@@ -2140,11 +2160,11 @@ async function loadUtilidadesTab() {
                     </div>
                     <div class="input-row">
                         <div class="input-group">
-                            <label>Monto Total (₡)</label>
+                            <label>Monto Total (â‚¡)</label>
                             <input type="number" id="utilPrestamoMonto" placeholder="Ej: 50000" oninput="calcPrestamo()">
                         </div>
                         <div class="input-group">
-                            <label>Pago Semanal (₡)</label>
+                            <label>Pago Semanal (â‚¡)</label>
                             <input type="number" id="utilPrestamoPago" placeholder="Ej: 5000" oninput="calcPrestamo()">
                         </div>
                     </div>
@@ -2155,10 +2175,10 @@ async function loadUtilidadesTab() {
                 </div>
             </div>
 
-            <!-- AMONESTACIÓN FORM -->
+            <!-- AMONESTACIÃ“N FORM -->
             <div id="util-form-amonestacion" class="util-form-panel hidden">
                 <div class="util-form-header">
-                    <h3><i class="fa-solid fa-triangle-exclamation" style="color:#ef4444;"></i> Carta de Amonestación</h3>
+                    <h3><i class="fa-solid fa-triangle-exclamation" style="color:#ef4444;"></i> Carta de AmonestaciÃ³n</h3>
                     <button class="util-form-close" onclick="hideUtilForm('amonestacion')">&times;</button>
                 </div>
                 <div class="util-form-body">
@@ -2168,10 +2188,10 @@ async function loadUtilidadesTab() {
                             <select id="utilAmonestacionEmp">${empOptions}</select>
                         </div>
                         <div class="input-group" style="flex:1;">
-                            <label>Tipo de Amonestación</label>
+                            <label>Tipo de AmonestaciÃ³n</label>
                             <select id="utilAmonestacionTipo" onchange="toggleAmonestacionCampos()">
                                 <option value="faltantes">Por Faltantes</option>
-                                <option value="tardanzas">Llegadas Tardías</option>
+                                <option value="tardanzas">Llegadas TardÃ­as</option>
                                 <option value="conductas">Conductas Inapropiadas</option>
                             </select>
                         </div>
@@ -2242,29 +2262,29 @@ async function loadUtilidadesTab() {
                     
                     <div class="input-row" style="margin-top:1rem;">
                         <div class="input-group">
-                            <label>Días Vacaciones a Pagar</label>
+                            <label>DÃ­as Vacaciones a Pagar</label>
                             <input type="number" step="0.5" id="utilDespidoVacDias" placeholder="Ej: 5" oninput="calcLiquidacion('despido')">
                         </div>
                         <div class="input-group">
-                            <label>Monto Vacaciones (₡)</label>
+                            <label>Monto Vacaciones (â‚¡)</label>
                             <input type="number" id="utilDespidoVacMonto" placeholder="Ej: 35000" oninput="calcLiquidacion('despido')">
                         </div>
                     </div>
                     
                     <div class="input-row">
                         <div class="input-group">
-                            <label>Monto Aguinaldo (₡)</label>
+                            <label>Monto Aguinaldo (â‚¡)</label>
                             <input type="number" id="utilDespidoAguinaldo" placeholder="Ej: 150000" oninput="calcLiquidacion('despido')">
                         </div>
                         <div class="input-group">
-                            <label>Auxilio Cesantía (₡)</label>
+                            <label>Auxilio CesantÃ­a (â‚¡)</label>
                             <input type="number" id="utilDespidoCesantia" placeholder="Auto-calc" oninput="calcLiquidacion('despido')">
                         </div>
                     </div>
                     
                     <div class="input-row">
                         <div class="input-group">
-                            <label>Preaviso (₡)</label>
+                            <label>Preaviso (â‚¡)</label>
                             <input type="number" id="utilDespidoPreaviso" placeholder="Auto-calc" oninput="calcLiquidacion('despido')">
                         </div>
                         <div class="input-group">
@@ -2277,7 +2297,7 @@ async function loadUtilidadesTab() {
                     </div>
 
                     <div id="utilDespidoCalc" class="util-calc-box" style="display:block;">
-                        <div class="util-calc-row"><span>Total a Liquidar</span><strong style="color:red;font-size:1.1rem" id="utilDespidoTotal">₡0.00</strong></div>
+                        <div class="util-calc-row"><span>Total a Liquidar</span><strong style="color:red;font-size:1.1rem" id="utilDespidoTotal">â‚¡0.00</strong></div>
                     </div>
 
                     <button class="btn-action primary" onclick="generarLiquidacion('despido')" style="margin-top: 1rem; width: 100%;">
@@ -2289,7 +2309,7 @@ async function loadUtilidadesTab() {
             <!-- RENUNCIA FORM -->
             <div id="util-form-renuncia" class="util-form-panel hidden">
                 <div class="util-form-header">
-                    <h3><i class="fa-solid fa-file-signature" style="color:#8b5cf6;"></i> Aceptación de Renuncia</h3>
+                    <h3><i class="fa-solid fa-file-signature" style="color:#8b5cf6;"></i> AceptaciÃ³n de Renuncia</h3>
                     <button class="util-form-close" onclick="hideUtilForm('renuncia')">&times;</button>
                 </div>
                 <div class="util-form-body">
@@ -2301,18 +2321,18 @@ async function loadUtilidadesTab() {
                     
                     <div class="input-row" style="margin-top:1rem;">
                         <div class="input-group">
-                            <label>Días Vacaciones a Pagar</label>
+                            <label>DÃ­as Vacaciones a Pagar</label>
                             <input type="number" step="0.5" id="utilRenunciaVacDias" placeholder="Ej: 5" oninput="calcLiquidacion('renuncia')">
                         </div>
                         <div class="input-group">
-                            <label>Monto Vacaciones (₡)</label>
+                            <label>Monto Vacaciones (â‚¡)</label>
                             <input type="number" id="utilRenunciaVacMonto" placeholder="Ej: 35000" oninput="calcLiquidacion('renuncia')">
                         </div>
                     </div>
                     
                     <div class="input-row">
                         <div class="input-group">
-                            <label>Monto Aguinaldo (₡)</label>
+                            <label>Monto Aguinaldo (â‚¡)</label>
                             <input type="number" id="utilRenunciaAguinaldo" placeholder="Ej: 150000" oninput="calcLiquidacion('renuncia')">
                         </div>
                         <div class="input-group">
@@ -2325,19 +2345,19 @@ async function loadUtilidadesTab() {
                     </div>
 
                     <div id="utilRenunciaCalc" class="util-calc-box" style="display:block;">
-                        <div class="util-calc-row"><span>Total a Liquidar</span><strong style="color:red;font-size:1.1rem" id="utilRenunciaTotal">₡0.00</strong></div>
+                        <div class="util-calc-row"><span>Total a Liquidar</span><strong style="color:red;font-size:1.1rem" id="utilRenunciaTotal">â‚¡0.00</strong></div>
                     </div>
 
                     <button class="btn-action primary" onclick="generarLiquidacion('renuncia')" style="margin-top: 1rem; width: 100%;">
-                        <i class="fa-solid fa-file-word"></i> Generar Aceptación
+                        <i class="fa-solid fa-file-word"></i> Generar AceptaciÃ³n
                     </button>
                 </div>
             </div>
 
-            <!-- RECOMENDACIÓN FORM -->
+            <!-- RECOMENDACIÃ“N FORM -->
             <div id="util-form-recomendacion" class="util-form-panel hidden">
                 <div class="util-form-header">
-                    <h3><i class="fa-solid fa-award" style="color:#06b6d4;"></i> Carta de Recomendación</h3>
+                    <h3><i class="fa-solid fa-award" style="color:#06b6d4;"></i> Carta de RecomendaciÃ³n</h3>
                     <button class="util-form-close" onclick="hideUtilForm('recomendacion')">&times;</button>
                 </div>
                 <div class="util-form-body">
@@ -2351,7 +2371,7 @@ async function loadUtilidadesTab() {
                     </div>
                     <div class="input-group" style="margin-top:0.8rem;">
                         <label>Texto adicional (opcional)</label>
-                        <textarea id="utilRecomendacionTexto" rows="3" placeholder="Texto personalizado que se incluirá en la carta..." style="width:100%;padding:8px;background:var(--bg-app);color:var(--text-main);border:1px solid var(--border);border-radius:8px;resize:vertical;"></textarea>
+                        <textarea id="utilRecomendacionTexto" rows="3" placeholder="Texto personalizado que se incluirÃ¡ en la carta..." style="width:100%;padding:8px;background:var(--bg-app);color:var(--text-main);border:1px solid var(--border);border-radius:8px;resize:vertical;"></textarea>
                     </div>
                     <button class="btn-action primary" onclick="generarRecomendacion()" style="margin-top: 1rem; width: 100%;">
                         <i class="fa-solid fa-file-word"></i> Generar Carta
@@ -2386,7 +2406,7 @@ function hideUtilForm(type) {
     document.getElementById(`util-form-${type}`)?.classList.add('hidden');
 }
 
-// ── Préstamo Calc ──
+// â”€â”€ PrÃ©stamo Calc â”€â”€
 function calcPrestamo() {
     const monto = parseFloat(document.getElementById('utilPrestamoMonto').value) || 0;
     const pago = parseFloat(document.getElementById('utilPrestamoPago').value) || 0;
@@ -2397,7 +2417,7 @@ function calcPrestamo() {
         fecha.setDate(fecha.getDate() + semanas * 7);
         box.innerHTML = `
             <div class="util-calc-row"><span>Semanas estimadas</span><strong>${semanas}</strong></div>
-            <div class="util-calc-row"><span>Fecha de liquidación</span><strong>${fecha.toLocaleDateString('es-CR')}</strong></div>
+            <div class="util-calc-row"><span>Fecha de liquidaciÃ³n</span><strong>${fecha.toLocaleDateString('es-CR')}</strong></div>
         `;
         box.style.display = 'block';
     } else {
@@ -2417,11 +2437,11 @@ async function generarPrestamo() {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
         });
         if (!res.ok) { const e = await res.json(); throw new Error(e.detail); }
-        alert('✅ Documento de Préstamo generado exitosamente.');
+        alert('âœ… Documento de PrÃ©stamo generado exitosamente.');
     } catch (e) { alert('Error: ' + e.message); }
 }
 
-// ── Amonestación ──
+// â”€â”€ AmonestaciÃ³n â”€â”€
 let _amoCount = 0;
 
 function toggleAmonestacionCampos() {
@@ -2442,7 +2462,7 @@ function toggleAmonestacionCampos() {
         addAmonestacionRow();
     } else if (tipo === 'tardanzas') {
         dynamicDiv.style.display = 'block';
-        label.innerText = 'Llegadas Tardías';
+        label.innerText = 'Llegadas TardÃ­as';
         btn.innerHTML = '<i class="fa-solid fa-plus"></i> Agregar Tardanza';
         addAmonestacionRow();
     } else if (tipo === 'conductas') {
@@ -2468,7 +2488,7 @@ function addAmonestacionRow() {
                     <input type="date" class="amo-fecha">
                 </div>
                 <div class="input-group" style="flex:1;">
-                    <label>Monto (₡)</label>
+                    <label>Monto (â‚¡)</label>
                     <input type="number" class="amo-val" placeholder="Ej: 15000">
                 </div>
                 <button class="btn-action danger" style="height:42px; min-width:42px; padding: 0 10px;" onclick="this.closest('.faltante-row').remove()">
@@ -2514,7 +2534,7 @@ async function generarAmonestacion() {
                 }
             }
         });
-        if (datos.length === 0) return alert('Agrega al menos un registro válido para esta amonestación.');
+        if (datos.length === 0) return alert('Agrega al menos un registro vÃ¡lido para esta amonestaciÃ³n.');
     }
 
     try {
@@ -2523,11 +2543,11 @@ async function generarAmonestacion() {
             body: JSON.stringify({ emp_id: empId, tipo: tipo, datos: datos })
         });
         if (!res.ok) { const e = await res.json(); throw new Error(e.detail); }
-        alert('✅ Carta de Amonestación generada exitosamente.');
+        alert('âœ… Carta de AmonestaciÃ³n generada exitosamente.');
     } catch (e) { alert('Error: ' + e.message); }
 }
 
-// ── Liquidación (Despido / Renuncia) ──
+// â”€â”€ LiquidaciÃ³n (Despido / Renuncia) â”€â”€
 function _cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
 
 function calcLiquidacion(formType) {
@@ -2536,7 +2556,7 @@ function calcLiquidacion(formType) {
     const aMonto = parseFloat(document.getElementById(`${p}Aguinaldo`).value) || 0;
     let total = vMonto + aMonto;
 
-    // Despido includes cesantía + preaviso
+    // Despido includes cesantÃ­a + preaviso
     if (formType === 'despido') {
         const cMonto = parseFloat(document.getElementById(`${p}Cesantia`).value) || 0;
         const pMonto = parseFloat(document.getElementById(`${p}Preaviso`).value) || 0;
@@ -2545,7 +2565,7 @@ function calcLiquidacion(formType) {
 
     const label = document.getElementById(`${p}Total`);
     if (label) {
-        label.innerText = `₡${total.toLocaleString('es-CR', { minimumFractionDigits: 2 })}`;
+        label.innerText = `â‚¡${total.toLocaleString('es-CR', { minimumFractionDigits: 2 })}`;
     }
 }
 
@@ -2557,7 +2577,7 @@ async function autoFillLiquidacion(formType) {
     const infoBox = document.getElementById(`${p}Info`);
     if (infoBox) {
         infoBox.style.display = 'block';
-        infoBox.innerHTML = '<span style="color:var(--text-dim);font-size:0.85rem;">⏳ Calculando liquidación...</span>';
+        infoBox.innerHTML = '<span style="color:var(--text-dim);font-size:0.85rem;">â³ Calculando liquidaciÃ³n...</span>';
     }
 
     try {
@@ -2577,9 +2597,9 @@ async function autoFillLiquidacion(formType) {
         // Info box
         if (infoBox) {
             infoBox.innerHTML = `
-                <div class="util-calc-row"><span>Antigüedad</span><strong>${d.antiguedad_anios || 0} años</strong></div>
-                <div class="util-calc-row"><span>Sal. Promedio Mensual</span><strong>₡${(d.salario_promedio_mensual || 0).toLocaleString('es-CR', { minimumFractionDigits: 2 })}</strong></div>
-                <div class="util-calc-row"><span>Tarifa Diurna/h</span><strong>₡${(d.tarifa_diurna || 0).toLocaleString('es-CR', { minimumFractionDigits: 2 })}</strong></div>
+                <div class="util-calc-row"><span>AntigÃ¼edad</span><strong>${d.antiguedad_anios || 0} aÃ±os</strong></div>
+                <div class="util-calc-row"><span>Sal. Promedio Mensual</span><strong>â‚¡${(d.salario_promedio_mensual || 0).toLocaleString('es-CR', { minimumFractionDigits: 2 })}</strong></div>
+                <div class="util-calc-row"><span>Tarifa Diurna/h</span><strong>â‚¡${(d.tarifa_diurna || 0).toLocaleString('es-CR', { minimumFractionDigits: 2 })}</strong></div>
             `;
         }
 
@@ -2606,7 +2626,7 @@ async function generarLiquidacion(formType) {
     const total = vMonto + aMonto + cMonto + pMonto;
 
     if (total <= 0) {
-        if (!confirm('El total a pagar es ₡0. ¿Estás seguro de continuar con la generación del documento?')) return;
+        if (!confirm('El total a pagar es â‚¡0. Â¿EstÃ¡s seguro de continuar con la generaciÃ³n del documento?')) return;
     }
 
     const data = {
@@ -2625,11 +2645,11 @@ async function generarLiquidacion(formType) {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
         });
         if (!res.ok) { const e = await res.json(); throw new Error(e.detail); }
-        alert(`✅ Documento de ${_cap(formType)} generado exitosamente.`);
+        alert(`âœ… Documento de ${_cap(formType)} generado exitosamente.`);
     } catch (e) { alert('Error: ' + e.message); }
 }
 
-// ── Carta de Recomendación ──
+// â”€â”€ Carta de RecomendaciÃ³n â”€â”€
 async function generarRecomendacion() {
     const empId = parseInt(document.getElementById('utilRecomendacionEmp').value);
     const puesto = document.getElementById('utilRecomendacionPuesto').value.trim();
@@ -2647,11 +2667,11 @@ async function generarRecomendacion() {
             body: JSON.stringify({ emp_id: empId, puesto, texto_adicional: textoAdicional })
         });
         if (!res.ok) { const e = await res.json(); throw new Error(e.detail); }
-        alert('✅ Carta de Recomendación generada exitosamente.');
+        alert('âœ… Carta de RecomendaciÃ³n generada exitosamente.');
     } catch (e) { alert('Error: ' + e.message); }
 }
 
-// ── Constancia Vacaciones: validar disponibles ──
+// â”€â”€ Constancia Vacaciones: validar disponibles â”€â”€
 async function checkVacDisponibles() {
     const empId = parseInt(document.getElementById('utilVacacionesEmp').value);
     const warn = document.getElementById('utilVacDispWarn');
@@ -2663,11 +2683,11 @@ async function checkVacDisponibles() {
         const disp = data.disponibles || 0;
         if (disp <= 0) {
             warn.style.display = 'block';
-            warn.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> Este empleado tiene <strong>0 días disponibles</strong>. No se puede generar constancia.`;
+            warn.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> Este empleado tiene <strong>0 dÃ­as disponibles</strong>. No se puede generar constancia.`;
             if (btn) btn.disabled = true;
         } else {
             warn.style.display = 'block';
-            warn.innerHTML = `<i class="fa-solid fa-check-circle" style="color:#10b981;"></i> Días disponibles: <strong style="color:#10b981;">${disp}</strong>`;
+            warn.innerHTML = `<i class="fa-solid fa-check-circle" style="color:#10b981;"></i> DÃ­as disponibles: <strong style="color:#10b981;">${disp}</strong>`;
             if (btn) btn.disabled = false;
         }
     } catch (e) {
@@ -2677,14 +2697,14 @@ async function checkVacDisponibles() {
 }
 
 
-// ── Vacaciones ──
+// â”€â”€ Vacaciones â”€â”€
 function calcVacDias() {
     const inicio = document.getElementById('utilVacInicio').value;
     const reingreso = document.getElementById('utilVacReingreso').value;
     const box = document.getElementById('utilVacCalc');
     if (inicio && reingreso) {
         const dias = Math.round((new Date(reingreso) - new Date(inicio)) / (1000 * 60 * 60 * 24));
-        box.innerHTML = `<div class="util-calc-row"><span>Días totales</span><strong>${dias}</strong></div>`;
+        box.innerHTML = `<div class="util-calc-row"><span>DÃ­as totales</span><strong>${dias}</strong></div>`;
         box.style.display = 'block';
     } else {
         box.style.display = 'none';
@@ -2704,7 +2724,7 @@ async function generarVacaciones() {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
         });
         if (!res.ok) { const e = await res.json(); throw new Error(e.detail); }
-        alert('✅ Constancia de Vacaciones generada exitosamente.');
+        alert('âœ… Constancia de Vacaciones generada exitosamente.');
     } catch (e) { alert('Error: ' + e.message); }
 }
 
@@ -2849,8 +2869,8 @@ function toggleHistSemanas(mesId) {
 }
 
 async function eliminarSemanaHistorial(semanaId, mesId, mesNombre) {
-    if (!confirm(`¿Eliminar esta semana de la planilla "${mesNombre}"?
-Se borrará del Excel también.`)) return;
+    if (!confirm(`Â¿Eliminar esta semana de la planilla "${mesNombre}"?
+Se borrarÃ¡ del Excel tambiÃ©n.`)) return;
     try {
         const res = await fetch(`/api/planillas/semanas/${semanaId}`, { method: 'DELETE' });
         if (!res.ok) { const e = await res.json(); throw new Error(e.detail); }
@@ -2922,10 +2942,10 @@ async function agregarSemanaHistorial(mesId, mesNombre) {
 }
 
 async function eliminarMesHistorial(mesId, mesNombre) {
-    if (!confirm(`¿Eliminar la planilla "${mesNombre}" y TODAS sus semanas?
+    if (!confirm(`Â¿Eliminar la planilla "${mesNombre}" y TODAS sus semanas?
 
-Esta acción borrará los registros de la base de datos y el archivo Excel.
-Esta operación no se puede deshacer.`)) return;
+Esta acciÃ³n borrarÃ¡ los registros de la base de datos y el archivo Excel.
+Esta operaciÃ³n no se puede deshacer.`)) return;
     try {
         const res = await fetch(`/api/planillas/meses/${mesId}`, { method: 'DELETE' });
         if (!res.ok) { const e = await res.json(); throw new Error(e.detail); }
@@ -2935,7 +2955,7 @@ Esta operación no se puede deshacer.`)) return;
 }
 
 // ---------------------------------------------------------------------------
-// Importar horario del generador a una semana de planilla histórica
+// Importar horario del generador a una semana de planilla histÃ³rica
 // ---------------------------------------------------------------------------
 async function abrirImportarHorarioHistorico(mesId, semanaNombre, mesNombre) {
     // Load available schedules from the generator DB
@@ -2955,7 +2975,7 @@ async function abrirImportarHorarioHistorico(mesId, semanaNombre, mesNombre) {
     }
 
     const options = horarios.map(h =>
-        `<option value="${h.id}">${h.name} — ${h.timestamp ? h.timestamp.substring(0, 10) : ''}</option>`
+        `<option value="${h.id}">${h.name} â€” ${h.timestamp ? h.timestamp.substring(0, 10) : ''}</option>`
     ).join('');
 
     // Build a simple inline modal
@@ -2978,7 +2998,7 @@ async function abrirImportarHorarioHistorico(mesId, semanaNombre, mesNombre) {
             <div class="modal-body-scroll">
                 <p class="helper-text-sm" style="margin-bottom:12px;">
                     Importando a <strong>${semanaNombre}</strong> de <strong>${mesNombre}</strong>.
-                    Se rellenarán las horas en el Excel de esa planilla.
+                    Se rellenarÃ¡n las horas en el Excel de esa planilla.
                 </p>
                 <div class="input-group">
                     <label>Horario Generado</label>
@@ -3046,10 +3066,10 @@ async function abrirExcelHistorico(mesId) {
 
 
 // =============================================================================
-// OVERRIDE: buildDayCards — actualiza tarjetas en lugar de destruir/recrear.
+// OVERRIDE: buildDayCards â€” actualiza tarjetas en lugar de destruir/recrear.
 // app.js hace grid.innerHTML = "" en cada selectPill(), lo que resetea el scroll.
-// Esta versión remplaza solo el contenido interno de cada card existente.
-// Como planillas_ui.js carga después de app.js, esta definición toma precedencia.
+// Esta versiÃ³n remplaza solo el contenido interno de cada card existente.
+// Como planillas_ui.js carga despuÃ©s de app.js, esta definiciÃ³n toma precedencia.
 // =============================================================================
 window.buildDayCards = function buildDayCards() {
     const grid = document.getElementById("dayCardsGrid");
@@ -3057,7 +3077,7 @@ window.buildDayCards = function buildDayCards() {
 
     const existingCards = grid.querySelectorAll(".day-card");
 
-    // Si no hay tarjetas aún, construir desde cero (primera renderización)
+    // Si no hay tarjetas aÃºn, construir desde cero (primera renderizaciÃ³n)
     if (existingCards.length === 0) {
         if (typeof DAYS === "undefined" || typeof getDayCardInfo === "undefined") return;
         DAYS.forEach(d => {
@@ -3099,8 +3119,8 @@ window.buildDayCards = function buildDayCards() {
 };
 
 
-// Override switchTab: la versión de app.js nunca activa el botón de la tab,
-// solo el contenido. Esta versión también resalta el botón correcto.
+// Override switchTab: la versiÃ³n de app.js nunca activa el botÃ³n de la tab,
+// solo el contenido. Esta versiÃ³n tambiÃ©n resalta el botÃ³n correcto.
 window.switchTab = function switchTab(id) {
     document.querySelectorAll(".m-tab-content").forEach(c => c.classList.remove("active"));
     document.querySelectorAll(".m-tab").forEach(btn => {
@@ -3128,7 +3148,7 @@ async function loadInventarioTab() {
                         </div>
                         <div>
                             <h2 class="portal-title">Control de Inventario</h2>
-                            <p class="portal-subtitle">Verificación de la carga contra una base editable</p>
+                            <p class="portal-subtitle">VerificaciÃ³n de la carga contra una base editable</p>
                         </div>
                     </div>
                 </div>
@@ -3145,8 +3165,8 @@ async function loadInventarioTab() {
                         <i class="fa-solid fa-cloud-arrow-up"></i>
                     </div>
                     <h3>Subir Excel de Inventario</h3>
-                    <p>Arrastra tu archivo aquí o haz click para seleccionar</p>
-                    <p class="inv-upload-hint">Formato: columnas con Nombre, Precio, Código, Existencias</p>
+                    <p>Arrastra tu archivo aquÃ­ o haz click para seleccionar</p>
+                    <p class="inv-upload-hint">Formato: columnas con Nombre, Precio, CÃ³digo, Existencias</p>
                     <input type="file" id="invFileInput" accept=".xlsx,.xls,.xlsm" style="display:none;" onchange="handleInventarioFile(this)">
                     <label for="invFileInput" class="portal-btn-primary" style="cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
                         <i class="fa-solid fa-file-excel"></i> Examinar Archivo
@@ -3188,7 +3208,7 @@ async function loadInventarioBaseSection() {
             <div class="inv-base-card">
                 <div class="inv-base-header">
                     <div>
-                        <h3 class="inv-section-title"><i class="fa-solid fa-scale-balanced" style="color:#f59e0b;"></i> Base de Comparación</h3>
+                        <h3 class="inv-section-title"><i class="fa-solid fa-scale-balanced" style="color:#f59e0b;"></i> Base de ComparaciÃ³n</h3>
                         <p class="inv-base-subtitle">Se usa para validar el Excel subido y puedes ajustarla si cambian productos o cantidades.</p>
                     </div>
                     <div class="inv-base-actions">
@@ -3209,7 +3229,7 @@ async function loadInventarioBaseSection() {
                         <thead>
                             <tr>
                                 <th>Hoja</th>
-                                <th>Código</th>
+                                <th>CÃ³digo</th>
                                 <th>Producto</th>
                                 <th class="inv-th-num">Precio</th>
                                 <th class="inv-th-num">Cantidad Base</th>
@@ -3219,9 +3239,9 @@ async function loadInventarioBaseSection() {
                             ${arts.map(a => `
                                 <tr>
                                     <td>${a.hoja_origen || 'Manual'}</td>
-                                    <td class="inv-td-code">${a.codigo || '—'}</td>
+                                    <td class="inv-td-code">${a.codigo || 'â€”'}</td>
                                     <td class="inv-td-name">${a.nombre}</td>
-                                    <td class="inv-td-num">₡${_money(a.precio || 0)}</td>
+                                    <td class="inv-td-num">â‚¡${_money(a.precio || 0)}</td>
                                     <td class="inv-td-num">${a.existencias_base ?? 0}</td>
                                 </tr>
                             `).join('')}
@@ -3246,16 +3266,16 @@ async function loadInventarioDashboard() {
             dashboard.innerHTML = `
                 <div class="inv-empty-state">
                     <i class="fa-solid fa-box-open"></i>
-                    <p>No hay cargas de inventario aún.</p>
-                    <p class="inv-empty-hint">Sube tu primer Excel para comenzar la verificación.</p>
+                    <p>No hay cargas de inventario aÃºn.</p>
+                    <p class="inv-empty-hint">Sube tu primer Excel para comenzar la verificaciÃ³n.</p>
                 </div>`;
-            document.querySelector('#invCountChip span').textContent = '0 artículos';
+            document.querySelector('#invCountChip span').textContent = '0 artÃ­culos';
             return;
         }
 
         const r = data.resumen || {};
         const arts = data.articulos || [];
-        document.querySelector('#invCountChip span').textContent = `${r.total_cargados || arts.length} artículos`;
+        document.querySelector('#invCountChip span').textContent = `${r.total_cargados || arts.length} artÃ­culos`;
 
         let html = `
             <div class="inv-date-header">
@@ -3298,7 +3318,7 @@ async function loadInventarioDashboard() {
         if (topDiffs.length) {
             const maxDelta = Math.max(...topDiffs.map(item => Math.abs(item.delta || 0)), 1);
             html += `<div class="inv-top5-section">
-                <h3 class="inv-section-title"><i class="fa-solid fa-fire" style="color:#ef4444;"></i> Diferencias Más Grandes</h3>
+                <h3 class="inv-section-title"><i class="fa-solid fa-fire" style="color:#ef4444;"></i> Diferencias MÃ¡s Grandes</h3>
                 <div class="inv-top5-list">
                     ${topDiffs.map((item, idx) => {
                         const pct = Math.min(100, Math.round((Math.abs(item.delta) / maxDelta) * 100));
@@ -3319,15 +3339,15 @@ async function loadInventarioDashboard() {
         }
 
         html += `<div class="inv-table-section">
-            <h3 class="inv-section-title"><i class="fa-solid fa-table-list" style="color:#6366f1;"></i> Verificación contra Base</h3>
+            <h3 class="inv-section-title"><i class="fa-solid fa-table-list" style="color:#6366f1;"></i> VerificaciÃ³n contra Base</h3>
             <div class="inv-table-wrapper">
                 <table class="inv-table">
                     <thead>
                         <tr>
                             <th>Estado</th>
                             <th>Hoja</th>
-                            <th>Código</th>
-                            <th>Artículo</th>
+                            <th>CÃ³digo</th>
+                            <th>ArtÃ­culo</th>
                             <th class="inv-th-num">Precio</th>
                             <th class="inv-th-num">Base</th>
                             <th class="inv-th-num">Actual</th>
@@ -3338,7 +3358,7 @@ async function loadInventarioDashboard() {
                         ${arts.map((a, idx) => {
                             let statusLabel = 'Coincide';
                             let deltaClass = 'inv-delta-neutral';
-                            let deltaText = a.delta ?? '—';
+                            let deltaText = a.delta ?? 'â€”';
                             let rowClass = '';
 
                             if (a.status === 'difference') {
@@ -3358,12 +3378,12 @@ async function loadInventarioDashboard() {
                             return `
                                 <tr class="${rowClass}" style="animation-delay: ${idx * 0.02}s;">
                                     <td><span class="inv-status-pill inv-status-${a.status || 'match'}">${statusLabel}</span></td>
-                                    <td>${a.hoja_origen || '—'}</td>
-                                    <td class="inv-td-code">${a.codigo || '—'}</td>
+                                    <td>${a.hoja_origen || 'â€”'}</td>
+                                    <td class="inv-td-code">${a.codigo || 'â€”'}</td>
                                     <td class="inv-td-name">${a.nombre}</td>
-                                    <td class="inv-td-num">₡${_money(a.precio || 0)}</td>
-                                    <td class="inv-td-num">${a.existencias_base !== null ? a.existencias_base : '—'}</td>
-                                    <td class="inv-td-num inv-td-current">${a.existencias_actual !== null ? a.existencias_actual : '—'}</td>
+                                    <td class="inv-td-num">â‚¡${_money(a.precio || 0)}</td>
+                                    <td class="inv-td-num">${a.existencias_base !== null ? a.existencias_base : 'â€”'}</td>
+                                    <td class="inv-td-num inv-td-current">${a.existencias_actual !== null ? a.existencias_actual : 'â€”'}</td>
                                     <td class="inv-td-num ${deltaClass}">${deltaText}</td>
                                 </tr>`;
                         }).join('')}
@@ -3416,7 +3436,7 @@ async function loadInventarioHistory() {
                         <i class="fa-solid fa-file-excel" style="color:#10b981;"></i> ${c.archivo_nombre || 'Sin nombre'}
                     </div>
                     <div class="inv-history-count">
-                        <i class="fa-solid fa-cubes"></i> ${c.total_articulos} artículos
+                        <i class="fa-solid fa-cubes"></i> ${c.total_articulos} artÃ­culos
                     </div>
                 </div>
             </div>`;
@@ -3463,7 +3483,7 @@ async function uploadInventarioExcel(file) {
         }
 
         const data = await res.json();
-        showToast(data.message || `Se cargaron ${data.total_articulos} artículos`, 'success');
+        showToast(data.message || `Se cargaron ${data.total_articulos} artÃ­culos`, 'success');
 
         // Reload dashboard
         inner.innerHTML = originalHTML;
@@ -3478,7 +3498,7 @@ async function uploadInventarioExcel(file) {
 }
 
 async function deleteInventarioCarga(cargaId) {
-    if (!confirm('¿Estás seguro de eliminar esta carga de inventario?')) return;
+    if (!confirm('Â¿EstÃ¡s seguro de eliminar esta carga de inventario?')) return;
     try {
         const res = await fetch(`/api/inventario/${cargaId}`, { method: 'DELETE' });
         if (!res.ok) throw new Error('Error al eliminar');
@@ -3507,14 +3527,14 @@ window.openInventarioBaseEditor = async function openInventarioBaseEditor() {
     backdrop.innerHTML = `
         <div class="modal-dialog large" style="max-width:900px;max-height:85vh;display:flex;flex-direction:column;">
             <div class="modal-header-simple">
-                <h3><i class="fa-solid fa-pen-to-square" style="color:#f59e0b;"></i> Editar Base de Comparación</h3>
+                <h3><i class="fa-solid fa-pen-to-square" style="color:#f59e0b;"></i> Editar Base de ComparaciÃ³n</h3>
                 <button class="close-icon" id="invEditorClose"><i class="fa-solid fa-xmark"></i></button>
             </div>
             <div style="overflow:auto;flex:1;padding:0 1.2rem;">
                 <table class="inv-table" style="width:100%;">
                     <thead>
                         <tr>
-                            <th style="width:100px;">Código</th>
+                            <th style="width:100px;">CÃ³digo</th>
                             <th>Producto</th>
                             <th style="width:110px;">Precio</th>
                             <th style="width:90px;">Cant. Base</th>
@@ -3629,3 +3649,4 @@ window.reimportInventarioBaseDefault = async function reimportInventarioBaseDefa
         showToast(e.message, 'error');
     }
 };
+
