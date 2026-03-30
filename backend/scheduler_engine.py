@@ -65,6 +65,37 @@ OVERSTAFF_CAP_VALUE = 5
 OVERSTAFF_ALLOWED_HOURS_AT_CAP_PER_DAY = 1
 
 
+def _am_pm_token(shift_name: str):
+    """Classify any shift into 'AM' (starts before 12) or 'PM' (starts at 12+).
+    Returns None for non-working or ignored shifts."""
+    if shift_name in ("AM", "PM"):
+        return shift_name  # already classified
+    if shift_name not in SHIFTS or shift_name in IGNORED_ROTATION_SHIFTS:
+        return None
+    hours = SHIFTS.get(shift_name, set())
+    if not hours:
+        return None
+    return "AM" if min(hours) < 12 else "PM"
+
+
+def _get_alternating_pairs(config, employees, emp_data):
+    """Return list of (emp1, emp2) pairs for the alternation (opposite AM/PM) constraint.
+
+    Uses config['alternating_pairs'] when explicitly set; otherwise auto-detects
+    pairs from employees with gender == 'F' (preserves the original default behaviour)."""
+    pairs_config = (config or {}).get("alternating_pairs")
+    if pairs_config is not None:
+        result = []
+        for p in pairs_config:
+            members = p.get("employees", [])
+            if len(members) == 2 and members[0] in employees and members[1] in employees:
+                result.append((members[0], members[1]))
+        return result
+    # Default: form a single pair from all gender-F employees (original behaviour)
+    women = [e for e in employees if emp_data.get(e, {}).get("gender") == "F"]
+    return [(women[0], women[1])] if len(women) == 2 else []
+
+
 def get_overstaff_policy():
     return get_overstaff_policy_for_days()
 
@@ -436,7 +467,7 @@ def _fallback_rotation_pool(employee_data: dict, allow_long: bool):
     return pool
 
 
-def build_rotation_history_context(employee_names, employee_map, history_entries, allow_long: bool, night_person_name=None):
+def build_rotation_history_context(employee_names, employee_map, history_entries, allow_long: bool, night_person_name=None, alternating_pair_members=None, rotation_enabled=True):
     normalized_history = []
     for entry in history_entries or []:
         if not isinstance(entry, dict):
@@ -479,17 +510,20 @@ def build_rotation_history_context(employee_names, employee_map, history_entries
             if token not in distinct_history_tokens:
                 distinct_history_tokens.append(token)
 
-        if employee_data.get("gender") == "F":
+        is_alternating = employee_name in (alternating_pair_members or set())
+        if is_alternating:
+            # Alternating pair member: always use AM/PM token cycle
             pool = list(WOMEN_ROTATION_TOKENS)
+        elif rotation_enabled and recent_tokens:
+            # Global rotation enabled: classify history into AM/PM and rotate
+            pool = list(WOMEN_ROTATION_TOKENS)
+            # Re-classify recent_tokens to AM/PM so penalties compare correctly
+            recent_tokens = [_am_pm_token(t) or t for t in recent_tokens]
         elif len(distinct_history_tokens) >= 2:
             pool = list(distinct_history_tokens)
         else:
-            # Employee only has 0 or 1 distinct token in history — they are
-            # consistent on one shift.  Skip rotation entirely so they keep
-            # their current shift via turno_principal consistency (900k/day).
-            # Using the fallback pool incorrectly penalised consistent workers
-            # (e.g. Alejandro always on T10_15-22) and pushed the solver to
-            # arbitrarily switch them to a different shift.
+            # No history and rotation disabled; preserve current shift via
+            # turno_principal consistency (900k/day reward).
             continue
 
         if len(pool) <= 1:
@@ -1461,16 +1495,18 @@ class ShiftScheduler:
         # Si una tiene OFF/VAC/PERM, la restricción no aplica ese día.
         # RELAJACIÓN: En días de colisión (2+ flex OFF), se permite que
         # ambas trabajen el mismo tipo de turno para cubrir picos.
-        women = [e for e in self.employees if self.emp_data[e].get('gender') == 'F']
-        if len(women) == 2:
-            w1, w2 = women[0], women[1]
+        # Alternating pairs: pairs of employees constrained to always be on opposite
+        # AM/PM shifts when both work the same day.
+        # Configurable via config['alternating_pairs']; defaults to gender-F detection.
+        alternating_pairs = _get_alternating_pairs(self.config, self.employees, self.emp_data)
+        alternating_pair_members_set = {e for pair in alternating_pairs for e in pair}
 
-            am_shifts = [s for s in SHIFT_NAMES if SHIFT_IS_WORKING.get(s) and SHIFT_MIN_HOUR.get(s) is not None and SHIFT_MIN_HOUR[s] < 12]
-            pm_shifts = [s for s in SHIFT_NAMES if SHIFT_IS_WORKING.get(s) and SHIFT_MIN_HOUR.get(s) is not None and SHIFT_MIN_HOUR[s] >= 12]
+        am_shifts = [s for s in SHIFT_NAMES if SHIFT_IS_WORKING.get(s) and SHIFT_MIN_HOUR.get(s) is not None and SHIFT_MIN_HOUR[s] < 12]
+        pm_shifts = [s for s in SHIFT_NAMES if SHIFT_IS_WORKING.get(s) and SHIFT_MIN_HOUR.get(s) is not None and SHIFT_MIN_HOUR[s] >= 12]
 
+        for pair_idx, (w1, w2) in enumerate(alternating_pairs):
             # Pre-compute expected rotation direction for this week based on history.
-            # If w1 was AM last week, she should be PM this week (and vice-versa).
-            w1_expected = None  # "AM" or "PM" — what w1 SHOULD be this week
+            w1_expected = None  # "AM" or "PM" -- what w1 SHOULD be this week
             w2_expected = None
             if most_recent_schedule:
                 w1_hist_sched = most_recent_schedule.get(w1, {})
@@ -1499,37 +1535,30 @@ class ShiftScheduler:
                 fixed_w1_token = _fixed_shift_token_for_day(self.emp_data[w1], d)
                 fixed_w2_token = _fixed_shift_token_for_day(self.emp_data[w2], d)
 
-                # If both are manually anchored to the same side, keep the manual setup
-                # and avoid adding any extra cost on top of it.
                 if fixed_w1_token and fixed_w2_token and fixed_w1_token == fixed_w2_token:
                     continue
 
-                # Detect exception days: a fixed shift that conflicts with expected
-                # rotation direction. On exception days, skip the hard opposite
-                # constraint so that OTHER employees fill the gap via coverage,
-                # preserving the other woman's schedule homogeneity.
                 w1_is_exception = (fixed_w1_token and w1_expected and fixed_w1_token != w1_expected)
                 w2_is_exception = (fixed_w2_token and w2_expected and fixed_w2_token != w2_expected)
                 if w1_is_exception or w2_is_exception:
                     continue
 
-                w1_working = model.NewBoolVar(f"w1_working_{d}")
+                w1_working = model.NewBoolVar(f"alt_w1_{pair_idx}_{d}")
                 model.Add(x[(w1, d, "OFF")] + x[(w1, d, "VAC")] + x[(w1, d, "PERM")] == 0).OnlyEnforceIf(w1_working)
                 model.Add(x[(w1, d, "OFF")] + x[(w1, d, "VAC")] + x[(w1, d, "PERM")] >= 1).OnlyEnforceIf(w1_working.Not())
 
-                w2_working = model.NewBoolVar(f"w2_working_{d}")
+                w2_working = model.NewBoolVar(f"alt_w2_{pair_idx}_{d}")
                 model.Add(x[(w2, d, "OFF")] + x[(w2, d, "VAC")] + x[(w2, d, "PERM")] == 0).OnlyEnforceIf(w2_working)
                 model.Add(x[(w2, d, "OFF")] + x[(w2, d, "VAC")] + x[(w2, d, "PERM")] >= 1).OnlyEnforceIf(w2_working.Not())
 
-                both_working = model.NewBoolVar(f"both_women_working_{d}")
+                both_working = model.NewBoolVar(f"alt_both_{pair_idx}_{d}")
                 model.AddBoolAnd([w1_working, w2_working]).OnlyEnforceIf(both_working)
                 model.AddBoolOr([w1_working.Not(), w2_working.Not()]).OnlyEnforceIf(both_working.Not())
 
-                enforce_opposite = model.NewBoolVar(f"enforce_women_opposite_{d}")
+                enforce_opposite = model.NewBoolVar(f"alt_opposite_{pair_idx}_{d}")
                 model.AddBoolAnd([both_working, women_collision[d].Not()]).OnlyEnforceIf(enforce_opposite)
                 model.AddBoolOr([both_working.Not(), women_collision[d]]).OnlyEnforceIf(enforce_opposite.Not())
-                # Determine direction: fixed shifts that ALIGN with rotation take
-                # priority, then history-based alternation, then random fallback.
+
                 if fixed_w1_token:
                     force_w1_am = fixed_w1_token == "AM"
                 elif fixed_w2_token:
@@ -2613,12 +2642,15 @@ class ShiftScheduler:
         # O11. HISTORIAL / ROTACION
         # =========================
         
+        rotation_enabled = self.config.get('rotation_enabled', True)
         rotation_history_context = build_rotation_history_context(
             self.employees,
             self.emp_data,
             history_entries,
             allow_long=allow_long,
             night_person_name=night_person_name,
+            alternating_pair_members=alternating_pair_members_set,
+            rotation_enabled=rotation_enabled,
         )        # 1. EVITAR REPETICION DE HORARIOS (General)
         # HARD CONSTRAINT: No 3-peat — if employee had shift S on day D for the last 
         # 2 consecutive weeks, BLOCK it this week.
@@ -2629,7 +2661,7 @@ class ShiftScheduler:
         def _history_window_for_employee(employee_name, entries):
             if not entries:
                 return []
-            if self.emp_data.get(employee_name, {}).get("gender") == "F":
+            if employee_name in alternating_pair_members_set:
                 return entries[-1:]
             return entries
         
@@ -2676,7 +2708,7 @@ class ShiftScheduler:
             # employees like Alejandro (1 Saturday fixed) lost all history guidance
             # and the solver assigned arbitrary shifts instead of their turno_principal.
             working_fixed_count = len(_working_fixed_shift_days(self.emp_data[e]))
-            if working_fixed_count >= 5 and self.emp_data[e].get("gender") != "F":
+            if working_fixed_count >= 5 and e not in alternating_pair_members_set:
                 continue
             employee_recent_entries = _history_window_for_employee(e, recent_entries)
             for i, entry in enumerate(reversed(employee_recent_entries)):
@@ -2713,15 +2745,24 @@ class ShiftScheduler:
             recent_tokens = ctx.get("recent_tokens", [])
             if not recent_tokens:
                 continue
-            if self.emp_data[e].get("gender") == "F":
-                last_token = recent_tokens[-1]
+            is_alternating = e in alternating_pair_members_set
+            # Determine if this employee uses AM/PM token rotation:
+            # - Alternating pair members always use AM/PM
+            # - All others when rotation_enabled is True and last token is AM/PM
+            last_token = recent_tokens[-1] if recent_tokens else None
+            uses_ampm = is_alternating or (rotation_enabled and last_token in ("AM", "PM"))
+
+            if uses_ampm and last_token in ("AM", "PM"):
                 opposite_token = "PM" if last_token == "AM" else "AM"
+                # Pair members get a stronger signal (900K) than general rotation (600K)
+                penalty_same = 900000 if is_alternating else 600000
+                reward_opp = -180000 if is_alternating else -100000
                 for s, var in turno_principal[e].items():
-                    token = _rotation_token_for_shift(s, self.emp_data[e])
+                    token = _am_pm_token(s)
                     if token == last_token:
-                        penalties.append(900000 * var)
+                        penalties.append(penalty_same * var)
                     elif token == opposite_token:
-                        penalties.append(-180000 * var)
+                        penalties.append(reward_opp * var)
                 continue
             lookback_weeks = min(max(ctx.get("cycle_weeks", 1) - 1, 0), len(recent_tokens))
             if lookback_weeks <= 0:

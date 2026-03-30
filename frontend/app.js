@@ -343,7 +343,7 @@ function renderEmployees() {
         const fixedCount = Object.keys(emp.fixed_shifts || {}).length;
 
         const isInactive = emp.activo === false;
-        
+
         card.innerHTML = `
             <div class="emp-info">
                 <h4 style="${isInactive ? 'filter: grayscale(100%); opacity: 0.8;' : ''}">${emp.name}</h4>
@@ -452,6 +452,23 @@ function renderConfig() {
     if (historyCb) historyCb.checked = config.use_history !== false;
 
     toggleCollisionConfig();
+
+    // Alternating pairs
+    const altAutoMode = config.alternating_pairs === null || config.alternating_pairs === undefined;
+    const altAutoToggle = document.getElementById("alternatingAutoMode");
+    if (altAutoToggle) {
+        altAutoToggle.checked = altAutoMode;
+        const altPairsContainer = document.getElementById("alternatingPairsContainer");
+        if (altPairsContainer) {
+            if (altAutoMode) altPairsContainer.classList.add("hidden");
+            else altPairsContainer.classList.remove("hidden");
+        }
+        renderAlternatingPairs();
+    }
+
+    // Rotation enabled
+    const rotCb = document.getElementById("rotationEnabled");
+    if (rotCb) rotCb.checked = config.rotation_enabled !== false;
 }
 
 function setNightMode(val, btn) {
@@ -499,6 +516,70 @@ function toggleCollisionConfig() {
     updateConfig();
 }
 
+function toggleAlternatingMode() {
+    const isAuto = document.getElementById("alternatingAutoMode")?.checked;
+    const container = document.getElementById("alternatingPairsContainer");
+    if (!container) return;
+    if (isAuto) {
+        container.classList.add("hidden");
+        config.alternating_pairs = null;
+    } else {
+        container.classList.remove("hidden");
+        if (!Array.isArray(config.alternating_pairs)) config.alternating_pairs = [];
+        renderAlternatingPairs();
+    }
+    updateConfig();
+}
+
+function renderAlternatingPairs() {
+    const list = document.getElementById("alternatingPairsList");
+    if (!list) return;
+    const pairs = Array.isArray(config.alternating_pairs) ? config.alternating_pairs : [];
+    if (pairs.length === 0) {
+        list.innerHTML = '<p class="helper-text-sm" style="text-align:center; padding:0.4rem 0; color:var(--text-muted);">Sin pares configurados</p>';
+        return;
+    }
+    list.innerHTML = pairs.map((pair, idx) => {
+        const [e1, e2] = pair.employees || ["", ""];
+        const opts1 = employees.map(e => `<option value="${e.name}" ${e.name === e1 ? 'selected' : ''}>${e.name}</option>`).join('');
+        const opts2 = employees.map(e => `<option value="${e.name}" ${e.name === e2 ? 'selected' : ''}>${e.name}</option>`).join('');
+        return `<div style="display:flex; gap:0.4rem; align-items:center; margin-bottom:0.5rem;">
+            <select onchange="updateAlternatingPair(${idx}, 0, this.value)" style="flex:1; padding:0.35rem 0.5rem; border-radius:6px; border:1px solid var(--border-color); background:var(--surface-2); color:var(--text-main); font-size:0.8rem;">
+                <option value="">Empleado 1</option>${opts1}
+            </select>
+            <i class="fa-solid fa-right-left" style="color:var(--text-muted); font-size:0.72rem; flex-shrink:0;"></i>
+            <select onchange="updateAlternatingPair(${idx}, 1, this.value)" style="flex:1; padding:0.35rem 0.5rem; border-radius:6px; border:1px solid var(--border-color); background:var(--surface-2); color:var(--text-main); font-size:0.8rem;">
+                <option value="">Empleado 2</option>${opts2}
+            </select>
+            <button onclick="removeAlternatingPair(${idx})" style="background:rgba(239,68,68,0.1); color:#ef4444; border:none; border-radius:6px; width:26px; height:26px; cursor:pointer; flex-shrink:0; display:flex; align-items:center; justify-content:center;" title="Quitar par">
+                <i class="fa-solid fa-xmark" style="font-size:0.68rem;"></i>
+            </button>
+        </div>`;
+    }).join('');
+}
+
+function addAlternatingPair() {
+    if (!Array.isArray(config.alternating_pairs)) config.alternating_pairs = [];
+    config.alternating_pairs.push({ employees: ["", ""] });
+    renderAlternatingPairs();
+}
+
+function removeAlternatingPair(idx) {
+    if (!Array.isArray(config.alternating_pairs)) return;
+    config.alternating_pairs.splice(idx, 1);
+    renderAlternatingPairs();
+    updateConfig();
+}
+
+function updateAlternatingPair(idx, pos, value) {
+    if (!Array.isArray(config.alternating_pairs)) return;
+    if (!config.alternating_pairs[idx]) return;
+    if (!config.alternating_pairs[idx].employees) config.alternating_pairs[idx].employees = ["", ""];
+    config.alternating_pairs[idx].employees[pos] = value;
+    updateConfig();
+}
+
+
 async function updateConfig() {
     const mode = document.getElementById("nightModeConfig").value;
     const person = document.getElementById("nightPersonSelect").value;
@@ -518,6 +599,7 @@ async function updateConfig() {
     config.allow_collision_quebrado = document.getElementById("allowCollisionQuebrado")?.checked || false;
     config.collision_peak_priority = document.getElementById("collisionPeakPriority")?.value || "pm";
     config.use_history = document.getElementById("useHistoryContext")?.checked ?? true;
+    config.rotation_enabled = document.getElementById("rotationEnabled")?.checked ?? true;
 
     const customContainer = document.getElementById("refuerzoCustomTimeContainer");
     if (customContainer) {
@@ -560,10 +642,10 @@ function openAddModal() {
     document.getElementById("empNoRest").checked = false;
     document.getElementById("empJefePista").checked = false;
     document.getElementById("empStrictPreferences").checked = false;
-    
+
     // Activo by default
     const empActiveStatus = document.getElementById("empActiveStatus");
-    if(empActiveStatus) empActiveStatus.checked = true;
+    if (empActiveStatus) empActiveStatus.checked = true;
 
     // Reset fixed shifts
     document.querySelectorAll(".shift-select").forEach(s => s.value = "AUTO");
@@ -601,10 +683,10 @@ function openEditModal(index) {
     document.getElementById("empJefePista").checked = emp.is_jefe_pista || false;
     document.getElementById("empPracticante").checked = emp.is_practicante || false;
     document.getElementById("empStrictPreferences").checked = emp.strict_preferences || false;
-    
+
     // Activo flag mapping
     const empActiveStatus = document.getElementById("empActiveStatus");
-    if(empActiveStatus) empActiveStatus.checked = (emp.activo !== false);
+    if (empActiveStatus) empActiveStatus.checked = (emp.activo !== false);
 
     const fixed = emp.fixed_shifts || {};
     document.querySelectorAll(".shift-select").forEach(sel => {
@@ -640,7 +722,7 @@ function getJefeBaseSelection(fixed = {}, isJefe = false) {
         return "J_06-16";
     }
 
-    const weekdays = ["Lun", "Mar", "MiÃ©", "Jue", "Vie"];
+    const weekdays = ["Lun", "Mar", "Mié", "Jue", "Vie"];
     const weekdayValues = weekdays
         .map(day => fixed?.[day])
         .filter(value => typeof value === "string" && value.length > 0);
@@ -976,6 +1058,7 @@ async function generateSchedule() {
     config.allow_collision_quebrado = document.getElementById("allowCollisionQuebrado")?.checked || false;
     config.collision_peak_priority = document.getElementById("collisionPeakPriority")?.value || "pm";
     config.use_history = document.getElementById("useHistoryContext")?.checked ?? true;
+    config.rotation_enabled = document.getElementById("rotationEnabled")?.checked ?? true;
     const specialDays = getSpecialDaysPayload();
 
     try {
@@ -1840,7 +1923,7 @@ async function persistHistoryEntry(index, nextEntry) {
         try {
             const err = await res.json();
             detail = err.detail || detail;
-        } catch (_) {}
+        } catch (_) { }
         throw new Error(detail);
     }
 
@@ -1930,7 +2013,7 @@ async function downloadExcel(url) {
             try {
                 const err = await res.json();
                 detail = err.detail || detail;
-            } catch (_) {}
+            } catch (_) { }
             throw new Error(detail);
         }
 
@@ -2535,7 +2618,7 @@ window.exportHistoryImage = async function (index, event) {
             try {
                 const err = await saveRes.json();
                 detail = err.detail || detail;
-            } catch (_) {}
+            } catch (_) { }
             throw new Error(detail);
         }
 
@@ -2682,7 +2765,7 @@ async function confirmSaveSchedule(event) {
             try {
                 const err = await res.json();
                 detail = err.detail || detail;
-            } catch (_) {}
+            } catch (_) { }
             throw new Error(detail);
         }
 
@@ -3015,24 +3098,24 @@ function closeSundayRotationModal() {
 async function loadSundayRotation() {
     const container = document.getElementById('sundayRotationContent');
     if (!container) return;
-    
+
     container.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--text-muted);"><i class="fa-solid fa-circle-notch fa-spin"></i> Cargando...</div>';
-    
+
     try {
         const res = await fetch(`${API_URL}/rotacion-domingos`);
         const data = await res.json();
-        
+
         if (!data || data.length === 0) {
             container.innerHTML = '<div style="padding: 1rem; text-align: center; color: var(--text-muted);">No hay historial o empleados elegibles.</div>';
             return;
         }
-        
+
         container.innerHTML = '';
         data.forEach((emp, index) => {
             let colorCls = "var(--text-main)";
             let bgCls = "var(--bg-panel)";
             let icon = "fa-user";
-            
+
             if (index === 0) {
                 colorCls = "#10b981"; // green (Priority 1)
                 bgCls = "rgba(16, 185, 129, 0.1)";
@@ -3046,11 +3129,11 @@ async function loadSundayRotation() {
                 bgCls = "rgba(239, 68, 68, 0.05)";
                 icon = "fa-briefcase";
             }
-            
+
             const row = document.createElement('div');
             row.style.cssText = `display: flex; justify-content: space-between; align-items: center; padding: 0.75rem; background: ${bgCls}; border-radius: 6px; border: 1px solid rgba(255,255,255,0.05); transition: transform 0.2s;`;
             row.className = "hover-glow";
-            
+
             row.innerHTML = `
                 <div style="display: flex; align-items: center; gap: 12px;">
                     <div style="width: 28px; height: 28px; border-radius: 50%; background: ${colorCls}; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 0.75rem; font-weight: bold; box-shadow: 0 2px 5px rgba(0,0,0,0.2);">
@@ -3067,7 +3150,7 @@ async function loadSundayRotation() {
             `;
             container.appendChild(row);
         });
-        
+
     } catch (e) {
         console.error(e);
         container.innerHTML = '<div style="padding: 1rem; text-align: center; color: #ef4444;"><i class="fa-solid fa-triangle-exclamation"></i> Error cargando rotación. Verifica la conexión con el servidor.</div>';

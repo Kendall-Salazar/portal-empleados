@@ -50,6 +50,9 @@
                     <div class="menu-divider" style="height: 1px; background: var(--border); margin: 10px 0;"></div>
 
                     <!-- SCHEDULE SECTION -->
+                    <button id="nav-parametros" class="nav-btn" onclick="switchMainTab('parametros')">
+                        <i class="fa-solid fa-sliders"></i> Parámetros Motor
+                    </button>
                     <button id="nav-schedule" class="nav-btn" onclick="switchMainTab('schedule')">
                         <i class="fa-solid fa-calendar-days"></i> Generar Horario
                     </button>
@@ -58,170 +61,18 @@
                     </button>
                 </div>
 
-                <!-- SCHEDULE SPECIFIC CONFIG -->
+                <!-- SCHEDULE SPECIFIC CONFIG (moved to tab-parametros) -->
                 <div id="scheduleConfigSidebar" style="display: none;">
-                    <!-- CONFIG CARD -->
-                    <div class="config-section">
-                        <h3><i class="fa-solid fa-moon"></i> Turno Nocturno</h3>
-                        <p class="helper-text-sm" style="margin-top:-5px; margin-bottom: 10px;">¿Cómo se asigna el
-                            horario
-                            de noche?</p>
-
-                        <input type="hidden" id="nightModeConfig" value="rotation">
-                        <div class="segmented-control" id="nightModeSegmented" style="margin-bottom: 0.8rem;">
-                            <button type="button" class="seg-btn active"
-                                onclick="setNightMode('rotation', this)">Rotación</button>
-                            <button type="button" class="seg-btn" onclick="setNightMode('fixed_person', this)">Fijo a
-                                Empleado</button>
-                        </div>
-                    </div>
-
-                    <div id="fixedNightContainer" class="config-section hidden fade-in" style="margin-top: 0.5rem;">
-                        <h3><i class="fa-solid fa-user-moon"></i> Responsable Noche</h3>
-                        <p class="helper-text-sm" style="margin-top:-5px; margin-bottom: 10px;">Selecciona quién cubrirá
-                            el
-                            turno nocturno fijo.</p>
-                        <input type="hidden" id="nightPersonSelect" value="">
-                        <div id="nightPersonPills" class="night-person-selector">
-                            <!-- Generated -> .night-person-card elements -->
-                        </div>
-                    </div>
-
-                    <!-- EXTENDED HOURS TOGGLE -->
-                    <div class="config-section"
-                        style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border);">
-                        <h3><i class="fa-solid fa-clock"></i> Turnos Extendidos</h3>
-                        <label class="option-card hover-glow" style="margin-bottom: 0.8rem; padding: 0.8rem;">
-                            <div class="opt-content">
-                                <div class="opt-icon"
-                                    style="background: rgba(16, 185, 129, 0.1); color: #10b981; width: 32px; height: 32px; font-size: 0.9rem;">
-                                    <i class="fa-solid fa-hourglass-end"></i>
-                                </div>
-                                <div class="opt-text">
-                                    <strong style="font-size: 0.85rem;">Habilitar Q y T16</strong>
-                                    <small style="font-size: 0.7rem;">Turnos > 8hrs</small>
-                                </div>
-                            </div>
-                            <div class="toggle-container">
-                                <input type="checkbox" id="allowLongShifts" class="toggle-checkbox"
-                                    onchange="updateConfig()">
-                                <div class="toggle-slider"></div>
-                            </div>
-                        </label>
-
-                        <!-- STRICT PREFERENCES MOVED TO EMPLOYEE MODAL -->
-
-                        <!-- REFUERZO TOGGLE -->
-                        <h3><i class="fa-solid fa-user-shield"></i> Refuerzo Provisional</h3>
-                        <label class="option-card hover-glow" style="margin-bottom: 0.5rem; padding: 0.8rem;">
-                            <div class="opt-content">
-                                <div class="opt-icon"
-                                    style="background: rgba(245, 158, 11, 0.1); color: #f59e0b; width: 32px; height: 32px; font-size: 0.9rem;">
-                                    <i class="fa-solid fa-user-plus"></i>
-                                </div>
-                                <div class="opt-text">
-                                    <strong style="font-size: 0.85rem;">Activar Refuerzo</strong>
-                                    <small style="font-size: 0.7rem;">Solo si es necesario</small>
-                                </div>
-                            </div>
-                            <div class="toggle-container">
-                                <input type="checkbox" id="useRefuerzo" class="toggle-checkbox"
-                                    onchange="toggleRefuerzoConfig()">
-                                <div class="toggle-slider"></div>
-                            </div>
-                        </label>
-
-                        <div id="refuerzoTypeContainer" class="select-wrapper hidden fade-in"
-                            style="padding: 0 1.2rem;">
-                            <label
-                                style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem; display: block;">Modo
-                                de Refuerzo</label>
-                            <select id="refuerzoTypeSelect" onchange="updateConfig()"
-                                style="width: 100%; padding: 0.5rem; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-panel); color: var(--text-main);">
-                                <option value="personalizado">Personalizado (Elegir Horas)</option>
-                                <option value="diurno">Diurno (Cubre Mañana)</option>
-                                <option value="nocturno">Nocturno (Cubre Tarde/Noche)</option>
-                                <option value="automatico">Automático (Mejor Opción)</option>
-                                <option value="sabado">Solo Sábado</option>
-                            </select>
-                            <div id="refuerzoCustomTimeContainer" class="fade-in" style="margin-top: 0.85rem;">
-                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
-                                    <div class="input-group">
-                                        <label style="font-size: 0.8rem; color: var(--text-muted);">Hora inicio</label>
-                                        <input type="time" id="refuerzoStartTime" step="3600" value="07:00"
-                                            onchange="updateConfig()"
-                                            style="width: 100%; padding: 0.5rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px; font-size: 0.85rem;">
-                                    </div>
-                                    <div class="input-group">
-                                        <label style="font-size: 0.8rem; color: var(--text-muted);">Hora final</label>
-                                        <input type="time" id="refuerzoEndTime" step="3600" value="12:00"
-                                            onchange="updateConfig()"
-                                            style="width: 100%; padding: 0.5rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px; font-size: 0.85rem;">
-                                    </div>
-                                </div>
-                                <small style="display:block; margin-top: 0.45rem; font-size: 0.72rem; color: var(--text-muted);">
-                                    Horario por defecto: 07:00 AM a 12:00 PM.
-                                </small>
-                            </div>
-                        </div>
-
-                        <!-- COLLISION DAY Q-SHIFT TOGGLE -->
-                        <h3 style="margin-top: 1rem;"><i class="fa-solid fa-puzzle-piece"></i> Día de Colisión</h3>
-                        <label class="option-card hover-glow" style="margin-bottom: 0.5rem; padding: 0.8rem;">
-                            <div class="opt-content">
-                                <div class="opt-icon"
-                                    style="background: rgba(99, 102, 241, 0.1); color: #6366f1; width: 32px; height: 32px; font-size: 0.9rem;">
-                                    <i class="fa-solid fa-puzzle-piece"></i>
-                                </div>
-                                <div class="opt-text">
-                                    <strong style="font-size: 0.85rem;">Quebrado en Colisión</strong>
-                                    <small style="font-size: 0.7rem;">Usa turno Q solo el día con 2 OFF</small>
-                                </div>
-                            </div>
-                            <div class="toggle-container">
-                                <input type="checkbox" id="allowCollisionQuebrado" class="toggle-checkbox"
-                                    onchange="toggleCollisionConfig()">
-                                <div class="toggle-slider"></div>
-                            </div>
-                        </label>
-
-                        <div id="collisionPriorityContainer" class="select-wrapper fade-in" style="padding: 0 1.2rem;">
-                            <label
-                                style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem; display: block;">Prioridad
-                                de Pico</label>
-                            <select id="collisionPeakPriority" onchange="updateConfig()"
-                                style="width: 100%; padding: 0.5rem; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-panel); color: var(--text-main);">
-                                <option value="pm">4 Tarde + 3 Mañana (Recomendado)</option>
-                                <option value="am">4 Mañana + 3 Tarde</option>
-                            </select>
-                        </div>
-
-                        <h3 style="margin-top: 1rem;"><i class="fa-solid fa-clock-rotate-left"></i> Historial</h3>
-                        <label class="option-card hover-glow" style="margin-bottom: 0.5rem; padding: 0.8rem;">
-                            <div class="opt-content">
-                                <div class="opt-icon"
-                                    style="background: rgba(14, 165, 233, 0.12); color: #0ea5e9; width: 32px; height: 32px; font-size: 0.9rem;">
-                                    <i class="fa-solid fa-timeline"></i>
-                                </div>
-                                <div class="opt-text">
-                                    <strong style="font-size: 0.85rem;">Usar semana anterior</strong>
-                                    <small style="font-size: 0.7rem;">Usa el historial previo para rotacion y evitar repeticiones</small>
-                                </div>
-                            </div>
-                            <div class="toggle-container">
-                                <input type="checkbox" id="useHistoryContext" class="toggle-checkbox"
-                                    checked onchange="updateConfig()">
-                                <div class="toggle-slider"></div>
-                            </div>
-                        </label>
-                    </div>
+                    <!-- Parameters moved to tab-parametros -->
                 </div> <!-- END scheduleConfigSidebar -->
 
                 <!-- WEEK DATE RANGE CONFIG -->
                 <div id="weekDateConfig" style="display: none;">
-                    <div class="config-section" style="border-top: 1px solid var(--border); padding-top: 1rem; margin-top: 0.5rem;">
+                    <div class="config-section"
+                        style="border-top: 1px solid var(--border); padding-top: 1rem; margin-top: 0.5rem;">
                         <h3><i class="fa-solid fa-calendar-week"></i> Rango de Semana</h3>
-                        <p class="helper-text-sm" style="margin-top:-5px; margin-bottom: 10px;">Selecciona el viernes de inicio para auto-calcular la semana.</p>
+                        <p class="helper-text-sm" style="margin-top:-5px; margin-bottom: 10px;">Selecciona el viernes de
+                            inicio para auto-calcular la semana.</p>
                         <div class="input-group" style="margin-bottom: 0.5rem;">
                             <label style="font-size: 0.8rem; color: var(--text-muted);">Viernes (inicio)</label>
                             <input type="date" id="weekStartDate" class="custom-input" onchange="autoCalcWeekEnd()"
@@ -232,17 +83,11 @@
                             <input type="date" id="weekEndDate" class="custom-input" readonly
                                 style="width: 100%; padding: 0.5rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px; font-size: 0.85rem; opacity: 0.7;">
                         </div>
-                        <div id="weekNamePreview" style="font-size: 0.8rem; color: var(--primary); font-weight: 600; text-align: center; padding: 4px; display: none;"></div>
-
-                        <div id="weekSpecialDaysSection" class="config-section" style="display: none; margin-top: 0.9rem; padding: 0.9rem; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-panel);">
-                            <h3 style="margin-top: 0;"><i class="fa-solid fa-wand-magic-sparkles"></i> Excepciones de la Semana</h3>
-                            <p class="helper-text-sm" style="margin-top:-5px; margin-bottom: 10px;">Marca quÃ© dÃ­as deben usar reglas de domingo o quedar cerrados para esta semana.</p>
-                            <div id="weekSpecialDaysGrid" style="display: grid; grid-template-columns: 1fr; gap: 0.65rem;"></div>
+                        <div id="weekNamePreview"
+                            style="font-size: 0.8rem; color: var(--primary); font-weight: 600; text-align: center; padding: 4px; display: none;">
                         </div>
-                        
-                        <button class="btn-action" onclick="openSundayRotationModal()" style="width: 100%; margin-top: 1rem; border: 1px solid var(--primary); color: var(--primary); background: rgba(59, 130, 246, 0.1);">
-                            <i class="fa-solid fa-arrows-spin"></i> Cola de Domingos
-                        </button>
+
+                        <!-- Special days & Sunday rotation moved to tab-parametros -->
                     </div>
                 </div>
 
@@ -381,6 +226,257 @@
                 <!-- Content rendered by JS -->
             </section>
 
+            <!-- TAB: PARÁMETROS DEL MOTOR -->
+            <section id="tab-parametros" class="schedule-view hidden" data-main-tab>
+                <div class="portal-view">
+                    <div class="portal-header">
+                        <div class="portal-header-left">
+                            <div class="portal-title-row">
+                                <div class="portal-icon-wrap" style="--accent: #6366f1;">
+                                    <i class="fa-solid fa-sliders"></i>
+                                </div>
+                                <div>
+                                    <h2 class="portal-title">Parámetros del Motor</h2>
+                                    <p class="portal-subtitle">Configura las reglas del generador de horarios</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap:1.5rem;">
+
+                        <!-- Cobertura Nocturna -->
+                        <div class="vac-emp-card" style="padding:1.5rem;">
+                            <h3 style="color:var(--text-main); margin:0 0 0.8rem 0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
+                                <span style="background:rgba(139,92,246,0.12); color:#8b5cf6; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
+                                    <i class="fa-solid fa-moon" style="font-size:0.85rem;"></i>
+                                </span>
+                                Cobertura Nocturna
+                            </h3>
+                            <p class="helper-text-sm" style="margin-bottom: 10px;">¿Cómo se cubre el turno de noche?</p>
+                            <input type="hidden" id="nightModeConfig" value="rotation">
+                            <div class="segmented-control" id="nightModeSegmented" style="margin-bottom: 0.8rem;">
+                                <button type="button" class="seg-btn active" onclick="setNightMode('rotation', this)">Rotación</button>
+                                <button type="button" class="seg-btn" onclick="setNightMode('fixed_person', this)">Fijo a Empleado</button>
+                            </div>
+                            <div id="fixedNightContainer" class="hidden fade-in" style="margin-top: 0.5rem;">
+                                <p class="helper-text-sm" style="margin-bottom: 10px;">Selecciona quién cubrirá el turno nocturno fijo:</p>
+                                <input type="hidden" id="nightPersonSelect" value="">
+                                <div id="nightPersonPills" class="night-person-selector"></div>
+                            </div>
+                        </div>
+
+                        <!-- Turnos Largos -->
+                        <div class="vac-emp-card" style="padding:1.5rem;">
+                            <h3 style="color:var(--text-main); margin:0 0 0.8rem 0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
+                                <span style="background:rgba(16,185,129,0.12); color:#10b981; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
+                                    <i class="fa-solid fa-clock" style="font-size:0.85rem;"></i>
+                                </span>
+                                Turnos Largos
+                            </h3>
+                            <p class="helper-text-sm" style="margin-bottom: 0.6rem;">Habilita turnos que superan las 8 horas (Q y T16).</p>
+                            <label class="option-card hover-glow" style="margin-bottom: 0; padding: 0.8rem;">
+                                <div class="opt-content">
+                                    <div class="opt-icon" style="background: rgba(16, 185, 129, 0.1); color: #10b981; width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
+                                        <i class="fa-solid fa-hourglass-end"></i>
+                                    </div>
+                                    <div class="opt-text">
+                                        <strong style="font-size: 0.85rem;">Habilitar Q y T16</strong>
+                                        <small style="font-size: 0.7rem;">Permite asignar turnos &gt; 8 hrs</small>
+                                    </div>
+                                </div>
+                                <div class="toggle-container">
+                                    <input type="checkbox" id="allowLongShifts" class="toggle-checkbox" onchange="updateConfig()">
+                                    <div class="toggle-slider"></div>
+                                </div>
+                            </label>
+                        </div>
+
+                        <!-- Refuerzo Provisional -->
+                        <div class="vac-emp-card" style="padding:1.5rem;">
+                            <h3 style="color:var(--text-main); margin:0 0 0.8rem 0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
+                                <span style="background:rgba(245,158,11,0.12); color:#f59e0b; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
+                                    <i class="fa-solid fa-user-shield" style="font-size:0.85rem;"></i>
+                                </span>
+                                Refuerzo Provisional
+                            </h3>
+                            <label class="option-card hover-glow" style="margin-bottom: 0.5rem; padding: 0.8rem;">
+                                <div class="opt-content">
+                                    <div class="opt-icon" style="background: rgba(245, 158, 11, 0.1); color: #f59e0b; width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
+                                        <i class="fa-solid fa-user-plus"></i>
+                                    </div>
+                                    <div class="opt-text">
+                                        <strong style="font-size: 0.85rem;">Activar Refuerzo</strong>
+                                        <small style="font-size: 0.7rem;">Agrega un apoyo extra si es necesario</small>
+                                    </div>
+                                </div>
+                                <div class="toggle-container">
+                                    <input type="checkbox" id="useRefuerzo" class="toggle-checkbox" onchange="toggleRefuerzoConfig()">
+                                    <div class="toggle-slider"></div>
+                                </div>
+                            </label>
+                            <div id="refuerzoTypeContainer" class="select-wrapper hidden fade-in">
+                                <label style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem; display: block;">Tipo de cobertura</label>
+                                <select id="refuerzoTypeSelect" onchange="updateConfig()" style="width: 100%; padding: 0.5rem; border-radius: 8px; border: 1px solid var(--border-color); background: var(--surface-2); color: var(--text-main); font-size: 0.85rem;">
+                                    <option value="personalizado">Personalizado (Elegir Horas)</option>
+                                    <option value="diurno">Diurno (Cubre Mañana)</option>
+                                    <option value="nocturno">Nocturno (Cubre Tarde/Noche)</option>
+                                    <option value="automatico">Automático (Mejor Opción)</option>
+                                    <option value="sabado">Solo Sábado</option>
+                                </select>
+                                <div id="refuerzoCustomTimeContainer" class="fade-in" style="margin-top: 0.85rem;">
+                                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+                                        <div class="input-group">
+                                            <label style="font-size: 0.8rem; color: var(--text-muted);">Hora inicio</label>
+                                            <input type="time" id="refuerzoStartTime" step="3600" value="07:00" onchange="updateConfig()">
+                                        </div>
+                                        <div class="input-group">
+                                            <label style="font-size: 0.8rem; color: var(--text-muted);">Hora final</label>
+                                            <input type="time" id="refuerzoEndTime" step="3600" value="12:00" onchange="updateConfig()">
+                                        </div>
+                                    </div>
+                                    <small style="display:block; margin-top: 0.45rem; font-size: 0.72rem; color: var(--text-muted);">Rango en que el refuerzo estará disponible.</small>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Regla de Colisión -->
+                        <div class="vac-emp-card" style="padding:1.5rem;">
+                            <h3 style="color:var(--text-main); margin:0 0 0.8rem 0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
+                                <span style="background:rgba(99,102,241,0.12); color:#6366f1; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
+                                    <i class="fa-solid fa-puzzle-piece" style="font-size:0.85rem;"></i>
+                                </span>
+                                Regla de Colisión
+                            </h3>
+                            <p class="helper-text-sm" style="margin-bottom: 0.6rem;">Cómo manejar la semana con 2 días libres simultáneos.</p>
+                            <label class="option-card hover-glow" style="margin-bottom: 0.5rem; padding: 0.8rem;">
+                                <div class="opt-content">
+                                    <div class="opt-icon" style="background: rgba(99, 102, 241, 0.1); color: #6366f1; width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
+                                        <i class="fa-solid fa-puzzle-piece"></i>
+                                    </div>
+                                    <div class="opt-text">
+                                        <strong style="font-size: 0.85rem;">Usar turno Quebrado</strong>
+                                        <small style="font-size: 0.7rem;">Turno Q solo en el día con 2 OFF</small>
+                                    </div>
+                                </div>
+                                <div class="toggle-container">
+                                    <input type="checkbox" id="allowCollisionQuebrado" class="toggle-checkbox" onchange="toggleCollisionConfig()">
+                                    <div class="toggle-slider"></div>
+                                </div>
+                            </label>
+                            <div id="collisionPriorityContainer" class="select-wrapper fade-in">
+                                <label style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem; display: block;">Distribución por día pico</label>
+                                <select id="collisionPeakPriority" onchange="updateConfig()" style="width: 100%; padding: 0.5rem; border-radius: 8px; border: 1px solid var(--border-color); background: var(--surface-2); color: var(--text-main); font-size: 0.85rem;">
+                                    <option value="pm">4 Tarde + 3 Mañana (Recomendado)</option>
+                                    <option value="am">4 Mañana + 3 Tarde</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- Historial de Rotación -->
+                        <div class="vac-emp-card" style="padding:1.5rem;">
+                            <h3 style="color:var(--text-main); margin:0 0 0.8rem 0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
+                                <span style="background:rgba(14,165,233,0.12); color:#0ea5e9; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
+                                    <i class="fa-solid fa-clock-rotate-left" style="font-size:0.85rem;"></i>
+                                </span>
+                                Historial de Rotación
+                            </h3>
+                            <label class="option-card hover-glow" style="margin-bottom: 0; padding: 0.8rem;">
+                                <div class="opt-content">
+                                    <div class="opt-icon" style="background: rgba(14, 165, 233, 0.12); color: #0ea5e9; width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
+                                        <i class="fa-solid fa-timeline"></i>
+                                    </div>
+                                    <div class="opt-text">
+                                        <strong style="font-size: 0.85rem;">Usar semana anterior</strong>
+                                        <small style="font-size: 0.7rem;">Evita repetir turnos y guía la rotación</small>
+                                    </div>
+                                </div>
+                                <div class="toggle-container">
+                                    <input type="checkbox" id="useHistoryContext" class="toggle-checkbox" checked onchange="updateConfig()">
+                                    <div class="toggle-slider"></div>
+                                </div>
+                            </label>
+                        </div>
+
+                        <!-- Excepciones Semanales -->
+                        <div class="vac-emp-card" style="padding:1.5rem;">
+                            <h3 style="color:var(--text-main); margin:0 0 0.8rem 0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
+                                <span style="background:rgba(245,158,11,0.12); color:#f59e0b; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
+                                    <i class="fa-solid fa-wand-magic-sparkles" style="font-size:0.85rem;"></i>
+                                </span>
+                                Excepciones Semanales
+                            </h3>
+                            <div id="weekSpecialDaysSection" class="config-section" style="padding: 0.9rem; border: 1px solid var(--border-color); border-radius: 10px; margin-bottom: 0.75rem;">
+                                <p class="helper-text-sm" style="margin-top:0; margin-bottom: 10px;">Marca qué días deben usar reglas especiales esta semana.</p>
+                                <div id="weekSpecialDaysGrid" style="display: grid; grid-template-columns: 1fr; gap: 0.65rem;"></div>
+                            </div>
+                            <button class="btn-action" onclick="openSundayRotationModal()" style="width: 100%; margin-top: 0; border-radius: 8px; padding: 0.55rem; font-size: 0.85rem;">
+                                <i class="fa-solid fa-arrows-spin"></i> Cola de Domingos
+                            </button>
+                        </div>
+
+                        <!-- Alternancia de Turnos -->
+                        <div class="vac-emp-card" style="padding:1.5rem;">
+                            <h3 style="color:var(--text-main); margin:0 0 0.5rem 0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
+                                <span style="background:rgba(236,72,153,0.12); color:#ec4899; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
+                                    <i class="fa-solid fa-right-left" style="font-size:0.85rem;"></i>
+                                </span>
+                                Alternancia de Turnos
+                            </h3>
+                            <p class="helper-text-sm" style="margin-bottom: 0.8rem;">Empleados que siempre deben tener turnos opuestos (AM ↔ PM) entre sí.</p>
+                            <label class="option-card hover-glow" style="margin-bottom: 0.75rem; padding: 0.8rem;">
+                                <div class="opt-content">
+                                    <div class="opt-icon" style="background: rgba(236, 72, 153, 0.1); color: #ec4899; width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
+                                        <i class="fa-solid fa-wand-sparkles"></i>
+                                    </div>
+                                    <div class="opt-text">
+                                        <strong style="font-size: 0.85rem;">Automático (por género)</strong>
+                                        <small style="font-size: 0.7rem;">Detecta empleadas y las alterna solas</small>
+                                    </div>
+                                </div>
+                                <div class="toggle-container">
+                                    <input type="checkbox" id="alternatingAutoMode" class="toggle-checkbox" checked onchange="toggleAlternatingMode()">
+                                    <div class="toggle-slider"></div>
+                                </div>
+                            </label>
+                            <div id="alternatingPairsContainer" class="hidden fade-in">
+                                <div id="alternatingPairsList"></div>
+                                <button class="btn-action" onclick="addAlternatingPair()" style="width:100%; margin-top:0.6rem; border-radius:8px; padding:0.5rem; font-size:0.82rem;">
+                                    <i class="fa-solid fa-plus"></i> Agregar par
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Rotación Global AM/PM -->
+                        <div class="vac-emp-card" style="padding:1.5rem;">
+                            <h3 style="color:var(--text-main); margin:0 0 0.5rem 0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
+                                <span style="background:rgba(20,184,166,0.12); color:#14b8a6; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
+                                    <i class="fa-solid fa-rotate" style="font-size:0.85rem;"></i>
+                                </span>
+                                Rotación Global AM/PM
+                            </h3>
+                            <p class="helper-text-sm" style="margin-bottom: 0.8rem;">Todos los empleados alternan entre mañana y tarde semana a semana. No rompe asignaciones manuales.</p>
+                            <label class="option-card hover-glow" style="margin-bottom: 0; padding: 0.8rem;">
+                                <div class="opt-content">
+                                    <div class="opt-icon" style="background: rgba(20, 184, 166, 0.1); color: #14b8a6; width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
+                                        <i class="fa-solid fa-arrows-spin"></i>
+                                    </div>
+                                    <div class="opt-text">
+                                        <strong style="font-size: 0.85rem;">Activar rotación para todos</strong>
+                                        <small style="font-size: 0.7rem;">Sem. 1 AM → Sem. 2 PM → y así sucesivamente</small>
+                                    </div>
+                                </div>
+                                <div class="toggle-container">
+                                    <input type="checkbox" id="rotationEnabled" class="toggle-checkbox" checked onchange="updateConfig()">
+                                    <div class="toggle-slider"></div>
+                                </div>
+                            </label>
+                        </div>
+
+                    </div>
+                </div>
+            </section>
+
         </main>
 
     </div>
@@ -398,7 +494,8 @@
                 </div>
                 <div class="modal-actions">
                     <button type="button" class="btn-text" onclick="closeSaveModal()">Cancelar</button>
-                    <button type="button" class="btn-action primary" onclick="confirmSaveSchedule(event)">Confirmar</button>
+                    <button type="button" class="btn-action primary"
+                        onclick="confirmSaveSchedule(event)">Confirmar</button>
                 </div>
             </div>
         </div>
@@ -818,7 +915,8 @@
                 </div>
                 <div class="input-group">
                     <label>Notas Adicionales</label>
-                    <textarea id="permNotas" placeholder="Opcional" rows="2" style="width:100%; padding:0.7rem; background:var(--bg-app); border:1px solid var(--border); color:var(--text-main); border-radius:8px; resize:vertical;"></textarea>
+                    <textarea id="permNotas" placeholder="Opcional" rows="2"
+                        style="width:100%; padding:0.7rem; background:var(--bg-app); border:1px solid var(--border); color:var(--text-main); border-radius:8px; resize:vertical;"></textarea>
                 </div>
             </div>
             <div class="modal-actions-footer">
@@ -888,19 +986,24 @@
         <div class="modal-dialog" style="max-width: 500px;">
             <div class="modal-header-simple">
                 <h3><i class="fa-solid fa-calendar-day" style="color:var(--primary);"></i> Cola de Domingos Libres</h3>
-                <button class="close-icon" onclick="closeSundayRotationModal()"><i class="fa-solid fa-xmark"></i></button>
+                <button class="close-icon" onclick="closeSundayRotationModal()"><i
+                        class="fa-solid fa-xmark"></i></button>
             </div>
             <div class="modal-body-scroll">
                 <p class="helper-text-sm" style="margin-bottom: 1rem;">
-                    El algoritmo es justo de forma cíclica. La lista muestra quién tiene prioridad para descansar este domingo basándose en el historial. <br><br>
+                    El algoritmo es justo de forma cíclica. La lista muestra quién tiene prioridad para descansar este
+                    domingo basándose en el historial. <br><br>
                     <strong>El primero de la lista</strong> es el que lleva más tiempo sin un domingo libre.
                 </p>
-                <div id="sundayRotationContent" style="display: flex; flex-direction: column; gap: 0.5rem; background: var(--bg-app); border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem;">
-                    <div style="text-align: center; padding: 2rem; color: var(--text-muted);"><i class="fa-solid fa-circle-notch fa-spin"></i> Cargando...</div>
+                <div id="sundayRotationContent"
+                    style="display: flex; flex-direction: column; gap: 0.5rem; background: var(--bg-app); border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem;">
+                    <div style="text-align: center; padding: 2rem; color: var(--text-muted);"><i
+                            class="fa-solid fa-circle-notch fa-spin"></i> Cargando...</div>
                 </div>
             </div>
             <div class="modal-actions-footer">
-                <button class="btn-action primary" style="width: 100%;" onclick="closeSundayRotationModal()">Entendido</button>
+                <button class="btn-action primary" style="width: 100%;"
+                    onclick="closeSundayRotationModal()">Entendido</button>
             </div>
         </div>
     </div>

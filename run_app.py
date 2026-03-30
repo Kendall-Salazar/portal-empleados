@@ -20,7 +20,7 @@ def get_runtime_root():
 
 
 # Add backend to path so it can be imported
-backend_path = os.path.join(get_resource_root(), 'webapp', 'backend')
+backend_path = os.path.join(get_resource_root(), 'backend')
 if os.path.exists(backend_path) and backend_path not in sys.path:
     sys.path.insert(0, backend_path)
 

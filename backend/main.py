@@ -27,13 +27,13 @@ _backend_dir = os.path.dirname(os.path.abspath(__file__))
 def _get_resource_root():
     if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
         return os.path.abspath(sys._MEIPASS)
-    return os.path.abspath(os.path.join(_backend_dir, "../.."))
+    return os.path.abspath(os.path.join(_backend_dir, ".."))
 
 
 def _get_runtime_root():
     if getattr(sys, "frozen", False):
         return os.path.dirname(os.path.abspath(sys.executable))
-    return os.path.abspath(os.path.join(_backend_dir, "../.."))
+    return os.path.abspath(os.path.join(_backend_dir, ".."))
 
 
 def _prefer_runtime_path(*parts):
@@ -53,8 +53,8 @@ _planillas_dir = (
     if os.path.exists(_runtime_planillas_dir) or not os.path.exists(_resource_planillas_dir)
     else _resource_planillas_dir
 )
-_frontend_dir = _prefer_runtime_path("webapp", "frontend")
-_template_path = _prefer_runtime_path("webapp", "backend", "formato_template.xlsm")
+_frontend_dir = _prefer_runtime_path("frontend")
+_template_path = _prefer_runtime_path("backend", "formato_template.xlsm")
 
 os.makedirs(_planillas_dir, exist_ok=True)
 
@@ -67,6 +67,9 @@ import planilla as pl_module
 import generador_boletas as gb_module
 import horario_db
 import prestamo_sync
+
+# Import routers
+from routes import empleados_router, horarios_router, planillas_router, config_router
 
 DB_FILE_LEGACY = "database.json"  # JSON original, kept for migration reference
 EXPORT_DIR = os.path.join(_runtime_root, "export_horarios")
@@ -3066,6 +3069,14 @@ def delete_inventario_carga(carga_id: int):
     """Elimina una carga de inventario."""
     plan_db.delete_carga_inventario(carga_id)
     return {"status": "success"}
+
+# ==============================================================================
+# Include Routers (for organized endpoint structure)
+# ==============================================================================
+app.include_router(empleados_router)
+app.include_router(horarios_router)
+app.include_router(planillas_router)
+app.include_router(config_router)
 
 # ==============================================================================
 # Serve Frontend

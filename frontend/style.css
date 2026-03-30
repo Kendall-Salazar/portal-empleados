@@ -1623,14 +1623,17 @@ select:focus {
     gap: 0.5rem;
     opacity: 0.7;
 }
+
 .vac-subtab:hover {
     color: var(--text-main);
-    background: rgba(0,0,0,0.02);
+    background: rgba(0, 0, 0, 0.02);
     opacity: 0.9;
 }
+
 .dark-mode .vac-subtab:hover {
-    background: rgba(255,255,255,0.02);
+    background: rgba(255, 255, 255, 0.02);
 }
+
 .vac-subtab.active {
     color: var(--primary);
     border-bottom: 3px solid var(--primary);
@@ -4660,8 +4663,13 @@ select:focus {
     color: var(--text-main);
 }
 
-.inv-date-current i { color: #8b5cf6; }
-.inv-date-prev i { color: var(--text-muted); }
+.inv-date-current i {
+    color: #8b5cf6;
+}
+
+.inv-date-prev i {
+    color: var(--text-muted);
+}
 
 .inv-date-file {
     font-size: 0.75rem;
@@ -5122,7 +5130,9 @@ select:focus {
 .perm-card::before {
     content: '';
     position: absolute;
-    top: 0; left: 0; right: 0;
+    top: 0;
+    left: 0;
+    right: 0;
     height: 4px;
     background: linear-gradient(90deg, #f59e0b, #fbbf24);
     opacity: 0.8;
@@ -5181,9 +5191,17 @@ select:focus {
     font-weight: 800;
 }
 
-.perm-val-total { color: var(--text-main); }
-.perm-val-pend { color: #f59e0b; }
-.perm-val-desc { color: #10b981; }
+.perm-val-total {
+    color: var(--text-main);
+}
+
+.perm-val-pend {
+    color: #f59e0b;
+}
+
+.perm-val-desc {
+    color: #10b981;
+}
 
 .perm-actions {
     display: grid;
@@ -5254,6 +5272,7 @@ select:focus {
         opacity: 0;
         transform: translateY(15px);
     }
+
     to {
         opacity: 1;
         transform: translateY(0);

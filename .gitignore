@@ -150,10 +150,11 @@ cython_debug/
 #  Search for 'JetBrains.gitignore' to get it.
 .idea/
 
-# ── PROYECTO PLANILLAS ────────────────────────────────────────────────────────
-# Base de datos y archivos de configuración sensibles
-planillas/planilla.db
+# ── PROYECTO CHRONOS ────────────────────────────────────────────
+# Datos en tiempo de ejecución y archivos sensibles
 database.json
+backend/database.json
+planillas/planilla.db
 CORAZON/
 .webview_data/
 .vscode/
@@ -162,10 +163,13 @@ CORAZON/
 # Planillas generadas (EXCEL)
 planillas/Planillas */
 planillas/*.xlsx
-!planillas/Planilla_de_Pago.xlsx  # Mantener la plantilla de referencia
+!planillas/Planilla_de_Pago.xlsx
 
-# Local/generated artifacts outside the source tree
+# Artefactos de build y salida generada
 .validation_tmp/
-empaquetado/
+packaging/build/
+packaging/Chronos/
+packaging/.pyinstaller/
+packaging/logs/
 export_horarios/
-scripts/
+acciones de empleado/
