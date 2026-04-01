@@ -3084,6 +3084,7 @@ class ShiftScheduler:
                  "metadata": {
                      "libres_person": libres_found,
                      "rotation_queue": rotation_queue,
+                     "next_sunday_rotation_queue": rotation_queue,  # Para que el frontend lo guarde
                      "rotation_target": rotation_target,
                      "sunday_off_person": sunday_off_person,
                      "special_days": dict(self.special_day_modes),

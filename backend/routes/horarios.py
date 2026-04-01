@@ -277,43 +277,91 @@ def rename_history_entry(rename_data: dict):
 
 @router.get("/rotacion-domingos")
 def get_sunday_rotation():
-    """Get Sunday rotation queue."""
+    """Get Sunday rotation queue — usa cola guardada o reconstruye desde historial."""
     db = load_db()
     history_list = db.get("history_log", [])
+    config = db.get("config", {})
     
     unified_emps = plan_db.get_empleados(solo_activos=True)
-    eligible = []
-    for e in unified_emps:
-        name = e.get("nombre", "")
-        if not e.get("es_jefe_pista", False):
-            eligible.append(name)
-        
-    last_sunday_off = {}
-    for idx, entry in enumerate(history_list):
-        sched = entry.get('schedule', {})
-        if isinstance(sched, str):
-            try:
-                sched = json.loads(sched)
-            except json.JSONDecodeError:
-                sched = {}
-            
-        for emp_name, days in sched.items():
-            if isinstance(days, dict) and days.get('Dom') in ['OFF', 'VAC', 'PERM'] and emp_name in eligible:
-                last_sunday_off[emp_name] = idx
-
-    rotation_queue = sorted(eligible, key=lambda e: last_sunday_off.get(e, -1))
+    eligible = [e["nombre"] for e in unified_emps if not e.get("es_jefe_pista", False)]
     
+    # ── Intentar usar cola guardada en config ──
+    saved_queue = config.get("sunday_rotation_queue")
+    saved_index = config.get("sunday_cycle_index", 0)
+    
+    if saved_queue and isinstance(saved_queue, list):
+        # Filtrar solo empleados que aún son elegibles
+        rotation_queue = [name for name in saved_queue if name in eligible]
+        # Agregar nuevos empleados que no estaban en la cola
+        for name in eligible:
+            if name not in rotation_queue:
+                rotation_queue.append(name)
+        # Usar índice guardado para determinar quién sigue
+        if rotation_queue and saved_index is not None:
+            next_idx = saved_index % len(rotation_queue)
+            rotation_queue = rotation_queue[next_idx:] + rotation_queue[:next_idx]
+    else:
+        # ── Reconstruir desde historial ──
+        last_sunday_off = {}
+        for idx, entry in enumerate(history_list):
+            sched = entry.get('schedule', {})
+            if isinstance(sched, str):
+                try:
+                    sched = json.loads(sched)
+                except json.JSONDecodeError:
+                    sched = {}
+            
+            for emp_name, days in sched.items():
+                if isinstance(days, dict) and days.get('Dom') in ['OFF', 'VAC', 'PERM'] and emp_name in eligible:
+                    last_sunday_off[emp_name] = idx
+        
+        # Ordenar: primero los que NO han descansado (índice -1), luego los más antiguos
+        rotation_queue = sorted(eligible, key=lambda e: last_sunday_off.get(e, -1))
+    
+    # ── Construir resultado con semanas reales ──
     result = []
-    for emp_name in rotation_queue:
-        weeks_since_off = "Sin registrar"
-        if emp_name in last_sunday_off:
-            weeks_ago = len(history_list) - 1 - last_sunday_off[emp_name]
-            weeks_since_off = f"Hace {weeks_ago} sem" if weeks_ago > 0 else "La sem pasada"
+    total_entries = len(history_list)
+    
+    for i, emp_name in enumerate(rotation_queue):
+        # Buscar el último índice donde tuvo domingo libre
+        last_idx = None
+        for idx, entry in enumerate(history_list):
+            sched = entry.get('schedule', {})
+            if isinstance(sched, str):
+                try:
+                    sched = json.loads(sched)
+                except json.JSONDecodeError:
+                    sched = {}
+            
+            days = sched.get(emp_name, {})
+            if isinstance(days, dict) and days.get('Dom') in ['OFF', 'VAC', 'PERM']:
+                last_idx = idx
+        
+        if last_idx is not None:
+            weeks_ago = total_entries - 1 - last_idx
+            if weeks_ago == 0:
+                weeks_since_off = "La sem pasada"
+            elif weeks_ago == 1:
+                weeks_since_off = "Hace 1 sem"
+            else:
+                weeks_since_off = f"Hace {weeks_ago} sem"
+        else:
+            weeks_since_off = "Sin registrar"
+        
+        # Prioridad basada en posición en la cola
+        if i == 0:
+            priority = "★ Le toca descansar"
+        elif i <= 2:
+            priority = "Próximo a descansar"
+        elif i <= len(rotation_queue) // 2:
+            priority = "En cola media"
+        else:
+            priority = "Recién descansó"
             
         result.append({
             "name": emp_name,
             "last_off": weeks_since_off,
-            "priority": "Próximo a descansar" if result == [] else "En Espera Corta" if len(result) < 3 else "Le toca trabajar"
+            "priority": priority
         })
         
     return result
