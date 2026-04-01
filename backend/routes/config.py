@@ -25,8 +25,9 @@ class Config(BaseModel):
     allow_collision_quebrado: bool = False
     collision_peak_priority: str = "pm"
     use_history: bool = True
-    sunday_cycle_index: int = 0
-    sunday_rotation_queue: Optional[List[str]] = None
+    strict_weekly_alternation: bool = False  # Alternancia semanal estricta para pares
+    custom_shifts: list = []  # Turnos personalizados con prioridades [{name, start, end, priority}]
+    holidays: list = []  # Días festivos [{date: "YYYY-MM-DD", name: "..."}]
 
 
 # Endpoints

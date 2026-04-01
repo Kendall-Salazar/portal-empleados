@@ -522,6 +522,26 @@ th {
     background: rgba(11, 15, 25, 0.96);
 }
 
+/* Holiday Column Indicator */
+th.th-holiday {
+    background: rgba(245, 158, 11, 0.08) !important;
+    border-bottom: 3px solid #f59e0b !important;
+    position: relative;
+}
+
+.dark-mode th.th-holiday {
+    background: rgba(245, 158, 11, 0.15) !important;
+}
+
+/* Holiday column cells get subtle tint */
+td.holiday-col {
+    background: rgba(245, 158, 11, 0.03);
+}
+
+.dark-mode td.holiday-col {
+    background: rgba(245, 158, 11, 0.06);
+}
+
 /* Sticky Employee Column (Horizontal View) */
 table:not(.vertical-table) th:first-child,
 table:not(.vertical-table) td:first-child {
@@ -759,21 +779,30 @@ tr:hover td {
 /* Replacing old class usage */
 
 .section-overlay {
-    position: absolute;
-    top: 1rem;
-    bottom: 1rem;
-    left: 1rem;
-    right: 1rem;
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    right: 0;
     width: auto;
     height: auto;
     background: var(--bg-panel);
-    border-radius: 20px;
+    border-radius: 0;
     box-shadow: var(--shadow-lg), 0 25px 60px -12px rgba(0, 0, 0, 0.35);
-    z-index: 50;
+    z-index: 100;
     display: flex;
     flex-direction: column;
     animation: modalSpringUp 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.2) forwards;
-    border: 1px solid var(--border-strong, #334155);
+    border: none;
+}
+
+/* Full screen overlay for history */
+#overlay-history {
+    border-radius: 0;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
 }
 
 .hidden-col {
@@ -793,12 +822,18 @@ tr:hover td {
 }
 
 .overlay-header {
-    background: transparent;
+    background: var(--bg-panel);
     padding: 1.5rem 2rem;
     border-bottom: 1px solid var(--border);
     display: flex;
     justify-content: space-between;
     align-items: center;
+    flex-shrink: 0;
+}
+
+#overlay-history .overlay-header {
+    background: var(--surface-2);
+    padding: 1.25rem 2rem;
 }
 
 .overlay-header h2 {
@@ -842,6 +877,12 @@ tr:hover td {
     max-width: 1200px;
     margin: 0 auto;
     width: 100%;
+    box-sizing: border-box;
+}
+
+#overlay-history .overlay-content {
+    max-width: 100%;
+    padding: 1.5rem;
 }
 
 .toolbar {
@@ -852,9 +893,10 @@ tr:hover td {
 
 /* HISTORY ACCORDION */
 .history-list {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
     gap: 1rem;
+    width: 100%;
 }
 
 .history-item {
@@ -868,6 +910,14 @@ tr:hover td {
 .history-item.expanded {
     border-color: var(--primary);
     box-shadow: var(--shadow-md);
+    grid-column: 1 / -1;
+    max-width: 100%;
+}
+
+.history-item.expanded .history-body {
+    max-height: 5000px;
+    opacity: 1;
+    overflow-y: auto;
 }
 
 .history-header {
@@ -888,7 +938,7 @@ tr:hover td {
 .h-info {
     display: flex;
     align-items: center;
-    gap: 1rem;
+    gap: 0.5rem;
     flex: 1 1 320px;
     min-width: 0;
     flex-wrap: wrap;
@@ -963,13 +1013,26 @@ tr:hover td {
     max-height: 0;
     opacity: 0;
     overflow: hidden;
-    transition: max-height 0.4s ease, opacity 0.3s ease;
+    transition: max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.25s ease;
+    visibility: hidden;
 }
 
 .history-item.expanded .history-body {
-    max-height: 5000px;
+    max-height: 4000px;
     opacity: 1;
     overflow-y: auto;
+    visibility: visible;
+}
+
+/* Animación suave cuando se ocultan los items */
+.history-item {
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.25s ease;
+}
+
+.history-item.hidden-by-expand {
+    opacity: 0;
+    transform: scale(0.98);
+    pointer-events: none;
 }
 
 /* Large max-height for table */
@@ -978,12 +1041,28 @@ tr:hover td {
     border-top: 1px solid var(--border);
     background: var(--bg-app);
     overflow-x: auto;
+    width: 100%;
+    box-sizing: border-box;
 }
 
 .history-table-wrapper table {
     background: var(--bg-panel);
     border-radius: 8px;
     border: 1px solid var(--border);
+    min-width: 100%;
+    width: auto;
+    font-size: 0.85rem;
+}
+
+/* Cuando está expandido, la tabla puede ser más grande y con scroll horizontal */
+.history-item.expanded .history-table-wrapper {
+    padding: 1.5rem;
+    overflow-x: scroll;
+}
+
+.history-item.expanded .history-table-wrapper table {
+    font-size: 0.95rem;
+    min-width: 800px;
 }
 
 .history-shift-pill {
@@ -995,6 +1074,133 @@ tr:hover td {
     outline-offset: 2px;
     box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
     transform: translateY(-1px) scale(1.01);
+}
+
+/* === PARAMETER CARDS COLLAPSIBLE === */
+.param-card {
+    transition: all 0.25s ease;
+}
+
+.param-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    user-select: none;
+    padding: 0.25rem 0;
+    min-height: 30px;
+}
+
+.param-card-header:hover {
+    opacity: 0.85;
+}
+
+.param-card-header h3 {
+    margin: 0 !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 0.6rem !important;
+}
+
+.param-card-header .chevron {
+    transition: transform 0.25s ease;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    flex-shrink: 0;
+}
+
+.param-card.expanded .param-card-header .chevron {
+    transform: rotate(180deg);
+}
+
+.param-card-content {
+    display: none;
+    margin-top: 0;
+    overflow: visible;
+}
+
+.param-card.expanded .param-card-content {
+    display: block;
+    animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-5px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* Special Day Chips */
+.special-day-chip {
+    padding: 0.5rem 0.85rem;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    background: var(--surface-2);
+    color: var(--text-muted);
+    border: 1px solid var(--border-color);
+}
+
+.special-day-chip:hover {
+    background: var(--bg-app);
+    border-color: var(--primary);
+}
+
+.special-day-chip.active {
+    background: rgba(245, 158, 11, 0.15);
+    color: #f59e0b;
+    border-color: #f59e0b;
+}
+
+.special-day-chip.has-special {
+    background: rgba(16, 185, 129, 0.15);
+    color: #10b981;
+    border-color: #10b981;
+}
+
+/* Special Mode Options */
+.special-mode-option {
+    cursor: pointer;
+    display: block;
+}
+
+.special-mode-option input {
+    display: none;
+}
+
+.special-mode-option .mode-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.75rem 0.5rem;
+    border-radius: 10px;
+    background: var(--surface-2);
+    border: 1px solid var(--border-color);
+    transition: all 0.2s ease;
+    text-align: center;
+}
+
+.special-mode-option .mode-content i {
+    font-size: 1.1rem;
+}
+
+.special-mode-option .mode-content span {
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--text-main);
+}
+
+.special-mode-option:hover .mode-content {
+    border-color: var(--primary);
+    background: var(--bg-app);
+}
+
+.special-mode-option input:checked + .mode-content {
+    border-color: var(--primary);
+    background: rgba(59, 130, 246, 0.1);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
 }
 
 /* Employee Grid in Overlay */
@@ -1442,6 +1648,21 @@ select:focus {
     display: none !important;
 }
 
+/* Modal Overlay */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.92);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    padding: 1rem;
+}
+
 /* Shift Pills */
 .shift-pill {
     display: inline-flex;
@@ -1720,12 +1941,12 @@ select:focus {
 }
 
 .col-invalid {
-    background-color: rgba(239, 68, 68, 0.08) !important;
+    background-color: rgba(239, 68, 68, 0.25) !important;
 }
 
 .th-invalid {
-    background-color: rgba(239, 68, 68, 0.15) !important;
-    border-bottom: 2px solid #ef4444 !important;
+    background-color: rgba(239, 68, 68, 0.35) !important;
+    border-bottom: 3px solid #ef4444 !important;
 }
 
 .validation-error-msg {

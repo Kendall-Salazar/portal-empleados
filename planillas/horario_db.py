@@ -247,8 +247,8 @@ def migrar_json_a_sqlite(json_path):
         INSERT INTO horario_config
         (id, night_mode, fixed_night_person, allow_long_shifts, use_refuerzo,
          refuerzo_type, allow_collision_quebrado, collision_peak_priority,
-         sunday_cycle_index, sunday_rotation_queue, use_history)
-        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         sunday_cycle_index, sunday_rotation_queue, use_history, holidays)
+        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         cfg.get("night_mode", "rotation"),
         cfg.get("fixed_night_person"),
@@ -260,6 +260,7 @@ def migrar_json_a_sqlite(json_path):
         cfg.get("sunday_cycle_index", 0),
         json.dumps(cfg.get("sunday_rotation_queue")) if cfg.get("sunday_rotation_queue") else None,
         1 if cfg.get("use_history", True) else 0,
+        json.dumps(cfg.get("holidays", [])),
     ))
 
     # 3. Migrar historial de horarios
@@ -299,7 +300,6 @@ def migrar_json_a_sqlite(json_path):
     conn.close()
     return True, "Migración completada"
 
-
 # ═════════════════════════════════════════════════════════════════════════════
 # CRUD HORARIOS
 # ═════════════════════════════════════════════════════════════════════════════
@@ -307,12 +307,19 @@ def migrar_json_a_sqlite(json_path):
 def get_horarios_generados():
     conn = db.get_conn()
     rows = conn.execute(
-        "SELECT id, nombre, timestamp FROM horarios_generados ORDER BY id DESC"
+        """
+        SELECT id, nombre, timestamp 
+        FROM horarios_generados 
+        WHERE id IN (
+            SELECT MAX(id) 
+            FROM horarios_generados 
+            GROUP BY nombre
+        )
+        ORDER BY id DESC
+        """
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
-
-
 def get_horario_por_id(horario_id):
     conn = db.get_conn()
     row = conn.execute(
@@ -345,16 +352,25 @@ def get_horario_por_nombre(nombre):
 
 def guardar_horario(nombre, schedule_dict, tasks_dict=None, metadata_dict=None):
     conn = db.get_conn()
-    conn.execute("""
-        INSERT INTO horarios_generados (nombre, horario, tareas, metadata, timestamp)
-        VALUES (?, ?, ?, ?, ?)
-    """, (
-        nombre,
-        json.dumps(schedule_dict, ensure_ascii=False),
-        json.dumps(tasks_dict or {}, ensure_ascii=False),
-        json.dumps(metadata_dict or {}, ensure_ascii=False),
-        datetime.now().isoformat(),
-    ))
+    row = conn.execute("SELECT id FROM horarios_generados WHERE nombre=?", (nombre,)).fetchone()
+    
+    horario_json = json.dumps(schedule_dict, ensure_ascii=False)
+    tareas_json = json.dumps(tasks_dict or {}, ensure_ascii=False)
+    metadata_json = json.dumps(metadata_dict or {}, ensure_ascii=False)
+    ts = datetime.now().isoformat()
+    
+    if row:
+        conn.execute("""
+            UPDATE horarios_generados 
+            SET horario=?, tareas=?, metadata=?, timestamp=?
+            WHERE id=?
+        """, (horario_json, tareas_json, metadata_json, ts, row["id"]))
+    else:
+        conn.execute("""
+            INSERT INTO horarios_generados (nombre, horario, tareas, metadata, timestamp)
+            VALUES (?, ?, ?, ?, ?)
+        """, (nombre, horario_json, tareas_json, metadata_json, ts))
+        
     conn.commit()
     conn.close()
 
@@ -370,7 +386,7 @@ def eliminar_horario(horario_id):
 # RELLENAR EXCEL CON HORAS DEL HORARIO
 # ═════════════════════════════════════════════════════════════════════════════
 
-def rellenar_horas_en_excel(excel_path, nombre_hoja, horario_dict):
+def rellenar_horas_en_excel(excel_path, nombre_hoja, horario_dict, holidays=None):
     """
     Abre el Excel de planilla, busca la hoja semanal y rellena las horas
     de cada empleado según el horario generado.
@@ -378,6 +394,7 @@ def rellenar_horas_en_excel(excel_path, nombre_hoja, horario_dict):
     nombre_hoja: nombre de la pestaña en el Excel (e.g. "Semana 10")
     horario_dict: {empleado: {dia_es: turno_code}} con dias en español
                   (Vie, Sáb, Dom, Lun, Mar, Mié, Jue)
+    holidays: list of {"date": "YYYY-MM-DD", "name": "..."} from config
     """
     import openpyxl
 
@@ -398,7 +415,7 @@ def rellenar_horas_en_excel(excel_path, nombre_hoja, horario_dict):
     #     +1 = Hrs. Mixtas
     #     +2 = Hrs. Nocturnas
     #     +3 = Hrs. Extra
-    #     +4 = TOTAL HORAS (fórmula de suma, se respeta el espacio)
+    #     +4 = ★ Feriado (oculta por defecto, se desoculta si hay feriados)
     DIAS_COL = {
         "Vie": 3, "Sáb": 4, "Dom": 5,
         "Lun": 6, "Mar": 7, "Mié": 8, "Jue": 9,
@@ -407,6 +424,7 @@ def rellenar_horas_en_excel(excel_path, nombre_hoja, horario_dict):
     FILA_MIXTA  = 1
     FILA_NOCT   = 2
     FILA_EXTRA  = 3
+    FILA_FERIADO = 4
 
     # Obtener jefes de pista y datos de planilla
     conn = db.get_conn()
@@ -419,7 +437,7 @@ def rellenar_horas_en_excel(excel_path, nombre_hoja, horario_dict):
         ).fetchall()
     }
 
-    # Obtener préstamos activos para rellenar la deducción de planilla (col 13)
+    # Obtener préstamos activos para rellenar la deducción de planilla (col 14 = Préstamo; 13 = Bonific.)
     prestamos_activos = {}
     prest_rows = conn.execute("""
         SELECT e.nombre, p.pago_semanal, p.saldo
@@ -431,6 +449,42 @@ def rellenar_horas_en_excel(excel_path, nombre_hoja, horario_dict):
         prestamos_activos[pr["nombre"]] = min(pr["pago_semanal"], pr["saldo"])
 
     conn.close()
+
+    # ── Detectar feriados de esta semana ──
+    # Leer fechas de los headers de columna (fila 3, columnas C-I)
+    # La fila 3 tiene la fecha en formato DD/MM en las celdas de día
+    # Necesitamos el año de la fila 2 (viernes date)
+    viernes_cell = ws.cell(row=2, column=3).value
+    semana_feriados = []  # list of (dia_es, col_idx, holiday_name)
+    if holidays:
+        # Parsear viernes para obtener año
+        from datetime import datetime as dt
+        viernes_date = None
+        if isinstance(viernes_cell, dt):
+            viernes_date = viernes_cell.date()
+        elif isinstance(viernes_cell, str):
+            for fmt in ("%Y-%m-%d", "%d/%m/%Y"):
+                try:
+                    viernes_date = dt.strptime(viernes_cell, fmt).date()
+                    break
+                except ValueError:
+                    continue
+        elif hasattr(viernes_cell, 'date'):
+            viernes_date = viernes_cell.date()
+
+        if viernes_date:
+            for i, dia_es in enumerate(["Vie", "Sáb", "Dom", "Lun", "Mar", "Mié", "Jue"]):
+                dia_date = viernes_date + __import__('datetime').timedelta(days=i)
+                iso_date = dia_date.isoformat()  # YYYY-MM-DD
+                for h in holidays:
+                    if h.get("date") == iso_date:
+                        col_idx = DIAS_COL.get(dia_es)
+                        if col_idx:
+                            semana_feriados.append((dia_es, col_idx, h["name"]))
+                        break
+
+    # Si hay feriados, desocultar filas de feriado para todos los empleados
+    has_holidays_this_week = len(semana_feriados) > 0
 
     # Procesar horas
     horas = procesar_horario_semana(horario_dict)
@@ -455,6 +509,42 @@ def rellenar_horas_en_excel(excel_path, nombre_hoja, horario_dict):
 
         return None
 
+    def _calcular_tarifa_dominante(emp_nombre, dias_horas):
+        """
+        Calcula la tarifa que más se repite en la semana laboral del empleado.
+        Para empleados OFF (libres), usa tarifa mixta.
+        Retorna (tarifa, es_off).
+        """
+        # Contar horas por tipo de jornada
+        total_d = 0; total_m = 0; total_n = 0
+        for dia_sched, (h_diurna, h_nocturna, h_mixta) in dias_horas.items():
+            total_d += h_diurna
+            total_m += h_mixta
+            total_n += h_nocturna
+
+        # Si no trabajó nada (todo OFF), usar tarifa mixta
+        if total_d == 0 and total_m == 0 and total_n == 0:
+            return None, True  # None = tarifa mixta por defecto, True = off
+
+        # La tarifa que más horas tiene es la dominante
+        max_hours = max(total_d, total_m, total_n)
+        if total_d == max_hours:
+            return "diurna", False
+        elif total_m == max_hours:
+            return "mixta", False
+        else:
+            return "nocturna", False
+
+    def _get_tarifa_value(tarifa_tipo, tarifas):
+        """Obtiene el valor numérico de una tarifa."""
+        if tarifa_tipo == "diurna":
+            return tarifas.get("tarifa_diurna", 0)
+        elif tarifa_tipo == "mixta":
+            return tarifas.get("tarifa_mixta", 0)
+        elif tarifa_tipo == "nocturna":
+            return tarifas.get("tarifa_nocturna", 0)
+        return 0
+
     for emp_nombre, dias_horas in horas.items():
         emp_info = empleados_planilla.get(emp_nombre, {})
         tipo_pago = emp_info.get("tipo_pago")
@@ -464,10 +554,10 @@ def rellenar_horas_en_excel(excel_path, nombre_hoja, horario_dict):
         if emp_row is None:
             continue  # Empleado no está en esta hoja
 
-        # Inyectar abono de préstamo activo (si tiene) en la columna 13 (M)
+        # Inyectar abono de préstamo activo (si tiene) en la columna 14 (N = Préstamo; no en 13 Bonific.)
         pago_prestamo = prestamos_activos.get(emp_nombre)
         if pago_prestamo:
-            ws.cell(row=emp_row, column=13).value = pago_prestamo
+            ws.cell(row=emp_row, column=14).value = pago_prestamo
 
         if tipo_pago == "fijo":
             recap_horas[emp_nombre] = {
@@ -520,6 +610,39 @@ def rellenar_horas_en_excel(excel_path, nombre_hoja, horario_dict):
             "nocturnas": total_emp_n,
             "extra": total_emp_e
         }
+
+        # ── Rellenar fila de feriado si hay feriados esta semana ──
+        if has_holidays_this_week:
+            # Desocultar fila de feriado
+            holiday_row = emp_row + FILA_FERIADO
+            ws.row_dimensions[holiday_row].hidden = False
+
+            # Calcular tarifa dominante
+            tarifa_tipo, es_off = _calcular_tarifa_dominante(emp_nombre, dias_horas)
+
+            # Obtener tarifas del Excel (fila 3)
+            tarifas = {
+                "tarifa_diurna": ws.cell(row=3, column=4).value or 0,
+                "tarifa_mixta": ws.cell(row=3, column=6).value or 0,
+                "tarifa_nocturna": ws.cell(row=3, column=8).value or 0,
+            }
+
+            # Determinar qué tarifa usar: mixta si OFF, dominante si trabajó
+            if es_off:
+                tarifa_usar = tarifas["tarifa_mixta"]
+            else:
+                tarifa_usar = _get_tarifa_value(tarifa_tipo, tarifas)
+
+            # Para cada feriado de esta semana, poner 8h en la columna correspondiente
+            num_feriados = len(semana_feriados)
+            total_hrs_feriado = 8 * num_feriados
+            recargo_feriado = round(total_hrs_feriado * tarifa_usar, 2)
+
+            for dia_es, col_idx, holiday_name in semana_feriados:
+                ws.cell(row=holiday_row, column=col_idx).value = 8
+
+            # Columna L: recargo feriado calculado directamente
+            ws.cell(row=holiday_row, column=12).value = recargo_feriado
 
     wb.save(excel_path)
     wb.close()

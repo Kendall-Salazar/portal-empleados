@@ -19,11 +19,13 @@ def _get_planillas_base_dir():
 
 DB_FILE = os.path.join(_get_planillas_base_dir(), "planilla.db")
 
-
 def get_conn():
-    conn = sqlite3.connect(DB_FILE)
+    """Get a connection to the database with proper timeout and settings."""
+    conn = sqlite3.connect(DB_FILE, timeout=30.0, isolation_level=None)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    # Increase busy timeout to wait up to 30 seconds for locks
+    conn.execute("PRAGMA busy_timeout = 30000")
     return conn
 
 
@@ -111,7 +113,8 @@ def init_db():
             collision_peak_priority TEXT DEFAULT 'pm',
             sunday_cycle_index INTEGER DEFAULT 0,
             sunday_rotation_queue TEXT,
-            use_history INTEGER DEFAULT 1
+            use_history INTEGER DEFAULT 1,
+            strict_weekly_alternation INTEGER DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS horarios_generados (
@@ -205,6 +208,9 @@ def init_db():
     for table, col, col_type in _migrations:
         _ensure_column(table, col, col_type)
 
+    _ensure_column("tarifas", "seguro_modo", "TEXT DEFAULT 'porcentual'")
+    _ensure_column("tarifas", "seguro_valor", "REAL DEFAULT 0.1067")
+
     # Migration: add es_practicante column
     _ensure_column("horario_empleados", "es_practicante", "INTEGER DEFAULT 0")
 
@@ -213,13 +219,26 @@ def init_db():
         ("horario_config", "use_history", "INTEGER DEFAULT 1"),
         ("horario_config", "refuerzo_start", "TEXT DEFAULT '07:00'"),
         ("horario_config", "refuerzo_end", "TEXT DEFAULT '12:00'"),
+        ("horario_config", "strict_weekly_alternation", "INTEGER DEFAULT 0"),
+        ("horario_config", "holidays", "TEXT DEFAULT '[]'"),
     ]
     for table, col, col_type in _scheduler_config_migrations:
         _ensure_column(table, col, col_type)
 
-    # Create vacaciones table
+    # Create vacaciones table + documentos RRHH registry
     conn = get_conn()
     conn.executescript("""
+        CREATE TABLE IF NOT EXISTS documentos_rrhh (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            codigo TEXT NOT NULL UNIQUE,
+            tipo TEXT NOT NULL,
+            empleado_id INTEGER,
+            empleado_nombre TEXT,
+            datos_json TEXT,
+            ruta_archivo TEXT,
+            fecha_generacion TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS vacaciones (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             empleado_id INTEGER REFERENCES empleados(id),
@@ -927,17 +946,33 @@ def get_tarifas():
     conn = get_conn()
     row = conn.execute("SELECT * FROM tarifas WHERE id=1").fetchone()
     conn.close()
-    return dict(row) if row else {
-        "tarifa_diurna": 50.0, "tarifa_nocturna": 75.0,
-        "tarifa_mixta": 62.5, "seguro": 10498.0
-    }
+    if not row:
+        return {
+            "tarifa_diurna": 50.0,
+            "tarifa_nocturna": 75.0,
+            "tarifa_mixta": 62.5,
+            "seguro": 10498.0,
+            "seguro_modo": "porcentual",
+            "seguro_valor": 0.1067,
+        }
+    d = dict(row)
+    if d.get("seguro_modo") is None:
+        d["seguro_modo"] = "porcentual"
+    if d.get("seguro_valor") is None:
+        d["seguro_valor"] = 0.1067
+    return d
 
 
-def set_tarifas(diurna, nocturna, mixta, seguro):
+def set_tarifas(diurna, nocturna, mixta, seguro_modo, seguro_valor):
     conn = get_conn()
     conn.execute(
-        "UPDATE tarifas SET tarifa_diurna=?, tarifa_nocturna=?, tarifa_mixta=?, seguro=? WHERE id=1",
-        (diurna, nocturna, mixta, seguro)
+        """
+        UPDATE tarifas SET
+            tarifa_diurna=?, tarifa_nocturna=?, tarifa_mixta=?,
+            seguro_modo=?, seguro_valor=?
+        WHERE id=1
+        """,
+        (diurna, nocturna, mixta, seguro_modo, seguro_valor),
     )
     conn.commit()
     conn.close()
@@ -1294,6 +1329,60 @@ def delete_inventario_base_articulo(articulo_id):
     conn.execute("DELETE FROM inventario_base_articulos WHERE id=?", (articulo_id,))
     conn.commit()
     conn.close()
+
+
+
+
+# -- DOCUMENTOS RRHH ----------------------------------------------------------
+
+def _next_rrhh_codigo(tipo):
+    """Genera el siguiente codigo RRHH: RRHH-TIPO-YYYY-NNNN."""
+    conn = get_conn()
+    anio = datetime.now().year
+    prefix = f"RRHH-{tipo.upper()[:4]}-{anio}-"
+    row = conn.execute(
+        "SELECT codigo FROM documentos_rrhh WHERE codigo LIKE ? ORDER BY id DESC LIMIT 1",
+        (f"{prefix}%",)
+    ).fetchone()
+    conn.close()
+    if row:
+        last_num = int(row["codigo"].split("-")[-1])
+        return f"{prefix}{last_num + 1:04d}"
+    return f"{prefix}0001"
+
+
+def registrar_documento_rrhh(tipo, empleado_id, empleado_nombre, datos_json, ruta_archivo):
+    """Registra un documento generado y devuelve el codigo RRHH."""
+    codigo = _next_rrhh_codigo(tipo)
+    conn = get_conn()
+    conn.execute(
+        """INSERT INTO documentos_rrhh
+           (codigo, tipo, empleado_id, empleado_nombre, datos_json, ruta_archivo, fecha_generacion)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (codigo, tipo, empleado_id, empleado_nombre, datos_json, ruta_archivo,
+         datetime.now().isoformat())
+    )
+    conn.commit()
+    conn.close()
+    return codigo
+
+
+def get_documentos_rrhh(empleado_id=None, tipo=None, limit=50):
+    """Lista documentos RRHH con filtros opcionales."""
+    conn = get_conn()
+    q = "SELECT * FROM documentos_rrhh WHERE 1=1"
+    params = []
+    if empleado_id:
+        q += " AND empleado_id=?"
+        params.append(empleado_id)
+    if tipo:
+        q += " AND tipo=?"
+        params.append(tipo)
+    q += " ORDER BY id DESC LIMIT ?"
+    params.append(limit)
+    rows = conn.execute(q, params).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 # Inicializar al importar

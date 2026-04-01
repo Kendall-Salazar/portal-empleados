@@ -25,8 +25,8 @@ const SPECIAL_DAY_DEFAULT = "normal";
 const HOLY_THURSDAY_DAY = "Jue";
 const SPECIAL_DAY_OPTIONS = [
     { value: "normal", label: "Normal" },
-    { value: "sunday_like", label: "Como domingo" },
-    { value: "holy_thursday", label: "Jueves Santo" },
+    { value: "sunday_like", label: "Como Domingo" },
+    { value: "holy_thursday", label: "2-4-3-2" },
     { value: "closed", label: "Cerrado" },
 ];
 const DAY_INDEX = Object.fromEntries(DAYS.map((day, index) => [day, index]));
@@ -50,6 +50,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
     loadData().then(() => {
         renderVacationCheckboxes(); // Init new UI logic after data loads
+        initCustomShiftsUI(); // Init custom shifts UI
+        loadCustomShiftsFromConfig(); // Load saved custom shifts
+        loadHolidaysFromConfig(); // Load saved holidays
     });
 
     // Theme toggle
@@ -189,23 +192,391 @@ function formatSpecialDayDate(day) {
     return `${parts[0]}/${parts[1]}`;
 }
 
+// ===== TURNOS PERSONALIZADOS (AVANZADO) =====
+let customShiftsData = []; // Array of { name, start, end, priority }
+
+// Standard shifts (read from backend or hardcoded)
+const STANDARD_SHIFTS = [
+    { name: "T1_05-13", hours: "5am-1pm" },
+    { name: "T2_06-14", hours: "6am-2pm" },
+    { name: "T3_07-15", hours: "7am-3pm" },
+    { name: "T4_08-16", hours: "8am-4pm" },
+    { name: "PM", hours: "1pm-10pm" },
+    { name: "OFF", hours: "Libre" },
+    { name: "VAC", hours: "Vacaciones" },
+    { name: "N_22-05", hours: "10pm-5am" },
+];
+
+function initCustomShiftsUI() {
+    // Render standard shifts info
+    const list = document.getElementById('standardShiftsList');
+    if (list) {
+        list.innerHTML = STANDARD_SHIFTS.map(s => 
+            `<span style="background: var(--surface-2); padding: 2px 8px; border-radius: 12px; font-size: 0.7rem; color: var(--text-muted);">${s.name}</span>`
+        ).join('');
+    }
+    renderCustomShiftsList();
+}
+
+function addCustomShift() {
+    const name = document.getElementById('customShiftName')?.value?.trim();
+    const start = parseInt(document.getElementById('customShiftStart')?.value);
+    const end = parseInt(document.getElementById('customShiftEnd')?.value);
+    const priority = parseInt(document.getElementById('customShiftPriority')?.value || '50');
+    
+    if (!name || isNaN(start) || isNaN(end)) {
+        alert('Completá nombre, hora inicio y hora fin');
+        return;
+    }
+    
+    if (start < 0 || start > 23 || end < 0 || end > 23) {
+        alert('Las horas deben estar entre 0 y 23');
+        return;
+    }
+    
+    if (start === end) {
+        alert('Hora inicio y fin no pueden ser iguales');
+        return;
+    }
+    
+    // Check if already exists
+    if (customShiftsData.some(s => s.name === name)) {
+        alert('Ya existe un turno con ese nombre');
+        return;
+    }
+    
+    // Add to data
+    customShiftsData.push({
+        name: name,
+        start: start,
+        end: end,
+        priority: priority,
+        hours: `${start}-${end}`
+    });
+    
+    // Clear form
+    document.getElementById('customShiftName').value = '';
+    document.getElementById('customShiftStart').value = '';
+    document.getElementById('customShiftEnd').value = '';
+    
+    renderCustomShiftsList();
+    saveCustomShiftsToConfig();
+}
+
+function removeCustomShift(index) {
+    customShiftsData.splice(index, 1);
+    renderCustomShiftsList();
+    saveCustomShiftsToConfig();
+}
+
+function renderCustomShiftsList() {
+    const container = document.getElementById('customShiftsList');
+    if (!container) return;
+    
+    if (customShiftsData.length === 0) {
+        container.innerHTML = '<p style="margin: 0; color: var(--text-muted); font-size: 0.8rem; text-align: center; padding: 1rem;">Sin turnos personalizados</p>';
+        return;
+    }
+    
+    container.innerHTML = customShiftsData.map((shift, idx) => {
+        const priorityLabel = shift.priority === 100 ? '🔴 Alta' : (shift.priority === 50 ? '🟡 Media' : '🟢 Baja');
+        const priorityColor = shift.priority === 100 ? '#ef4444' : (shift.priority === 50 ? '#f59e0b' : '#10b981');
+        const hours = `${shift.start}:00 - ${shift.end}:00`;
+        return `
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.6rem; border-bottom: 1px solid var(--border-color);">
+                <div>
+                    <span style="font-weight: 600; color: var(--text-main);">${shift.name}</span>
+                    <span style="font-size: 0.75rem; color: var(--text-muted); margin-left: 0.5rem;">${hours}</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                    <span style="font-size: 0.7rem; color: ${priorityColor}">${priorityLabel}</span>
+                    <button type="button" onclick="removeCustomShift(${idx})" style="background: none; border: none; color: #ef4444; cursor: pointer; padding: 2px 6px;">
+                        <i class="fa-solid fa-trash"></i>
+                    </button>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+async function saveCustomShiftsToConfig() {
+    try {
+        const config = getCurrentConfig();
+        config.custom_shifts = customShiftsData;
+        await fetch('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(config)
+        });
+    } catch (e) {
+        console.error('Error saving custom shifts:', e);
+    }
+}
+
+async function loadCustomShiftsFromConfig() {
+    try {
+        const res = await fetch('/api/config');
+        if (res.ok) {
+            const config = await res.json();
+            if (config.custom_shifts && Array.isArray(config.custom_shifts)) {
+                customShiftsData = config.custom_shifts;
+                renderCustomShiftsList();
+            }
+        }
+    } catch (e) {
+        console.error('Error loading custom shifts:', e);
+    }
+}
+
+// ===== END TURNOS PERSONALIZADOS =====
+
+// ===== DÍAS FESTIVOS (FERIADOS CR) =====
+let holidaysData = []; // Array of { date: "YYYY-MM-DD", name: "..." }
+
+const CR_DEFAULT_HOLIDAYS = [
+    { date: "2026-01-01", name: "Año Nuevo" },
+    { date: "2026-04-11", name: "Juan Santamaría" },
+    { date: "2026-05-01", name: "Día del Trabajador" },
+    { date: "2026-07-25", name: "Anexión de Nicoya" },
+    { date: "2026-08-02", name: "Virgen de los Ángeles" },
+    { date: "2026-08-15", name: "Día de la Madre" },
+    { date: "2026-09-15", name: "Independencia" },
+    { date: "2026-12-25", name: "Navidad" },
+];
+
+function getHolidaysForYear(year) {
+    return CR_DEFAULT_HOLIDAYS.map(h => ({
+        ...h,
+        date: `${year}-${h.date.slice(5)}`
+    }));
+}
+
+function isHoliday(dateStr) {
+    // dateStr is "YYYY-MM-DD"
+    return holidaysData.find(h => h.date === dateStr);
+}
+
+function getHolidayForDay(dayName, weekDatesMap) {
+    // Given a day name (Vie, Sáb, etc) and the week dates map, check if that date is a holiday
+    if (!weekDatesMap || !weekDatesMap[dayName]) return null;
+    // weekDatesMap has format like "15/09/2026"
+    const parts = weekDatesMap[dayName].split('/');
+    if (parts.length === 3) {
+        const isoDate = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+        return isHoliday(isoDate);
+    }
+    return null;
+}
+
+function renderHolidaysList() {
+    const container = document.getElementById('holidaysList');
+    if (!container) return;
+    
+    if (holidaysData.length === 0) {
+        container.innerHTML = '<p style="margin: 0; color: var(--text-muted); font-size: 0.8rem; text-align: center; padding: 1rem;">Sin días festivos configurados</p>';
+        return;
+    }
+    
+    // Sort by date
+    const sorted = [...holidaysData].sort((a, b) => a.date.localeCompare(b.date));
+    
+    container.innerHTML = sorted.map((holiday, idx) => {
+        const realIdx = holidaysData.indexOf(holiday);
+        const parts = holiday.date.split('-');
+        const displayDate = `${parts[2]}/${parts[1]}/${parts[0]}`;
+        return `
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--border-color);">
+                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                    <i class="fa-solid fa-star" style="color: #f59e0b; font-size: 0.7rem;"></i>
+                    <div>
+                        <span style="font-weight: 600; color: var(--text-main); font-size: 0.82rem;">${holiday.name}</span>
+                        <span style="font-size: 0.72rem; color: var(--text-muted); margin-left: 0.5rem;">${displayDate}</span>
+                    </div>
+                </div>
+                <button type="button" onclick="removeHoliday(${realIdx})" style="background: none; border: none; color: #ef4444; cursor: pointer; padding: 2px 6px;">
+                    <i class="fa-solid fa-trash"></i>
+                </button>
+            </div>
+        `;
+    }).join('');
+}
+
+function addHoliday() {
+    const dateInput = document.getElementById('holidayDateInput');
+    const nameInput = document.getElementById('holidayNameInput');
+    
+    const date = dateInput?.value?.trim();
+    const name = nameInput?.value?.trim();
+    
+    if (!date || !name) {
+        alert('Completá fecha y nombre del feriado');
+        return;
+    }
+    
+    // Check if already exists
+    if (holidaysData.some(h => h.date === date)) {
+        alert('Ya existe un feriado para esa fecha');
+        return;
+    }
+    
+    holidaysData.push({ date, name });
+    
+    // Clear form
+    dateInput.value = '';
+    nameInput.value = '';
+    
+    renderHolidaysList();
+    saveHolidaysToConfig();
+}
+
+function removeHoliday(index) {
+    holidaysData.splice(index, 1);
+    renderHolidaysList();
+    saveHolidaysToConfig();
+}
+
+function loadDefaultCRHolidays() {
+    // Get current year
+    const currentYear = new Date().getFullYear();
+    const yearHolidays = getHolidaysForYear(currentYear);
+    
+    // Only add holidays that don't already exist
+    let added = 0;
+    yearHolidays.forEach(h => {
+        if (!holidaysData.some(existing => existing.date === h.date)) {
+            holidaysData.push(h);
+            added++;
+        }
+    });
+    
+    renderHolidaysList();
+    saveHolidaysToConfig();
+    
+    if (added > 0) {
+        setStatusMessage(`${added} feriados de CR cargados`, 'success');
+    } else {
+        setStatusMessage('Los feriados de CR ya están cargados', 'info');
+    }
+}
+
+function clearAllHolidays() {
+    if (!confirm('¿Eliminar todos los días festivos?')) return;
+    holidaysData = [];
+    renderHolidaysList();
+    saveHolidaysToConfig();
+}
+
+async function saveHolidaysToConfig() {
+    try {
+        const res = await fetch('/api/config');
+        if (res.ok) {
+            const currentConfig = await res.json();
+            currentConfig.holidays = holidaysData;
+            await fetch('/api/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(currentConfig)
+            });
+        }
+    } catch (e) {
+        console.error('Error saving holidays:', e);
+    }
+}
+
+async function loadHolidaysFromConfig() {
+    try {
+        const res = await fetch('/api/config');
+        if (res.ok) {
+            const config = await res.json();
+            if (config.holidays && Array.isArray(config.holidays)) {
+                holidaysData = config.holidays;
+                renderHolidaysList();
+            }
+        }
+    } catch (e) {
+        console.error('Error loading holidays:', e);
+    }
+}
+
+// ===== END DÍAS FESTIVOS =====
+
+// ===== NEW SPECIAL DAYS CHIPS UI =====
+let selectedSpecialDay = null;
+
+function renderSpecialDayChips() {
+    const chipsContainer = document.getElementById('specialDaysChips');
+    const optionsContainer = document.getElementById('specialDayOptions');
+    if (!chipsContainer) return;
+    
+    chipsContainer.innerHTML = '';
+    
+    DAYS.forEach(day => {
+        const chip = document.createElement('div');
+        const hasSpecial = weekSpecialDays[day] && weekSpecialDays[day] !== SPECIAL_DAY_DEFAULT;
+        chip.className = `special-day-chip ${selectedSpecialDay === day ? 'active' : ''} ${hasSpecial ? 'has-special' : ''}`;
+        chip.textContent = day;
+        chip.onclick = () => selectSpecialDay(day);
+        chipsContainer.appendChild(chip);
+    });
+    
+    // Show options for selected day
+    if (selectedSpecialDay && optionsContainer) {
+        document.getElementById('selectedDayLabel').textContent = `Configurando: ${selectedSpecialDay}`;
+        optionsContainer.style.display = 'block';
+        
+        // Set current value
+        const currentValue = weekSpecialDays[selectedSpecialDay] || SPECIAL_DAY_DEFAULT;
+        document.querySelectorAll('input[name="specialDayMode"]').forEach(radio => {
+            radio.checked = radio.value === currentValue;
+        });
+    } else if (optionsContainer) {
+        optionsContainer.style.display = 'none';
+    }
+}
+
+function selectSpecialDay(day) {
+    // Toggle: if clicking the same day, deselect it
+    if (selectedSpecialDay === day) {
+        selectedSpecialDay = null;
+    } else {
+        selectedSpecialDay = day;
+    }
+    renderSpecialDayChips();
+}
+
+function setSpecialDayMode(mode) {
+    if (!selectedSpecialDay) return;
+    
+    weekSpecialDays[selectedSpecialDay] = mode;
+    
+    // Refresh validation if needed
+    if (currentGeneratedSchedule && isValidationOn) {
+        refreshScheduleValidationRules(currentMetadata?.special_days || getSpecialDaysPayload())
+            .then(() => applyValidationUI())
+            .catch(err => console.error("Error refreshing validation:", err));
+    }
+    
+    // Re-render chips to show state
+    renderSpecialDayChips();
+}
+
+// ===== END NEW SPECIAL DAYS =====
+
 function renderWeekSpecialDays() {
     const section = document.getElementById("weekSpecialDaysSection");
     const grid = document.getElementById("weekSpecialDaysGrid");
     const startInput = document.getElementById("weekStartDate");
     if (!section || !grid) return;
 
-    if (!startInput || !startInput.value) {
-        section.style.display = "none";
-        grid.innerHTML = "";
-        return;
-    }
-
+    // Always show the section - allow setting special days without a specific week date
     section.style.display = "block";
     grid.innerHTML = "";
 
     const normalized = normalizeSpecialDaysState(weekSpecialDays);
     weekSpecialDays = normalized;
+
+    // Check if we have a valid week date for displaying dates
+    const hasWeekDate = startInput && startInput.value;
 
     DAYS.forEach(day => {
         const wrapper = document.createElement("div");
@@ -216,10 +587,13 @@ function renderWeekSpecialDays() {
         wrapper.style.borderRadius = "10px";
         wrapper.style.background = "var(--bg-app)";
 
+        // Show date only if weekStartDate is set, otherwise just show day name
+        const dayDateDisplay = hasWeekDate ? formatSpecialDayDate(day) : '(configure fecha de semana para ver fecha)';
+        
         const label = document.createElement("div");
         label.innerHTML = `
             <strong style="font-size:0.85rem;">${day}</strong>
-            <span style="font-size:0.78rem; color:var(--text-muted); margin-left:0.35rem;">${formatSpecialDayDate(day)}</span>
+            <span style="font-size:0.78rem; color:var(--text-muted); margin-left:0.35rem;">${dayDateDisplay}</span>
         `;
 
         const select = document.createElement("select");
@@ -261,6 +635,11 @@ function renderWeekSpecialDays() {
         wrapper.appendChild(select);
         grid.appendChild(wrapper);
     });
+    
+    // Also render the new chips UI if available
+    if (document.getElementById('specialDaysChips')) {
+        renderSpecialDayChips();
+    }
 }
 
 // OVERLAY NAVIGATION
@@ -282,6 +661,10 @@ function openOverlay(id) {
 
 function closeAllOverlays() {
     document.querySelectorAll('.section-overlay').forEach(el => el.classList.add('hidden'));
+    // Resetear visibilidad de items del historial
+    document.querySelectorAll('.history-item').forEach(i => {
+        i.style.display = '';
+    });
     updateSidebarActive('nav-schedule');
 }
 
@@ -330,67 +713,117 @@ function renderEmployees() {
         btn.classList.add("active");
     };
 
-    // Select for Night config -> now Pills
+    // Select for Night config -> now Simple Pills
     const select = document.getElementById("nightPersonSelect");
     const container = document.getElementById("nightPersonPills");
-    const currentVal = select.value || config.fixed_night_person;
+    const currentVal = config.fixed_night_person || select.value || "";
     container.innerHTML = "";
 
+    let foundSelection = false;
     employees.forEach((emp, index) => {
-        const card = document.createElement("div");
-        card.className = "emp-card";
-
-        const fixedCount = Object.keys(emp.fixed_shifts || {}).length;
-
+        // Only show employees who can do night OR are already selected
+        if (!emp.can_do_night && emp.name !== currentVal && emp.activo !== false) return;
+        
+        const pill = document.createElement("div");
+        const isSelected = emp.name === currentVal;
         const isInactive = emp.activo === false;
-
-        card.innerHTML = `
-            <div class="emp-info">
-                <h4 style="${isInactive ? 'filter: grayscale(100%); opacity: 0.8;' : ''}">${emp.name}</h4>
-                <div class="tags">
-                    ${isInactive ? '<span class="tag inactive" style="background:#fee2e2;color:#ef4444;" title="Usuario Inactivo"><i class="fa-solid fa-ban"></i> Inactivo</span>' : ''}
-                    ${emp.is_jefe_pista ? `<span class="tag success" style="${isInactive ? 'filter: grayscale(100%);' : ''}" title="Jefe de Pista"><i class="fa-solid fa-star"></i> Jefe</span>` : ''}
-                    ${emp.is_practicante ? `<span class="tag" style="background:#dbeafe;color:#2563eb;${isInactive ? 'filter: grayscale(100%);' : ''}" title="Practicante"><i class="fa-solid fa-graduation-cap"></i> Pract.</span>` : ''}
-                    ${emp.can_do_night ? `<span class="tag night" style="${isInactive ? 'filter: grayscale(100%);' : ''}" title="Turno Noche"><i class="fa-solid fa-moon"></i> Noche</span>` : ''}
-                    ${emp.forced_libres ? `<span class="tag forced" style="${isInactive ? 'filter: grayscale(100%);' : ''}" title="Forzar Libres"><i class="fa-solid fa-thumbtack"></i> Libres</span>` : ''}
-                    ${emp.forced_quebrado ? `<span class="tag" style="background:#ede9fe;color:#7c3aed;${isInactive ? 'filter: grayscale(100%);' : ''}" title="Forzar Quebrado"><i class="fa-solid fa-bolt"></i> Q (6d)</span>` : ''}
-                    ${emp.allow_no_rest ? `<span class="tag" style="background:#fef3c7;color:#f59e0b;${isInactive ? 'filter: grayscale(100%);' : ''}" title="Sin Descanso"><i class="fa-solid fa-fire"></i> 7d</span>` : ''}
-                    ${emp.strict_preferences ? `<span class="tag" style="background:#fef2f2;color:#ef4444;${isInactive ? 'filter: grayscale(100%);' : ''}"><i class="fa-solid fa-lock"></i> Estricto</span>` : ''}
-                    ${fixedCount > 0 ? `<span class="tag fixed" style="${isInactive ? 'filter: grayscale(100%);' : ''}"><i class="fa-solid fa-lock-open"></i> ${fixedCount}</span>` : ''}
-                </div>
-            </div>
-            <div class="emp-actions">
-                <button class="btn-icon" onclick="openEditModal(${index})"><i class="fa-solid fa-pen"></i></button>
-                <button class="btn-icon delete" onclick="deleteEmployee(${index})"><i class="fa-solid fa-trash"></i></button>
-            </div>
+        
+        if (isSelected) foundSelection = true;
+        
+        pill.className = "night-pill-item";
+        pill.style.cssText = `
+            padding: 0.5rem 1rem;
+            border-radius: 20px;
+            border: 2px solid ${isSelected ? 'var(--primary)' : 'var(--border-color)'};
+            background: ${isSelected ? 'rgba(99, 102, 241, 0.15)' : 'var(--surface-2)'};
+            color: ${isSelected ? 'var(--primary)' : 'var(--text-main)'};
+            cursor: pointer;
+            font-size: 0.85rem;
+            font-weight: 500;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            opacity: ${isInactive ? '0.5' : '1'};
         `;
-        // Apply UI style to inactive cards
-        if (isInactive) {
-            card.style.opacity = "0.7";
-            card.style.border = "1px solid rgba(239, 68, 68, 0.3)";
-        }
-        grid.appendChild(card);
-
-        if (emp.can_do_night && !isInactive) {
-            const npCard = document.createElement("div");
-            npCard.className = `night-person-card ${emp.name === currentVal ? 'selected' : ''}`;
-            const initials = emp.name.split(' ').map(w => w[0]).join('').substring(0, 2);
-            npCard.innerHTML = `
-                <div class="night-person-avatar">${initials}</div>
-                <span class="night-person-name">${emp.name}</span>
-                <div class="night-person-check"><i class="fa-solid fa-check"></i></div>
-            `;
-            npCard.onclick = () => {
-                document.getElementById("nightPersonSelect").value = emp.name;
-                document.querySelectorAll("#nightPersonPills .night-person-card").forEach(c => c.classList.remove("selected"));
-                npCard.classList.add("selected");
+        
+        if (!isInactive) {
+            pill.onmouseenter = () => {
+                pill.style.borderColor = 'var(--primary)';
+                pill.style.transform = 'scale(1.05)';
+            };
+            pill.onmouseleave = () => {
+                if (!isSelected) {
+                    pill.style.borderColor = 'var(--border-color)';
+                    pill.style.transform = 'scale(1)';
+                }
+            };
+            pill.onclick = () => {
+                // Deselect all
+                Array.from(container.children).forEach(c => {
+                    c.style.borderColor = 'var(--border-color)';
+                    c.style.background = 'var(--surface-2)';
+                    c.style.color = 'var(--text-main)';
+                    // Reset the circle too
+                    const circle = c.querySelector('.night-initials');
+                    if (circle) {
+                        circle.style.background = 'var(--border-color)';
+                        circle.style.color = 'var(--text-muted)';
+                    }
+                });
+                // Select this
+                pill.style.borderColor = 'var(--primary)';
+                pill.style.background = 'rgba(99, 102, 241, 0.15)';
+                pill.style.color = 'var(--primary)';
+                const circle = pill.querySelector('.night-initials');
+                if (circle) {
+                    circle.style.background = 'var(--primary)';
+                    circle.style.color = 'white';
+                }
+                select.value = emp.name;
                 updateConfig();
             };
-            container.appendChild(npCard);
         }
+        
+        // Get initials
+        const names = emp.name.split(' ');
+        const initials = names.length > 1 
+            ? names[0][0] + names[names.length - 1][0] 
+            : names[0].substring(0, 2);
+        
+        const canDoNightBadge = emp.can_do_night ? '' : '<span style="background: #fef3c7; color: #f59e0b; padding: 2px 6px; border-radius: 4px; font-size: 0.65rem; margin-left: 4px;">Sin noche</span>';
+        
+        pill.innerHTML = `
+            <span class="night-initials" style="
+                width: 24px; 
+                height: 24px; 
+                border-radius: 50%; 
+                background: ${isSelected ? 'var(--primary)' : 'var(--border-color)'};
+                color: ${isSelected ? 'white' : 'var(--text-muted)'};
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 0.7rem;
+                font-weight: 700;
+            ">${initials}</span>
+            <span style="flex: 1;">${emp.name}</span>
+            ${canDoNightBadge}
+        `;
+        
+        container.appendChild(pill);
     });
+    
+    // Show hint if no one can do night
+    if (container.children.length === 0) {
+        container.innerHTML = '<p style="color: var(--text-muted); font-size: 0.8rem; width: 100%; text-align: center; padding: 0.5rem;"><i class="fa-solid fa-triangle-exclamation"></i> Ningún empleado puede hacer turno de noche</p>';
+    }
 
-    document.getElementById("nightPersonSelect").value = currentVal || config.fixed_night_person || "";
+    // Update hidden select and ensure visual selection
+    select.value = currentVal;
+    if (currentVal && !foundSelection) {
+        // Selected person can't do night, show warning
+        console.log("Advertencia: La persona seleccionada no puede hacer turno de noche");
+    }
 }
 
 function renderConfig() {
@@ -412,11 +845,6 @@ function renderConfig() {
 
     const person = config.fixed_night_person;
     document.getElementById("nightPersonSelect").value = person || "";
-    document.querySelectorAll("#nightPersonPills .night-person-card").forEach(c => {
-        const name = c.querySelector('.night-person-name');
-        if (name && name.textContent.trim() === person) c.classList.add("selected");
-        else c.classList.remove("selected");
-    });
 
     // Extended Shifts Checkbox
     const cb = document.getElementById("allowLongShifts");
@@ -469,6 +897,10 @@ function renderConfig() {
     // Rotation enabled
     const rotCb = document.getElementById("rotationEnabled");
     if (rotCb) rotCb.checked = config.rotation_enabled !== false;
+
+    // Strict weekly alternation
+    const strictWeeklyCb = document.getElementById("strictWeeklyAlternation");
+    if (strictWeeklyCb) strictWeeklyCb.checked = config.strict_weekly_alternation || false;
 }
 
 function setNightMode(val, btn) {
@@ -1059,6 +1491,7 @@ async function generateSchedule() {
     config.collision_peak_priority = document.getElementById("collisionPeakPriority")?.value || "pm";
     config.use_history = document.getElementById("useHistoryContext")?.checked ?? true;
     config.rotation_enabled = document.getElementById("rotationEnabled")?.checked ?? true;
+    config.strict_weekly_alternation = document.getElementById("strictWeeklyAlternation")?.checked ?? false;
     const specialDays = getSpecialDaysPayload();
 
     try {
@@ -1399,10 +1832,13 @@ function renderSchedule(schedule, tableSelector, tasks = {}) {
         tableEl.classList.add("vertical-table");
 
         // --- VERTICAL (CALENDAR) HEADERS ---
+        const weekDatesMapV = getWeekDatesMap();
         thead.innerHTML = `<th style="width:120px; text-align:center;">Horario</th>`;
         DAYS.forEach(d => {
-            thead.innerHTML += `<th style="text-align:center; min-width:140px;">
-                <div style="font-size:1.1rem; font-weight:800; color:var(--text-main);">${d}</div>
+            const holiday = getHolidayForDay(d, weekDatesMapV);
+            const holidayIcon = holiday ? `<i class="fa-solid fa-star" style="color:#f59e0b; font-size:0.75rem; margin-left:4px;" title="${holiday.name}"></i>` : '';
+            thead.innerHTML += `<th style="text-align:center; min-width:140px;${holiday ? ' background: rgba(245,158,11,0.08);' : ''}">
+                <div style="font-size:1.1rem; font-weight:800; color:var(--text-main);">${d}${holidayIcon}</div>
             </th>`;
         });
 
@@ -1510,11 +1946,17 @@ function renderSchedule(schedule, tableSelector, tasks = {}) {
         tableEl.classList.remove("vertical-table");
 
         // --- HORIZONTAL HEADERS ---
+        const weekDatesMap = getWeekDatesMap();
         thead.innerHTML = `
             <th id="th-collaborator" style="cursor:pointer; min-width:160px;" title="Click para ordenar (Nombre / Hora)">
                 Empleado <i class="fa-solid fa-sort"></i>
             </th>
-            <th>Vie</th><th>S\u00e1b</th><th>Dom</th><th>Lun</th><th>Mar</th><th>Mi\u00e9</th><th>Jue</th>
+            ${DAYS.map(d => {
+                const holiday = getHolidayForDay(d, weekDatesMap);
+                const holidayClass = holiday ? ' th-holiday' : '';
+                const holidayIcon = holiday ? `<br><i class="fa-solid fa-star" style="color:#f59e0b; font-size:0.7rem;" title="${holiday.name}"></i>` : '';
+                return `<th class="${holidayClass}">${d}${holidayIcon}</th>`;
+            }).join('')}
             <th class="col-hours">Horas</th>
         `;
 
@@ -1561,6 +2003,9 @@ function renderSchedule(schedule, tableSelector, tasks = {}) {
                 let fixedClass = "";
                 if (emp && emp.fixed_shifts && emp.fixed_shifts[d]) fixedClass = "pill-fixed";
 
+                const holiday = getHolidayForDay(d, weekDatesMap);
+                const holidayCellClass = holiday ? ' holiday-col' : '';
+
                 let historyAttrs = "";
                 let cursorStyle = "";
                 if (isHistory) {
@@ -1576,7 +2021,7 @@ function renderSchedule(schedule, tableSelector, tasks = {}) {
                 }
 
                 row.innerHTML += `
-                    <td>
+                    <td class="${holidayCellClass}">
                         <div class="shift-pill ${info.class} ${fixedClass}${isHistory ? " history-shift-pill" : ""}" ${historyAttrs} style="${cursorStyle}">
                             <i class="fa-solid ${info.icon} pill-icon"></i>
                             <span class="pill-time">${info.text}</span>
@@ -1610,7 +2055,23 @@ async function fetchHistoryEntries(forceRefresh = false) {
         throw new Error(`API returned ${res.status}`);
     }
 
-    historyEntriesCache = await res.json();
+    let entries = await res.json();
+    
+    // Eliminar duplicados basándose en nombre + timestamp
+    const seen = new Set();
+    entries = entries.filter(entry => {
+        const key = `${entry.name}_${entry.timestamp}`;
+        if (seen.has(key)) {
+            return false;
+        }
+        seen.add(key);
+        return true;
+    });
+    
+    // Ordenar por timestamp descendente (más reciente primero)
+    entries.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    
+    historyEntriesCache = entries;
     return historyEntriesCache;
 }
 
@@ -1656,6 +2117,9 @@ function renderHistoryList() {
                 <div class="h-info">
                     <i class="fa-solid fa-calendar-week"></i>
                     <span class="h-name">${h.name}</span>
+                    <button type="button" class="btn-icon" onclick="renameHistory(${i}, event)" title="Renombrar" style="padding: 2px 6px;">
+                        <i class="fa-solid fa-pen" style="font-size: 0.75rem;"></i>
+                    </button>
                     <span class="h-date">${dateStr}</span>
                 </div>
                 <div class="h-actions">
@@ -1733,11 +2197,43 @@ async function loadHistory(forceRefresh = true) {
 function toggleHistory(header) {
     const item = header.parentElement;
     const index = Number(item.dataset.historyIndex);
-    item.classList.toggle('expanded');
-    if (item.classList.contains('expanded')) {
-        expandedHistoryItems.add(index);
+    const isExpanding = !item.classList.contains('expanded');
+    
+    // Obtener todos los items del historial
+    const allItems = document.querySelectorAll('.history-item');
+    
+    if (isExpanding) {
+        // Primero minimizar cualquier otro que esté expandido con animación
+        allItems.forEach(i => {
+            if (i !== item && i.classList.contains('expanded')) {
+                i.classList.remove('expanded');
+                i.classList.add('hidden-by-expand');
+            }
+        });
+        
+        // Ocultar los demás después de un pequeño delay para la animación
+        setTimeout(() => {
+            allItems.forEach(i => {
+                if (i !== item) {
+                    i.style.display = 'none';
+                    i.classList.remove('hidden-by-expand');
+                }
+            });
+            // Ahora expandir el actual
+            item.classList.add('expanded');
+            expandedHistoryItems.add(index);
+        }, 50);
     } else {
+        // Minimizar el actual
+        item.classList.remove('expanded');
         expandedHistoryItems.delete(index);
+        
+        // Mostrar todos los demás
+        setTimeout(() => {
+            allItems.forEach(i => {
+                i.style.display = '';
+            });
+        }, 100);
     }
 }
 
@@ -1876,28 +2372,43 @@ function getHistoryPromptDefaultValue(shiftCode) {
         : shiftCode;
 }
 
+// Variable para guardar el callback del modal de turno
+let shiftPromptCallback = null;
+
 function promptHistoryShiftValue(empName, days, currentValue = "") {
-    const input = prompt(
-        buildHistoryShiftPromptMessage(empName, days),
-        getHistoryPromptDefaultValue(currentValue)
-    );
-
-    if (input === null) {
-        return null;
-    }
-
-    const trimmed = input.trim();
-    if (!trimmed) {
-        return null;
-    }
-
-    const normalized = normalizeFlexibleShiftInput(trimmed);
-    if (!normalized || normalized === "AUTO") {
-        alert("Formato no reconocido. Usa un codigo interno o un rango como 1pm-10pm, 13-22 o 5am-11am + 5pm-8pm.");
-        return promptHistoryShiftValue(empName, days, currentValue);
-    }
-
-    return normalized;
+    return new Promise((resolve) => {
+        const message = buildHistoryShiftPromptMessage(empName, days);
+        const defaultVal = getHistoryPromptDefaultValue(currentValue);
+        
+        // Abrir modal con el mensaje y valor por defecto
+        document.getElementById('textEditTitle').textContent = message;
+        document.getElementById('textEditLabel').textContent = 'Turno';
+        document.getElementById('textEditInput').value = defaultVal;
+        
+        shiftPromptCallback = (input) => {
+            if (!input || input.trim() === "") {
+                resolve(null);
+                return;
+            }
+            
+            const trimmed = input.trim();
+            const normalized = normalizeFlexibleShiftInput(trimmed);
+            
+            if (!normalized || normalized === "AUTO") {
+                // Mostrar error en el mismo modal
+                document.getElementById('textEditInput').style.borderColor = 'var(--error)';
+                setTimeout(() => {
+                    document.getElementById('textEditInput').style.borderColor = '';
+                }, 2000);
+                return;
+            }
+            
+            resolve(normalized);
+        };
+        
+        document.getElementById('textEditModal').classList.remove('hidden');
+        document.getElementById('textEditInput').focus();
+    });
 }
 
 async function persistHistoryEntry(index, nextEntry) {
@@ -1940,7 +2451,7 @@ async function editHistoryShiftBatch(empName, days, histIndex) {
 
         const currentValues = days.map(day => entry.schedule?.[empName]?.[day] || "OFF");
         const sharedValue = currentValues.every(value => value === currentValues[0]) ? currentValues[0] : "";
-        const newShift = promptHistoryShiftValue(empName, days, sharedValue);
+        const newShift = await promptHistoryShiftValue(empName, days, sharedValue);
         if (!newShift) {
             clearHistorySelectionStyles();
             return;
@@ -1968,6 +2479,97 @@ async function editHistoryShiftBatch(empName, days, histIndex) {
         historySelectionState.days = [];
         clearHistorySelectionStyles();
     }
+}
+
+async function renameHistory(i, event) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+    
+    const entry = historyEntriesCache[i];
+    if (!entry) return;
+    
+    // Usar modal en lugar de prompt
+    openTextEditModal("Renombrar Semana", "Nombre", entry.name, async (newName) => {
+        if (!newName || newName.trim() === "" || newName === entry.name) return;
+        
+        entry.name = newName.trim();
+        
+        // Guardar en el backend
+        try {
+            const res = await fetch('/api/history', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ index: i, name: newName.trim() })
+            });
+            
+            if (!res.ok) {
+                alert("No se pudo renombrar el historial.");
+                return;
+            }
+            
+            // Actualizar la UI
+            const nameSpan = document.querySelector(`.history-item[data-history-index="${i}"] .h-name`);
+            if (nameSpan) {
+                nameSpan.textContent = newName.trim();
+            }
+        } catch (e) {
+            console.error(e);
+            alert("Error al renombrar: " + e.message);
+        }
+    });
+}
+
+// Variables para el modal de edición de texto
+let textEditCallback = null;
+
+function openTextEditModal(title, label, defaultValue, callback) {
+    document.getElementById('textEditTitle').textContent = title;
+    document.getElementById('textEditLabel').textContent = label;
+    document.getElementById('textEditInput').value = defaultValue;
+    textEditCallback = callback;
+    
+    document.getElementById('textEditModal').classList.remove('hidden');
+    
+    // Agregar listener para Enter
+    const inputEl = document.getElementById('textEditInput');
+    inputEl.onkeydown = (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            confirmTextEdit();
+        } else if (e.key === 'Escape') {
+            closeTextEditModal();
+        }
+    };
+    
+    inputEl.focus();
+}
+
+function closeTextEditModal() {
+    document.getElementById('textEditModal').classList.add('hidden');
+    textEditCallback = null;
+    shiftPromptCallback = null;
+}
+
+// Toggle para tarjetas de parámetros colapsables
+function toggleParamCard(header) {
+    const card = header.parentElement;
+    card.classList.toggle('expanded');
+}
+
+function confirmTextEdit() {
+    const value = document.getElementById('textEditInput').value;
+    
+    //优先使用 shiftPromptCallback（用于选择班次）
+    if (shiftPromptCallback) {
+        shiftPromptCallback(value);
+        shiftPromptCallback = null;
+    } else if (textEditCallback) {
+        textEditCallback(value);
+    }
+    
+    closeTextEditModal();
 }
 
 async function deleteHistory(i, event) {
@@ -2638,7 +3240,7 @@ async function editHistoryShift(empName, day, histIndex) {
         if (!entry) return;
 
         const currentShift = entry.schedule?.[empName]?.[day] || "OFF";
-        const newShift = promptHistoryShiftValue(empName, [day], currentShift);
+        const newShift = await promptHistoryShiftValue(empName, [day], currentShift);
         if (!newShift) return;
 
         const nextEntry = cloneHistoryEntry(entry);
@@ -3156,3 +3758,33 @@ async function loadSundayRotation() {
         container.innerHTML = '<div style="padding: 1rem; text-align: center; color: #ef4444;"><i class="fa-solid fa-triangle-exclamation"></i> Error cargando rotación. Verifica la conexión con el servidor.</div>';
     }
 }
+
+// Funciones para el modal Acerca de
+function openAcercaDeModal() {
+    const modal = document.getElementById("acercaDeModal");
+    if (modal) {
+        modal.classList.remove("hidden");
+        document.body.style.overflow = "hidden"; // Prevent background scrolling
+    }
+}
+
+function closeAcercaDeModal(event) {
+    // Close if clicking overlay or close button
+    if (!event || event.target === event.currentTarget || event.target.closest('button[onclick*="closeAcercaDeModal"]')) {
+        const modal = document.getElementById("acercaDeModal");
+        if (modal) {
+            modal.classList.add("hidden");
+            document.body.style.overflow = ""; // Restore scrolling
+        }
+    }
+}
+
+// Close modal on Escape key
+document.addEventListener("keydown", function(e) {
+    if (e.key === "Escape") {
+        const modal = document.getElementById("acercaDeModal");
+        if (modal && !modal.classList.contains("hidden")) {
+            closeAcercaDeModal(e);
+        }
+    }
+});

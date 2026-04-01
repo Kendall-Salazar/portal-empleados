@@ -139,6 +139,7 @@ def load_db():
             "sunday_cycle_index": cfg_row["sunday_cycle_index"] or 0,
             "sunday_rotation_queue": json.loads(cfg_row["sunday_rotation_queue"]) if cfg_row["sunday_rotation_queue"] else None,
             "use_history": bool(cfg_row["use_history"]) if "use_history" in cfg_row.keys() else True,
+            "holidays": json.loads(cfg_row["holidays"]) if "holidays" in cfg_row.keys() and cfg_row["holidays"] else [],
         }
 
     # History log
@@ -231,8 +232,8 @@ def save_db(data):
             INSERT INTO horario_config
             (id, night_mode, fixed_night_person, allow_long_shifts, use_refuerzo,
              refuerzo_type, refuerzo_start, refuerzo_end, allow_collision_quebrado,
-             collision_peak_priority, sunday_cycle_index, sunday_rotation_queue, use_history)
-            VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             collision_peak_priority, sunday_cycle_index, sunday_rotation_queue, use_history, holidays)
+            VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             cfg.get("night_mode", "rotation"),
             cfg.get("fixed_night_person"),
@@ -246,6 +247,7 @@ def save_db(data):
             cfg.get("sunday_cycle_index", 0),
             json.dumps(cfg.get("sunday_rotation_queue")) if cfg.get("sunday_rotation_queue") else None,
             1 if cfg.get("use_history", True) else 0,
+            json.dumps(cfg.get("holidays", [])),
         ))
 
     # Guardar history_log (reescribir completo)
@@ -609,6 +611,9 @@ class Config(BaseModel):
     use_history: bool = True
     sunday_cycle_index: int = 0  # Legacy, kept for backwards compat
     sunday_rotation_queue: Optional[List[str]] = None
+    strict_weekly_alternation: bool = False
+    custom_shifts: list = []
+    holidays: list = []  # Días festivos [{date: "YYYY-MM-DD", name: "..."}]
 
 class SolverRequest(BaseModel):
     employees: List[Employee]
@@ -1666,7 +1671,8 @@ class PlanillaTarifas(BaseModel):
     tarifa_diurna: float
     tarifa_nocturna: float
     tarifa_mixta: float
-    seguro: float
+    seguro_modo: str = "porcentual"  # porcentual | fijo
+    seguro_valor: float  # tasa decimal (ej. 0.1067) o monto fijo en colones por semana
 
 class PlanillaMes(BaseModel):
     anio: int
@@ -1678,6 +1684,8 @@ class PlanillaSemana(BaseModel):
 
 class PlanillaBoletasRequest(BaseModel):
     semana_nombre: str
+    tipo_bono: str = "otros"
+    valor_sticker: float = 150.0
 
 class PlanillaImportarHorario(BaseModel):
     horario_id: int
@@ -2283,6 +2291,46 @@ def sincronizar_aguinaldo_anio(anio: int):
 
 
 # ------------------------------------------------------------------------------
+# PLANILLAS - guardado Excel (archivo bloqueado por Excel/OneDrive)
+# ------------------------------------------------------------------------------
+def _is_excel_file_lock_error(e: BaseException) -> bool:
+    if isinstance(e, PermissionError):
+        return True
+    if isinstance(e, OSError):
+        return getattr(e, "errno", None) in (13, 16) or getattr(e, "winerror", None) in (32, 33)
+    return False
+
+
+def _save_workbook_planilla(wb, path: str) -> None:
+    """Guarda el workbook; si el destino está bloqueado, intenta vía archivo temporal."""
+    try:
+        wb.save(path)
+        return
+    except (PermissionError, OSError) as e:
+        if not _is_excel_file_lock_error(e):
+            raise
+    dir_name = os.path.dirname(os.path.abspath(path)) or "."
+    os.makedirs(dir_name, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(prefix=".xlsx_save_", suffix=".tmp", dir=dir_name)
+    os.close(fd)
+    try:
+        wb.save(tmp_path)
+        os.replace(tmp_path, path)
+    except Exception as e:
+        try:
+            if os.path.isfile(tmp_path):
+                os.remove(tmp_path)
+        except OSError:
+            pass
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Tienes el excel abierto, necesito que lo cierres, no seas inteligente asintomatico :)"
+            ),
+        ) from e
+
+
+# ------------------------------------------------------------------------------
 # PLANILLAS - TARIFAS
 # ------------------------------------------------------------------------------
 @app.get("/api/planillas/tarifas")
@@ -2291,7 +2339,12 @@ def get_planillas_tarifas():
 
 @app.post("/api/planillas/tarifas")
 def update_planillas_tarifas(t: PlanillaTarifas):
-    plan_db.set_tarifas(t.tarifa_diurna, t.tarifa_nocturna, t.tarifa_mixta, t.seguro)
+    modo = (t.seguro_modo or "porcentual").strip().lower()
+    if modo not in ("porcentual", "fijo"):
+        raise HTTPException(status_code=400, detail="seguro_modo debe ser 'porcentual' o 'fijo'.")
+    plan_db.set_tarifas(
+        t.tarifa_diurna, t.tarifa_nocturna, t.tarifa_mixta, modo, float(t.seguro_valor)
+    )
     return {"status": "success"}
 
 # ------------------------------------------------------------------------------
@@ -2348,7 +2401,7 @@ def create_mes(m: PlanillaMes):
     pl_module.crear_catalogo(wb)
     
     ws_cat = wb["Catalogo"]
-    tipo_map = {"tarjeta": "Tarjeta", "efectivo": "Efectivo", "fijo": "Salario Fijo"}
+    tipo_map = {"tarjeta": "Transferencia Bancaria", "efectivo": "Efectivo", "fijo": "Salario Fijo"}
     for i, emp in enumerate(emps):
         r = 5 + i
         pl_module.sc(ws_cat, r, 1, emp["nombre"], pl_module.f_data, pl_module.ROW_1 if i % 2 == 0 else pl_module.ROW_2, pl_module.al_l, pl_module.borde)
@@ -2361,7 +2414,7 @@ def create_mes(m: PlanillaMes):
     pl_module.crear_resumen_mensual(wb)
     if "Sheet" in wb.sheetnames:
         wb.remove(wb["Sheet"])
-    wb.save(archivo_path)
+    _save_workbook_planilla(wb, archivo_path)
     
     # Registrar en DB
     mes_db = plan_db.crear_mes(m.anio, m.mes, archivo_rel_path)
@@ -2399,12 +2452,14 @@ def agregar_semana(s: PlanillaSemana):
     sem_num = pl_module.num_semana_anual(viernes_date)
     
     nombre_hoja, gran_row, section_totals = pl_module.crear_hoja_semanal(
-        wb, num, viernes_date, empleados, seguro=tarifas["seguro"])
+        wb, num, viernes_date, empleados, tarifas=tarifas,
+        holiday_dates=db.get("config", {}).get("holidays", [])
+    )
     pl_module.crear_resumen_semanal(wb, nombre_hoja, sem_num, viernes_date)
     pl_module.crear_resumen_mensual(wb)
     pl_module.crear_dashboard(wb)
     
-    wb.save(archivo_path)
+    _save_workbook_planilla(wb, archivo_path)
     
     # Save to DB
     plan_db.add_semana(s.mes_id, sem_num, s.viernes)
@@ -2448,7 +2503,9 @@ def delete_semana(semana_id: int):
             if sheet_res in wb.sheetnames: wb.remove(wb[sheet_res])
             pl_module.crear_resumen_mensual(wb)
             pl_module.crear_dashboard(wb)
-            wb.save(archivo_path)
+            _save_workbook_planilla(wb, archivo_path)
+        except HTTPException:
+            raise
         except Exception as e:
             print(f"Advertencia al modificar Excel: {e}")
 
@@ -2514,12 +2571,14 @@ def agregar_semana_a_mes_historico(mes_id: int, s: PlanillaSemana):
     sem_num = pl_module.num_semana_anual(viernes_date)
 
     nombre_hoja, gran_row, section_totals = pl_module.crear_hoja_semanal(
-        wb, num, viernes_date, empleados, seguro=tarifas["seguro"])
+        wb, num, viernes_date, empleados, tarifas=tarifas,
+        holiday_dates=db.get("config", {}).get("holidays", [])
+    )
     pl_module.crear_resumen_semanal(wb, nombre_hoja, sem_num, viernes_date)
     pl_module.crear_resumen_mensual(wb)
     pl_module.crear_dashboard(wb)
 
-    wb.save(archivo_path)
+    _save_workbook_planilla(wb, archivo_path)
 
     plan_db.add_semana(mes_id, sem_num, s.viernes)
     semanas = plan_db.get_semanas_del_mes(mes_id)
@@ -2545,7 +2604,8 @@ def importar_horario_semana(req: PlanillaImportarHorario):
         
     archivo_path = os.path.join(_planillas_dir, mes_activo["archivo"])
     ok, msg, hours_data = horario_db.rellenar_horas_en_excel(
-        archivo_path, req.semana_nombre, horario["horario"]
+        archivo_path, req.semana_nombre, horario["horario"],
+        holidays=db.get("config", {}).get("holidays", [])
     )
     
     if not ok:
@@ -2606,7 +2666,8 @@ def importar_horario_semana_historico(mes_id: int, semana_nombre: str, req: Plan
         raise HTTPException(status_code=404, detail=f"No se encontró el Excel: {mes_target['archivo']}")
 
     ok, msg, hours_data = horario_db.rellenar_horas_en_excel(
-        archivo_path, semana_nombre, horario["horario"]
+        archivo_path, semana_nombre, horario["horario"],
+        holidays=db.get("config", {}).get("holidays", [])
     )
 
     if not ok:
@@ -2654,7 +2715,13 @@ def generar_boletas(req: PlanillaBoletasRequest):
     archivo_path = os.path.join(_planillas_dir, mes_activo["archivo"])
     logo_path = os.path.join(_planillas_dir, "logo.png")
     
-    ok, msg, out_dir = gb_module.generar_boletas_semana(archivo_path, req.semana_nombre, logo_path)
+    ok, msg, out_dir = gb_module.generar_boletas_semana(
+        archivo_path, 
+        req.semana_nombre, 
+        logo_path,
+        tipo_bono=req.tipo_bono,
+        valor_sticker=req.valor_sticker
+    )
     
     if ok:
         # Open folder dynamically on Windows
@@ -2776,6 +2843,26 @@ def generar_doc_renuncia(req: DocLiquidacion):
     logo = os.path.join(_planillas_dir, "logo.png")
     base = _runtime_root
     path = docx_generator.generar_liquidacion("Renuncia", nombre, cedula, req.vacaciones_dias, req.vacaciones_monto, req.aguinaldo_monto, 0, 0, req.total_pagar, req.modo_pago, logo, base)
+    return {"status": "success", "path": path}
+
+
+@app.post("/api/utilidades/prestamo-carta/{prestamo_id}")
+def generar_carta_prestamo(prestamo_id: int):
+    prestamo = plan_db.get_prestamo(prestamo_id)
+    if not prestamo:
+        raise HTTPException(status_code=404, detail="Prestamo no encontrado")
+    emp_id = prestamo.get("empleado_id")
+    emps = plan_db.get_empleados(solo_activos=False)
+    emp = next((e for e in emps if e["id"] == emp_id), None)
+    if not emp:
+        raise HTTPException(status_code=404, detail="Empleado no encontrado")
+    nombre = emp.get("nombre", "")
+    cedula = emp.get("cedula", "") or ""
+    monto_total = float(prestamo.get("monto_total", 0))
+    pago_semanal = float(prestamo.get("pago_semanal", 0))
+    logo = os.path.join(_planillas_dir, "logo.png")
+    base = _runtime_root
+    path = docx_generator.generar_prestamo(nombre, cedula, monto_total, pago_semanal, logo, base)
     return {"status": "success", "path": path}
 
 class DocRecomendacion(BaseModel):
