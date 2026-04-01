@@ -2926,8 +2926,10 @@ class ShiftScheduler:
                         last_sunday_off[emp_name] = idx  # overwrite = keep most recent
             
             # Build queue: sort by last_sunday_off ascending (least recent first)
-            # Employees who NEVER had Sunday OFF get -1 → they go to the very front
-            rotation_queue = sorted(eligible, key=lambda e: last_sunday_off.get(e, -1))
+            # Employees who NEVER had Sunday OFF go to the END (large number), not the front
+            # This ensures people WITH history but long wait go first
+            max_idx = len(history_entries) if history_entries else 0
+            rotation_queue = sorted(eligible, key=lambda e: last_sunday_off.get(e, max_idx + 1))
             
             rotation_target = rotation_queue[0] if rotation_queue else None
             for e in rotation_queue:
@@ -2964,8 +2966,14 @@ class ShiftScheduler:
                         )
 
             if rotation_target and rotation_target in sunday_absence_vars:
-                # Always guarantee the rotation_target their Sunday absence (5M if denied).
-                penalties.append(5000000 * sunday_absence_vars[rotation_target].Not())
+                # HARD CONSTRAINT: rotation_target MUST have Sunday OFF — no exceptions
+                model.Add(sunday_absence_vars[rotation_target] == 1)
+
+            # Second in queue: strongly prefer Sunday OFF for the next person
+            if len(rotation_queue) >= 2:
+                second_target = rotation_queue[1]
+                if second_target in sunday_absence_vars:
+                    penalties.append(2000000 * sunday_absence_vars[second_target].Not())
 
             # O6. Sunday Rotation (Historial Compatibility)
             # Verify if they worked last Sunday.
