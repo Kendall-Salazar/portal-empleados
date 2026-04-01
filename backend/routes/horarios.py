@@ -166,7 +166,11 @@ def solve_schedule(request: SolverRequest):
     # Save last result
     if result.get("schedule"):
         db["last_result"] = result
-        _save_db(db)
+        try:
+            _save_db(db)
+        except Exception as e:
+            print(f"Warning: Could not save to DB (may be locked): {e}")
+            # Continue anyway - the result is still returned to frontend
     
     return result
 
@@ -248,6 +252,26 @@ def update_history_item(index: int, entry: HistoryEntry):
         db["history_log"] = history_list
         save_db(db)
         return {"status": "Updated"}
+    raise HTTPException(status_code=404, detail="Index out of bounds")
+
+
+@router.put("/history")
+def rename_history_entry(rename_data: dict):
+    """Rename a history entry."""
+    db = _load_db()
+    history_list = db.get("history_log", [])
+    
+    index = rename_data.get("index")
+    new_name = rename_data.get("name", "").strip()
+    
+    if index is None or not new_name:
+        raise HTTPException(status_code=400, detail="Index and name are required")
+    
+    if 0 <= index < len(history_list):
+        history_list[index]["name"] = new_name
+        db["history_log"] = history_list
+        _save_db(db)
+        return {"status": "Renamed", "name": new_name}
     raise HTTPException(status_code=404, detail="Index out of bounds")
 
 

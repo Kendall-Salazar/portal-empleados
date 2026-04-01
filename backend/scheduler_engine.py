@@ -292,6 +292,57 @@ def sync_refuerzo_custom_shift(config):
     return code
 
 
+# Custom shifts priorities - will be used by the solver
+CUSTOM_SHIFTS_PRIORITIES = {}  # {shift_code: priority_value}
+
+
+def sync_custom_shifts(config):
+    """Add custom shifts from config to the available shifts list.
+    
+    Custom shifts are added with their priority. Higher priority means
+    the solver will prefer this shift over others when filling time slots.
+    
+    Priority affects the solver's preference:
+    - 100 (Alta): Strongly preferred, may break other rules to use this shift
+    - 50 (Media): Normal preference
+    - 10 (Baja): Used only when necessary
+    
+    This is applied AFTER the solver tries to satisfy all hard constraints,
+    and affects soft constraints / penalty minimization.
+    """
+    global SHIFT_NAMES, CUSTOM_SHIFTS_PRIORITIES
+    
+    # Clear previous custom shifts (those starting with CUSTOM_SHIFT_PREFIX)
+    custom_codes = [code for code in list(SHIFTS.keys()) if code.startswith("CUST_")]
+    for code in custom_codes:
+        SHIFTS.pop(code, None)
+    CUSTOM_SHIFTS_PRIORITIES = {}
+    
+    custom_shifts = (config or {}).get("custom_shifts", [])
+    if not custom_shifts:
+        return
+    
+    for shift in custom_shifts:
+        name = shift.get("name", "")
+        start = shift.get("start")
+        end = shift.get("end")
+        priority = shift.get("priority", 50)
+        
+        if not name or start is None or end is None:
+            continue
+        
+        # Create shift code
+        code = f"CUST_{name}"
+        effective_end = end + 24 if end <= start else end
+        
+        # Add to SHIFTS dict
+        SHIFTS[code] = set(range(start, effective_end))
+        SHIFT_NAMES.append(code)
+        
+        # Store priority (higher = more preferred)
+        CUSTOM_SHIFTS_PRIORITIES[code] = priority
+
+
 def ensure_manual_shift_code(start_hour, end_hour):
     global SHIFT_NAMES
 
@@ -723,14 +774,16 @@ class ShiftScheduler:
         No gender preference. Jefe de Pista only eligible on Sáb.
         Night shift workers (N_22-05), OFF, VAC, and PERM are excluded.
         """
-        res_tasks = {e: {d: None for d in DAYS} for e in self.employees}
-        task_count = {e: 0 for e in self.employees}  # Weekly fairness counter
+        # Solo procesar empleados que existen en el schedule
+        schedule_employees = [e for e in self.employees if e in schedule]
+        res_tasks = {e: {d: None for d in DAYS} for e in schedule_employees}
+        task_count = {e: 0 for e in schedule_employees}  # Weekly fairness counter
         
         for d in DAYS:
             if self.day_modes.get(d) == SPECIAL_DAY_MODE_CLOSED:
                 continue
             available = []
-            for e in self.employees:
+            for e in schedule_employees:
                 shift = schedule[e].get(d, "OFF")
                 if shift in ["OFF", "VAC", "PERM", "N_22-05"]:
                     continue
@@ -809,6 +862,7 @@ class ShiftScheduler:
 
     def solve(self):
         current_refuerzo_custom_shift = sync_refuerzo_custom_shift(self.config)
+        sync_custom_shifts(self.config)  # Load custom shifts with priorities
         default_diurno_refuerzo_shift = ensure_manual_shift_code(7, 12)
         model = cp_model.CpModel()
 
@@ -983,7 +1037,7 @@ class ShiftScheduler:
             forced_off = sum(1 for d in DAYS if fs.get(d) == 'OFF')
             forced_closed = sum(
                 1 for d in DAYS
-                if is_special_closed(d) and fs.get(d) not in ['VAC', 'PERM']
+                if is_special_closed(d) and fs.get(d) not in ['OFF', 'VAC', 'PERM']
             )
             
             # Base off is 1, but if they have more forced OFFs, we allow that many.
@@ -1310,7 +1364,7 @@ class ShiftScheduler:
             _night_forced_vac = sum(1 for d in DAYS if _night_fs.get(d) == 'VAC')
             _night_forced_closed = sum(
                 1 for d in DAYS
-                if is_special_closed(d) and _night_fs.get(d) not in ['VAC', 'PERM']
+                if is_special_closed(d) and _night_fs.get(d) not in ['OFF', 'VAC', 'PERM']
             )
             _night_base_off = max(1, _night_forced_off)
             model.Add(sum(
@@ -1501,8 +1555,55 @@ class ShiftScheduler:
         alternating_pairs = _get_alternating_pairs(self.config, self.employees, self.emp_data)
         alternating_pair_members_set = {e for pair in alternating_pairs for e in pair}
 
+        # NUEVA RESTRICCIÓN: Alternancia semanal estricta
+        # Si está habilitada, las mujeres en par deben mantener el mismo turno (AM o PM) toda la semana
+        strict_weekly = self.config.get("strict_weekly_alternation", False) if self.config else False
+
         am_shifts = [s for s in SHIFT_NAMES if SHIFT_IS_WORKING.get(s) and SHIFT_MIN_HOUR.get(s) is not None and SHIFT_MIN_HOUR[s] < 12]
         pm_shifts = [s for s in SHIFT_NAMES if SHIFT_IS_WORKING.get(s) and SHIFT_MIN_HOUR.get(s) is not None and SHIFT_MIN_HOUR[s] >= 12]
+
+        # Para alternancia semanal estricta: pre-computar el turno para toda la semana
+        # Based on fixed_shifts o historial
+        weekly_assignment = {}  # {pair_idx: {"w1": "AM" or "PM", "w2": "AM" or "PM"}}
+        
+        if strict_weekly and alternating_pairs:
+            for pair_idx, (w1, w2) in enumerate(alternating_pairs):
+                # Try to get from fixed_shifts first
+                w1_fixed = self.emp_data.get(w1, {}).get('fixed_shifts', {})
+                w2_fixed = self.emp_data.get(w2, {}).get('fixed_shifts', {})
+                
+                w1_token = None
+                w2_token = None
+                
+                # Check if any fixed shift is set (not OFF/VAC/PERM)
+                for d in DAYS:
+                    if w1_fixed.get(d) and w1_fixed[d] not in ['OFF', 'VAC', 'PERM']:
+                        w1_token = _fixed_shift_token_for_day(self.emp_data.get(w1, {}), d)
+                        break
+                for d in DAYS:
+                    if w2_fixed.get(d) and w2_fixed[d] not in ['OFF', 'VAC', 'PERM']:
+                        w2_token = _fixed_shift_token_for_day(self.emp_data.get(w2, {}), d)
+                        break
+                
+                # If no fixed shifts, try history
+                if not w1_token and most_recent_schedule:
+                    w1_hist = most_recent_schedule.get(w1, {})
+                    w1_token = _extract_rotation_token_from_week(self.emp_data.get(w1, {}), w1_hist)
+                if not w2_token and most_recent_schedule:
+                    w2_hist = most_recent_schedule.get(w2, {})
+                    w2_token = _extract_rotation_token_from_week(self.emp_data.get(w2, {}), w2_hist)
+                
+                # If still no token, default: w1=AM, w2=PM
+                if not w1_token:
+                    w1_token = "AM"
+                if not w2_token:
+                    w2_token = "PM"
+                
+                # Ensure they are opposite
+                if w1_token == w2_token:
+                    w2_token = "PM" if w1_token == "AM" else "AM"
+                
+                weekly_assignment[pair_idx] = {"w1": w1_token, "w2": w2_token}
 
         for pair_idx, (w1, w2) in enumerate(alternating_pairs):
             # Pre-compute expected rotation direction for this week based on history.
@@ -1538,10 +1639,25 @@ class ShiftScheduler:
                 if fixed_w1_token and fixed_w2_token and fixed_w1_token == fixed_w2_token:
                     continue
 
-                w1_is_exception = (fixed_w1_token and w1_expected and fixed_w1_token != w1_expected)
-                w2_is_exception = (fixed_w2_token and w2_expected and fixed_w2_token != w2_expected)
-                if w1_is_exception or w2_is_exception:
-                    continue
+                # Para alternancia semanal estricta: usar el token pre-computado para toda la semana
+                if strict_weekly and pair_idx in weekly_assignment:
+                    # En modo semanal estricto, forzar el mismo turno para toda la semana
+                    w1_expected = weekly_assignment[pair_idx]["w1"]
+                    w2_expected = weekly_assignment[pair_idx]["w2"]
+                    
+                    # FIX: Si hay turnos fijos establecidos que contradicen el turno forzado,
+                    # dar prioridad al turno fijo y saltarse la restricción de alternancia
+                    if fixed_w1_token and fixed_w1_token != w1_expected:
+                        # El turno fijo de w1 contradice lo que queremos forzar, saltar
+                        continue
+                    if fixed_w2_token and fixed_w2_token != w2_expected:
+                        # El turno fijo de w2 contradice lo que queremos forzar, saltar
+                        continue
+                else:
+                    w1_is_exception = (fixed_w1_token and w1_expected and fixed_w1_token != w1_expected)
+                    w2_is_exception = (fixed_w2_token and w2_expected and fixed_w2_token != w2_expected)
+                    if w1_is_exception or w2_is_exception:
+                        continue
 
                 w1_working = model.NewBoolVar(f"alt_w1_{pair_idx}_{d}")
                 model.Add(x[(w1, d, "OFF")] + x[(w1, d, "VAC")] + x[(w1, d, "PERM")] == 0).OnlyEnforceIf(w1_working)
@@ -1559,7 +1675,12 @@ class ShiftScheduler:
                 model.AddBoolAnd([both_working, women_collision[d].Not()]).OnlyEnforceIf(enforce_opposite)
                 model.AddBoolOr([both_working.Not(), women_collision[d]]).OnlyEnforceIf(enforce_opposite.Not())
 
-                if fixed_w1_token:
+                # Para alternancia semanal estricta: forzar el mismo turno AM/PM toda la semana
+                if strict_weekly and pair_idx in weekly_assignment:
+                    w1_token = weekly_assignment[pair_idx]["w1"]
+                    w2_token = weekly_assignment[pair_idx]["w2"]
+                    force_w1_am = (w1_token == "AM")
+                elif fixed_w1_token:
                     force_w1_am = fixed_w1_token == "AM"
                 elif fixed_w2_token:
                     force_w1_am = fixed_w2_token == "PM"
@@ -1570,10 +1691,12 @@ class ShiftScheduler:
                         force_w1_am = False
                     else:
                         force_w1_am = random.choice([True, False])
+                
                 if force_w1_am:
                     model.Add(sum(x[(w1, d, s)] for s in am_shifts) == 1).OnlyEnforceIf(enforce_opposite)
                     model.Add(sum(x[(w2, d, s)] for s in pm_shifts) == 1).OnlyEnforceIf(enforce_opposite)
                 else:
+                    model.Add(sum(x[(w2, d, s)] for s in am_shifts) == 1).OnlyEnforceIf(enforce_opposite)
                     model.Add(sum(x[(w1, d, s)] for s in pm_shifts) == 1).OnlyEnforceIf(enforce_opposite)
                     model.Add(sum(x[(w2, d, s)] for s in am_shifts) == 1).OnlyEnforceIf(enforce_opposite)
         # =========================
@@ -2174,7 +2297,7 @@ class ShiftScheduler:
             manual_off_count = sum(1 for d in DAYS if fixed.get(d) == "OFF")
             closed_off_count = sum(
                 1 for d in DAYS
-                if is_special_closed(d) and fixed.get(d) not in ["VAC", "PERM"]
+                if is_special_closed(d) and fixed.get(d) not in ["OFF", "VAC", "PERM"]
             )
             max_off = max(1, manual_off_count) + closed_off_count
             allow_no_rest = self.emp_data[e].get('allow_no_rest', False)
@@ -2855,6 +2978,30 @@ class ShiftScheduler:
                     if last_sunday not in ["OFF", "VAC", "PERM"] and e in sunday_absence_vars:
                         # If they worked last Sunday, gently prefer giving them this Sunday off.
                         penalties.append(150 * sunday_absence_vars[e].Not())
+
+        # ===== CUSTOM SHIFTS PRIORITIES =====
+        # Apply priority-based incentives/penalties to custom shifts
+        # This runs AFTER all hard constraints and affects soft constraint optimization
+        for e in self.employees:
+            for d in DAYS:
+                for shift_code, priority in CUSTOM_SHIFTS_PRIORITIES.items():
+                    if shift_code in SHIFTS and shift_code in x:
+                        # Priority affects the solver's preference:
+                        # - priority > 50: incentive to use this shift (negative penalty = reward)
+                        # - priority < 50: penalty to avoid this shift
+                        # - priority = 50: neutral (default behavior)
+                        
+                        if priority > 50:
+                            # High priority: strongly prefer this shift
+                            # Reward value scales with priority (e.g., 100 → -50000)
+                            reward = -(priority - 50) * 1000  # -5000 for priority 55, -50000 for priority 100
+                            penalties.append(reward * x[(e, d, shift_code)])
+                        elif priority < 50:
+                            # Low priority: avoid this shift unless necessary
+                            # Penalty value scales with how low (e.g., 10 → +40000)
+                            penalty = (50 - priority) * 1000  # +40000 for priority 10
+                            penalties.append(penalty * x[(e, d, shift_code)])
+                        # priority == 50: no change (neutral)
 
         # Optimization
         model.Minimize(sum(penalties) + sum(peak_penalties))

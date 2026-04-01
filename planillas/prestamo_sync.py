@@ -104,7 +104,8 @@ def _scan_week_sheet(ws, emp_by_name):
         if not empleado_id:
             continue
 
-        monto = _parse_amount(ws.cell(row=row, column=13).value)
+        # Columna N (14) = Préstamo; M (13) = Bonificaciones
+        monto = _parse_amount(ws.cell(row=row, column=14).value)
         if monto > 0:
             found[empleado_id] += monto
 

@@ -364,7 +364,7 @@ async function loadVacSubEquipo() {
 
             const tipoBadgeMap = {
 
-                tarjeta: { icon: 'fa-credit-card', color: '#1d4ed8', bg: 'rgba(29,78,216,0.12)', label: 'Tarjeta' },
+                tarjeta: { icon: 'fa-money-bill-transfer', color: '#1d4ed8', bg: 'rgba(29,78,216,0.12)', label: 'Transferencia Bancaria' },
 
                 efectivo: { icon: 'fa-money-bill-wave', color: '#059669', bg: 'rgba(5,150,105,0.12)', label: 'Efectivo' },
 
@@ -1521,6 +1521,10 @@ async function loadVacSubPrestamos() {
 
                             <i class="fa-solid fa-list"></i> Historial
 
+                        </button>
+
+                        <button class="vac-btn vac-btn-accent" style="font-size:0.78rem;" onclick="generarCartaPrestamo(${p.id})">
+                            <i class="fa-solid fa-file-lines"></i> Carta
                         </button>
 
                         ${!isLiquidado ? `
@@ -2839,6 +2843,15 @@ async function verAbonosPrestamo(prestamoId, empName) {
 
 }
 
+async function generarCartaPrestamo(prestamoId) {
+    try {
+        const res = await fetch(`/api/utilidades/prestamo-carta/${prestamoId}`, { method: 'POST' });
+        if (!res.ok) { const e = await res.json(); throw new Error(e.detail); }
+        showToast('Carta de prestamo generada exitosamente', 'success');
+    } catch (e) { showToast('Error: ' + e.message, 'error'); }
+}
+
+
 
 
 async function eliminarPrestamo(prestamoId, empName) {
@@ -3487,6 +3500,16 @@ async function loadPlanillaMensualTab() {
 
 // ---------------------------
 
+function _syncSeguroModoUI() {
+    const pct = document.getElementById('cfgSeguroModoPct');
+    const fijo = document.getElementById('cfgSeguroModoFijo');
+    const isPct = pct && pct.checked;
+    const elPct = document.getElementById('cfgSeguroValorPct');
+    const elFijo = document.getElementById('cfgSeguroValorFijo');
+    if (elPct) elPct.disabled = !isPct;
+    if (elFijo) elFijo.disabled = isPct;
+}
+
 async function abrirConfigTarifas() {
 
     try {
@@ -3501,7 +3524,26 @@ async function abrirConfigTarifas() {
 
         document.getElementById('cfgTarifaNocturna').value = t.tarifa_nocturna;
 
-        document.getElementById('cfgTarifaSeguro').value = t.seguro;
+        const modo = (t.seguro_modo || 'porcentual').toLowerCase();
+        const pctEl = document.getElementById('cfgSeguroModoPct');
+        const fijoEl = document.getElementById('cfgSeguroModoFijo');
+        const sv = Number(t.seguro_valor != null ? t.seguro_valor : 0.1067);
+        if (modo === 'fijo') {
+            if (fijoEl) fijoEl.checked = true;
+            if (pctEl) pctEl.checked = false;
+            document.getElementById('cfgSeguroValorFijo').value = Math.round(sv);
+            document.getElementById('cfgSeguroValorPct').value = '10.67';
+        } else {
+            if (pctEl) pctEl.checked = true;
+            if (fijoEl) fijoEl.checked = false;
+            const pctDisp = sv > 1 ? sv : sv * 100;
+            document.getElementById('cfgSeguroValorPct').value = Number(pctDisp).toFixed(2);
+            document.getElementById('cfgSeguroValorFijo').value = '';
+        }
+
+        _syncSeguroModoUI();
+        if (pctEl) pctEl.onchange = _syncSeguroModoUI;
+        if (fijoEl) fijoEl.onchange = _syncSeguroModoUI;
 
         document.getElementById('planillaConfigModal').classList.remove('hidden');
 
@@ -3521,6 +3563,17 @@ function closeTarifasModal() {
 
 async function guardarTarifas() {
 
+    const modoFijo = document.getElementById('cfgSeguroModoFijo') && document.getElementById('cfgSeguroModoFijo').checked;
+    const seguro_modo = modoFijo ? 'fijo' : 'porcentual';
+    let seguro_valor;
+    if (modoFijo) {
+        seguro_valor = parseFloat(document.getElementById('cfgSeguroValorFijo').value);
+        if (isNaN(seguro_valor) || seguro_valor < 0) seguro_valor = 0;
+    } else {
+        const p = parseFloat(document.getElementById('cfgSeguroValorPct').value);
+        seguro_valor = (isNaN(p) ? 10.67 : p) / 100;
+    }
+
     const data = {
 
         tarifa_diurna: parseFloat(document.getElementById('cfgTarifaDiurna').value),
@@ -3529,7 +3582,9 @@ async function guardarTarifas() {
 
         tarifa_nocturna: parseFloat(document.getElementById('cfgTarifaNocturna').value),
 
-        seguro: parseFloat(document.getElementById('cfgTarifaSeguro').value)
+        seguro_modo,
+
+        seguro_valor
 
     };
 
@@ -3818,33 +3873,26 @@ function closeBoletasModal() {
 async function ejecutarBoletas() {
 
     const semName = document.getElementById('boletaSemanaSel').value;
-
-
+    const tipoBono = document.getElementById('boletaTipoBonoSel').value;
+    const stickerVal = parseFloat(document.getElementById('boletaStickerValor').value) || 150;
 
     const btn = document.querySelector('#boletasModal .btn-action.primary');
-
     let prevText = "";
 
     if (btn) {
-
         prevText = btn.innerHTML;
-
         btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Procesando...`;
-
         btn.disabled = true;
-
     }
 
-
-
     try {
-
         const res = await fetch('/api/planillas/boletas/generar', {
-
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-
-            body: JSON.stringify({ semana_nombre: semName })
-
+            body: JSON.stringify({ 
+                semana_nombre: semName,
+                tipo_bono: tipoBono,
+                valor_sticker: stickerVal
+            })
         });
 
 

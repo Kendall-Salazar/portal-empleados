@@ -1,0 +1,25 @@
+# Chronos.spec - Template para PyInstaller
+# Este archivo es generado automaticamente por build.bat
+
+a = Analysis(
+    ['run_app.py'],
+    binaries=[],
+    datas=[
+        ('frontend', 'frontend'),
+        ('backend', 'backend'),
+        ('planillas', 'planillas'),
+    ],
+    hiddenimports=[
+        'uvicorn', 'uvicorn.logging', 'uvicorn.loops', 'uvicorn.loops.auto',
+        'uvicorn.protocols', 'uvicorn.protocols.http', 'uvicorn.protocols.http.auto',
+        'uvicorn.protocols.websockets', 'uvicorn.protocols.websockets.auto',
+        'uvicorn.lifespan', 'uvicorn.lifespan.on',
+        'fastapi', 'pydantic', 'webview', 'openpyxl', 'python-docx',
+    ],
+)
+
+pyz = PYZ(a.pure)
+
+exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name='Chronos', console=False)
+
+coll = COLLECT(exe, a.binaries, a.zipfiles, a.datas, strip=False, upx=False, name='Chronos')
