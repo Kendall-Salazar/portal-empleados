@@ -163,15 +163,7 @@ def solve_schedule(request: SolverRequest):
         metadata["history_context_label"] = history_context["label"]
         metadata["special_days"] = special_days
 
-    # Save last result
-    if result.get("schedule"):
-        db["last_result"] = result
-        try:
-            _save_db(db)
-        except Exception as e:
-            print(f"Warning: Could not save to DB (may be locked): {e}")
-            # Continue anyway - the result is still returned to frontend
-    
+    # NO guardar en DB — el horario generado es solo visual hasta que el usuario decida guardarlo
     return result
 
 
@@ -182,41 +174,57 @@ def get_history():
     return db.get("history_log", [])
 
 
+# Límite de historial: 8 años × 52 semanas = 416
+MAX_HISTORY_WEEKS = 416
+
 @router.post("/history")
 def save_history(entry: HistoryEntry):
-    """Save a new history entry."""
-    db = _load_db()
-    history_list = db.get("history_log", [])
-    if not isinstance(history_list, list):
-        history_list = []
+    """Save a new history entry directly to SQLite with auto-purge."""
+    import database as db_module
     
-    new_record = entry.dict()
-    if not new_record.get("timestamp"):
-        new_record["timestamp"] = datetime.datetime.now().isoformat()
-    normalized_special_days = _normalize_special_days(entry.special_days)
-    if normalized_special_days:
-        new_record["special_days"] = normalized_special_days
-    else:
-        new_record.pop("special_days", None)
-    if entry.week_dates:
-        new_record["week_dates"] = entry.week_dates
-        
-    history_list.append(new_record)
+    # Guardar directamente en SQLite
+    horario_json = json.dumps(entry.schedule, ensure_ascii=False)
+    tareas_json = json.dumps(entry.daily_tasks or {}, ensure_ascii=False)
+    metadata_json = json.dumps({
+        "rotation_queue": entry.dict().get("next_sunday_rotation_queue"),
+        "rotation_target": entry.dict().get("next_sunday_cycle_index"),
+        "special_days": entry.special_days or {},
+    }, ensure_ascii=False)
+    ts = entry.timestamp or datetime.datetime.now().isoformat()
     
-    if len(history_list) > 50:
-        history_list = history_list[-50:]
-        
-    db["history_log"] = history_list
+    conn = db_module.get_conn()
     
-    if "config" not in db:
-        db["config"] = {}
+    # Insertar nueva entrada
+    conn.execute("""
+        INSERT INTO horarios_generados (nombre, horario, tareas, metadata, timestamp)
+        VALUES (?, ?, ?, ?, ?)
+    """, (entry.name, horario_json, tareas_json, metadata_json, ts))
+    
+    # Purga automática: borrar las entradas más viejas si excedemos el límite
+    total = conn.execute("SELECT COUNT(*) FROM horarios_generados").fetchone()[0]
+    if total > MAX_HISTORY_WEEKS:
+        excess = total - MAX_HISTORY_WEEKS
+        conn.execute("""
+            DELETE FROM horarios_generados WHERE id IN (
+                SELECT id FROM horarios_generados ORDER BY id ASC LIMIT ?
+            )
+        """, (excess,))
+        print(f"[history] Purgadas {excess} entradas antiguas (límite: {MAX_HISTORY_WEEKS})")
+    
+    # Actualizar cola de domingos en config
     if entry.next_sunday_rotation_queue is not None:
-        db["config"]["sunday_rotation_queue"] = entry.next_sunday_rotation_queue
+        conn.execute("""
+            UPDATE horario_config SET sunday_rotation_queue = ?
+        """, (json.dumps(entry.next_sunday_rotation_queue),))
     elif entry.next_sunday_cycle_index is not None:
-        db["config"]["sunday_cycle_index"] = entry.next_sunday_cycle_index
-        
-    _save_db(db)
-    return {"status": "Saved", "history_len": len(history_list)}
+        conn.execute("""
+            UPDATE horario_config SET sunday_cycle_index = ?
+        """, (entry.next_sunday_cycle_index,))
+    
+    conn.commit()
+    conn.close()
+    
+    return {"status": "Saved", "history_len": min(total, MAX_HISTORY_WEEKS)}
 
 
 @router.delete("/history/{index}")

@@ -142,8 +142,13 @@ def load_db():
             "holidays": json.loads(cfg_row["holidays"]) if "holidays" in cfg_row.keys() and cfg_row["holidays"] else [],
         }
 
-    # History log
-    hist_rows = conn.execute("SELECT * FROM horarios_generados ORDER BY id").fetchall()
+    # History log — LIMITADO a últimas 416 entradas (8 años × 52 semanas)
+    MAX_HISTORY = 416
+    hist_rows = conn.execute(
+        "SELECT * FROM horarios_generados ORDER BY id DESC LIMIT ?", (MAX_HISTORY,)
+    ).fetchall()
+    # Revertir orden para mantener cronológico (más viejo → más nuevo)
+    hist_rows = list(reversed(hist_rows))
     history_log = []
     for r in hist_rows:
         entry = {
