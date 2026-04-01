@@ -533,6 +533,17 @@ th.th-holiday {
     background: rgba(245, 158, 11, 0.15) !important;
 }
 
+/* Closed Day Column Indicator */
+th.th-closed {
+    background: rgba(239, 68, 68, 0.12) !important;
+    border-bottom: 3px solid #ef4444 !important;
+    position: relative;
+}
+
+.dark-mode th.th-closed {
+    background: rgba(239, 68, 68, 0.2) !important;
+}
+
 /* Holiday column cells get subtle tint */
 td.holiday-col {
     background: rgba(245, 158, 11, 0.03);
@@ -540,6 +551,15 @@ td.holiday-col {
 
 .dark-mode td.holiday-col {
     background: rgba(245, 158, 11, 0.06);
+}
+
+/* Closed day column cells get subtle red tint */
+td.closed-col {
+    background: rgba(239, 68, 68, 0.03);
+}
+
+.dark-mode td.closed-col {
+    background: rgba(239, 68, 68, 0.06);
 }
 
 /* Sticky Employee Column (Horizontal View) */
@@ -1140,6 +1160,8 @@ tr:hover td {
     background: var(--surface-2);
     color: var(--text-muted);
     border: 1px solid var(--border-color);
+    white-space: nowrap;
+    flex: 0 0 auto;
 }
 
 .special-day-chip:hover {

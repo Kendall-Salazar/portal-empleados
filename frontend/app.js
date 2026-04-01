@@ -572,8 +572,8 @@ function renderWeekSpecialDays() {
     section.style.display = "block";
     grid.innerHTML = "";
 
+    // NO normalizar y sobrescribir weekSpecialDays — solo usar para renderizar
     const normalized = normalizeSpecialDaysState(weekSpecialDays);
-    weekSpecialDays = normalized;
 
     // Check if we have a valid week date for displaying dates
     const hasWeekDate = startInput && startInput.value;
@@ -1524,9 +1524,10 @@ async function generateSchedule() {
             currentGeneratedSchedule = result.schedule;
             currentDailyTasks = result.daily_tasks; // Save tasks
             currentMetadata = result.metadata;
-            weekSpecialDays = normalizeSpecialDaysState(result.metadata?.special_days || weekSpecialDays);
+            // NO sobrescribir weekSpecialDays con el resultado del backend
+            // El usuario configuró los special_days antes de generar, mantenerlos
             renderWeekSpecialDays();
-            await refreshScheduleValidationRules(result.metadata?.special_days || specialDays);
+            await refreshScheduleValidationRules(specialDays);
 
             renderSchedule(result.schedule, "#scheduleTable", result.daily_tasks);
             if (isValidationOn) applyValidationUI(); // apply validation immediately if enabled
@@ -1833,12 +1834,15 @@ function renderSchedule(schedule, tableSelector, tasks = {}) {
 
         // --- VERTICAL (CALENDAR) HEADERS ---
         const weekDatesMapV = getWeekDatesMap();
+        const specialDaysV = currentMetadata?.special_days || {};
         thead.innerHTML = `<th style="width:120px; text-align:center;">Horario</th>`;
         DAYS.forEach(d => {
             const holiday = getHolidayForDay(d, weekDatesMapV);
-            const holidayIcon = holiday ? `<i class="fa-solid fa-star" style="color:#f59e0b; font-size:0.75rem; margin-left:4px;" title="${holiday.name}"></i>` : '';
-            thead.innerHTML += `<th style="text-align:center; min-width:140px;${holiday ? ' background: rgba(245,158,11,0.08);' : ''}">
-                <div style="font-size:1.1rem; font-weight:800; color:var(--text-main);">${d}${holidayIcon}</div>
+            const isClosedV = specialDaysV[d] === 'closed';
+            const closedBadgeV = isClosedV ? `<span style="background:#ef4444; color:white; font-size:0.6rem; padding:1px 6px; border-radius:4px; font-weight:700; letter-spacing:0.5px; margin-left:4px;">CERRADO</span>` : '';
+            const holidayIcon = holiday && !isClosedV ? `<i class="fa-solid fa-star" style="color:#f59e0b; font-size:0.75rem; margin-left:4px;" title="${holiday.name}"></i>` : '';
+            thead.innerHTML += `<th style="text-align:center; min-width:140px;${isClosedV ? ' background: rgba(239,68,68,0.12);' : holiday ? ' background: rgba(245,158,11,0.08);' : ''}">
+                <div style="font-size:1.1rem; font-weight:800; color:var(--text-main);">${d}${closedBadgeV}${holidayIcon}</div>
             </th>`;
         });
 
@@ -1947,15 +1951,19 @@ function renderSchedule(schedule, tableSelector, tasks = {}) {
 
         // --- HORIZONTAL HEADERS ---
         const weekDatesMap = getWeekDatesMap();
+        const specialDays = currentMetadata?.special_days || {};
         thead.innerHTML = `
             <th id="th-collaborator" style="cursor:pointer; min-width:160px;" title="Click para ordenar (Nombre / Hora)">
                 Empleado <i class="fa-solid fa-sort"></i>
             </th>
             ${DAYS.map(d => {
                 const holiday = getHolidayForDay(d, weekDatesMap);
+                const isClosed = specialDays[d] === 'closed';
+                const closedClass = isClosed ? ' th-closed' : '';
                 const holidayClass = holiday ? ' th-holiday' : '';
-                const holidayIcon = holiday ? `<br><i class="fa-solid fa-star" style="color:#f59e0b; font-size:0.7rem;" title="${holiday.name}"></i>` : '';
-                return `<th class="${holidayClass}">${d}${holidayIcon}</th>`;
+                const closedBadge = isClosed ? `<br><span style="background:#ef4444; color:white; font-size:0.6rem; padding:1px 6px; border-radius:4px; font-weight:700; letter-spacing:0.5px;">CERRADO</span>` : '';
+                const holidayIcon = holiday && !isClosed ? `<br><i class="fa-solid fa-star" style="color:#f59e0b; font-size:0.7rem;" title="${holiday.name}"></i>` : '';
+                return `<th class="${closedClass}${holidayClass}">${d}${closedBadge}${holidayIcon}</th>`;
             }).join('')}
             <th class="col-hours">Horas</th>
         `;
@@ -2004,7 +2012,8 @@ function renderSchedule(schedule, tableSelector, tasks = {}) {
                 if (emp && emp.fixed_shifts && emp.fixed_shifts[d]) fixedClass = "pill-fixed";
 
                 const holiday = getHolidayForDay(d, weekDatesMap);
-                const holidayCellClass = holiday ? ' holiday-col' : '';
+                const isClosedDay = specialDays[d] === 'closed';
+                const cellClass = isClosedDay ? ' closed-col' : (holiday ? ' holiday-col' : '');
 
                 let historyAttrs = "";
                 let cursorStyle = "";
@@ -2020,15 +2029,26 @@ function renderSchedule(schedule, tableSelector, tasks = {}) {
                     cursorStyle = "cursor:pointer; user-select:none;";
                 }
 
-                row.innerHTML += `
-                    <td class="${holidayCellClass}">
-                        <div class="shift-pill ${info.class} ${fixedClass}${isHistory ? " history-shift-pill" : ""}" ${historyAttrs} style="${cursorStyle}">
-                            <i class="fa-solid ${info.icon} pill-icon"></i>
-                            <span class="pill-time">${info.text}</span>
-                            ${getTaskLabelHTML(tasks, name, d)}
-                        </div>
-                    </td>
-                `;
+                // Si el día está cerrado, mostrar badge CERRADO en cada celda
+                if (isClosedDay) {
+                    row.innerHTML += `
+                        <td class="${cellClass}">
+                            <div style="display:flex; align-items:center; justify-content:center; min-height:36px; padding:0.3rem;">
+                                <span style="background:#ef4444; color:white; font-size:0.65rem; padding:2px 8px; border-radius:4px; font-weight:700; letter-spacing:0.5px;">CERRADO</span>
+                            </div>
+                        </td>
+                    `;
+                } else {
+                    row.innerHTML += `
+                        <td class="${cellClass}">
+                            <div class="shift-pill ${info.class} ${fixedClass}${isHistory ? " history-shift-pill" : ""}" ${historyAttrs} style="${cursorStyle}">
+                                <i class="fa-solid ${info.icon} pill-icon"></i>
+                                <span class="pill-time">${info.text}</span>
+                                ${getTaskLabelHTML(tasks, name, d)}
+                            </div>
+                        </td>
+                    `;
+                }
             });
 
             row.innerHTML += `
