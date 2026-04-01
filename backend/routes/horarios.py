@@ -326,14 +326,26 @@ def get_sunday_rotation():
         # Ordenar: primero los que NO han descansado (índice -1), luego los más antiguos
         rotation_queue = sorted(eligible, key=lambda e: last_sunday_off.get(e, -1))
     
-    # ── Construir resultado con semanas reales ──
+    # ── Construir resultado con semanas reales basadas en timestamps ──
     result = []
-    total_entries = len(history_list)
+    now = datetime.datetime.now()
+    
+    # Encontrar el timestamp de la entrada más reciente
+    latest_timestamp = None
+    for entry in history_list:
+        ts = entry.get("timestamp", "")
+        if ts:
+            try:
+                entry_dt = datetime.datetime.fromisoformat(ts)
+                if latest_timestamp is None or entry_dt > latest_timestamp:
+                    latest_timestamp = entry_dt
+            except (ValueError, TypeError):
+                continue
     
     for i, emp_name in enumerate(rotation_queue):
-        # Buscar el último índice donde tuvo domingo libre
-        last_idx = None
-        for idx, entry in enumerate(history_list):
+        # Buscar el último timestamp donde tuvo domingo libre
+        last_off_date = None
+        for entry in history_list:
             sched = entry.get('schedule', {})
             if isinstance(sched, str):
                 try:
@@ -343,12 +355,21 @@ def get_sunday_rotation():
             
             days = sched.get(emp_name, {})
             if isinstance(days, dict) and days.get('Dom') in ['OFF', 'VAC', 'PERM']:
-                last_idx = idx
+                ts = entry.get("timestamp", "")
+                if ts:
+                    try:
+                        entry_dt = datetime.datetime.fromisoformat(ts)
+                        if last_off_date is None or entry_dt > last_off_date:
+                            last_off_date = entry_dt
+                    except (ValueError, TypeError):
+                        continue
         
-        if last_idx is not None:
-            weeks_ago = total_entries - 1 - last_idx
+        if last_off_date is not None and latest_timestamp is not None:
+            # Calcular semanas reales entre fechas
+            delta = latest_timestamp - last_off_date
+            weeks_ago = round(delta.days / 7)
             if weeks_ago == 0:
-                weeks_since_off = "La sem pasada"
+                weeks_since_off = "Esta semana"
             elif weeks_ago == 1:
                 weeks_since_off = "Hace 1 sem"
             else:
