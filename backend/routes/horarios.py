@@ -326,40 +326,13 @@ def get_sunday_rotation():
         # Ordenar: primero los que NO han descansado (índice -1), luego los más antiguos
         rotation_queue = sorted(eligible, key=lambda e: last_sunday_off.get(e, -1))
     
-    # ── Construir resultado usando week_dates (fechas reales de cada semana) ──
+    # ── Construir resultado: semanas = entradas desde el último domingo libre ──
     result = []
-    
-    # Encontrar la fecha del domingo más reciente en el historial (referencia)
-    latest_sunday = None
-    for entry in history_list:
-        wd = entry.get("week_dates") or {}
-        dom = wd.get("Dom", "")
-        if dom:
-            try:
-                dom_date = datetime.datetime.strptime(dom, "%d/%m/%Y").date()
-                if latest_sunday is None or dom_date > latest_sunday:
-                    latest_sunday = dom_date
-            except (ValueError, TypeError):
-                continue
-    
-    # Si no hay week_dates, fallback a timestamps
-    if latest_sunday is None:
-        for entry in history_list:
-            ts = entry.get("timestamp", "")
-            if ts:
-                try:
-                    entry_dt = datetime.datetime.fromisoformat(ts)
-                    # Aproximar al domingo más cercano
-                    candidate = entry_dt.date() - datetime.timedelta(days=entry_dt.weekday() - 6)
-                    if latest_sunday is None or candidate > latest_sunday:
-                        latest_sunday = candidate
-                except (ValueError, TypeError):
-                    continue
+    total = len(history_list)
     
     for i, emp_name in enumerate(rotation_queue):
-        # Buscar la fecha del último domingo donde tuvo libre
-        last_off_date = None
-        for entry in history_list:
+        last_idx = None
+        for idx, entry in enumerate(history_list):
             sched = entry.get('schedule', {})
             if isinstance(sched, str):
                 try:
@@ -369,21 +342,10 @@ def get_sunday_rotation():
             
             days = sched.get(emp_name, {})
             if isinstance(days, dict) and days.get('Dom') in ['OFF', 'VAC', 'PERM']:
-                # Usar week_dates para obtener la fecha real
-                wd = entry.get("week_dates") or {}
-                dom = wd.get("Dom", "")
-                if dom:
-                    try:
-                        dom_date = datetime.datetime.strptime(dom, "%d/%m/%Y").date()
-                        if last_off_date is None or dom_date > last_off_date:
-                            last_off_date = dom_date
-                    except (ValueError, TypeError):
-                        continue
+                last_idx = idx
         
-        if last_off_date is not None and latest_sunday is not None:
-            # Calcular semanas reales entre domingos
-            delta_days = (latest_sunday - last_off_date).days
-            weeks_ago = round(delta_days / 7)
+        if last_idx is not None:
+            weeks_ago = total - 1 - last_idx
             if weeks_ago == 0:
                 weeks_since_off = "Esta semana"
             elif weeks_ago == 1:
@@ -393,7 +355,6 @@ def get_sunday_rotation():
         else:
             weeks_since_off = "Sin registrar"
         
-        # Prioridad basada en posición en la cola
         if i == 0:
             priority = "★ Le toca descansar"
         elif i <= 2:
