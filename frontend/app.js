@@ -2,6 +2,8 @@ const API_URL = "/api";
 
 // STATE
 let employees = [];
+window.__pillEditorMode = window.__pillEditorMode || "employee";
+
 let config = {};
 let currentGeneratedSchedule = null;
 let currentDailyTasks = null;
@@ -21,6 +23,14 @@ const MANUAL_SHIFT_PREFIX = "MANUAL_";
 
 const DAYS = ["Vie", "Sáb", "Dom", "Lun", "Mar", "Mié", "Jue"];
 
+/** Flag 0/1 desde API/SQLite: en JS la cadena "0" es truthy; solo 1 numérico o true cuenta. */
+function sqlIntFlagOn(v) {
+    if (v === true || v === 1) return true;
+    if (v === false || v === 0 || v == null || v === "") return false;
+    const n = Number(v);
+    return !Number.isNaN(n) && n !== 0;
+}
+
 const SPECIAL_DAY_DEFAULT = "normal";
 const HOLY_THURSDAY_DAY = "Jue";
 const SPECIAL_DAY_OPTIONS = [
@@ -29,6 +39,40 @@ const SPECIAL_DAY_OPTIONS = [
     { value: "holy_thursday", label: "2-4-3-2" },
     { value: "closed", label: "Cerrado" },
 ];
+
+/** Opciones por día: el domingo no ofrece «Como domingo» (eso es solo excepción en otros días). */
+function getSpecialDayOptionsForGridDay(day) {
+    let opts =
+        day === HOLY_THURSDAY_DAY
+            ? [...SPECIAL_DAY_OPTIONS]
+            : SPECIAL_DAY_OPTIONS.filter((o) => o.value !== "holy_thursday");
+    if (day === "Dom") {
+        opts = opts.filter((o) => o.value !== "sunday_like").map((o) =>
+            o.value === "normal" ? { ...o, label: "Domingo" } : o
+        );
+    }
+    return opts;
+}
+
+function refreshSpecialDayModeRadios() {
+    const day = selectedSpecialDay;
+    const isDom = day === "Dom";
+    const sundayLikeLbl = document.getElementById("specialModeSundayLike");
+    const holyLbl = document.getElementById("specialModeHolyThursday");
+    const normalTitle = document.querySelector("#specialModeNormal .special-mode-title");
+    const normalDesc = document.querySelector("#specialModeNormal .special-mode-desc");
+    if (sundayLikeLbl) sundayLikeLbl.style.display = isDom ? "none" : "";
+    if (holyLbl) holyLbl.style.display = day === HOLY_THURSDAY_DAY ? "" : "none";
+    if (normalTitle && normalDesc) {
+        if (isDom) {
+            normalTitle.textContent = "Domingo";
+            normalDesc.textContent = "Cobertura y turnos de domingo (por defecto)";
+        } else {
+            normalTitle.textContent = "Normal";
+            normalDesc.textContent = "Cobertura estándar de ese día";
+        }
+    }
+}
 const DAY_INDEX = Object.fromEntries(DAYS.map((day, index) => [day, index]));
 
 let isValidationOn = false;
@@ -205,6 +249,7 @@ const STANDARD_SHIFTS = [
     { name: "OFF", hours: "Libre" },
     { name: "VAC", hours: "Vacaciones" },
     { name: "N_22-05", hours: "10pm-5am" },
+    { name: "J_06-16", hours: "6am-4pm" },
 ];
 
 function initCustomShiftsUI() {
@@ -529,6 +574,7 @@ function renderSpecialDayChips() {
         document.querySelectorAll('input[name="specialDayMode"]').forEach(radio => {
             radio.checked = radio.value === currentValue;
         });
+        refreshSpecialDayModeRadios();
     } else if (optionsContainer) {
         optionsContainer.style.display = 'none';
     }
@@ -540,13 +586,17 @@ function selectSpecialDay(day) {
         selectedSpecialDay = null;
     } else {
         selectedSpecialDay = day;
+        if (day === "Dom" && weekSpecialDays[day] === "sunday_like") {
+            weekSpecialDays[day] = SPECIAL_DAY_DEFAULT;
+        }
     }
     renderSpecialDayChips();
 }
 
 function setSpecialDayMode(mode) {
     if (!selectedSpecialDay) return;
-    
+    if (selectedSpecialDay === "Dom" && mode === "sunday_like") return;
+
     weekSpecialDays[selectedSpecialDay] = mode;
     
     // Refresh validation if needed
@@ -572,8 +622,8 @@ function renderWeekSpecialDays() {
     section.style.display = "block";
     grid.innerHTML = "";
 
-    // NO normalizar y sobrescribir weekSpecialDays — solo usar para renderizar
-    const normalized = normalizeSpecialDaysState(weekSpecialDays);
+    weekSpecialDays = normalizeSpecialDaysState(weekSpecialDays);
+    const normalized = weekSpecialDays;
 
     // Check if we have a valid week date for displaying dates
     const hasWeekDate = startInput && startInput.value;
@@ -604,9 +654,7 @@ function renderWeekSpecialDays() {
         select.style.border = "1px solid var(--border)";
         select.style.color = "var(--text-main)";
         select.style.borderRadius = "8px";
-        const dayOptions = day === HOLY_THURSDAY_DAY
-            ? SPECIAL_DAY_OPTIONS
-            : SPECIAL_DAY_OPTIONS.filter(option => option.value !== "holy_thursday");
+        const dayOptions = getSpecialDayOptionsForGridDay(day);
         dayOptions.forEach(option => {
             const opt = document.createElement("option");
             opt.value = option.value;
@@ -901,6 +949,8 @@ function renderConfig() {
     // Strict weekly alternation
     const strictWeeklyCb = document.getElementById("strictWeeklyAlternation");
     if (strictWeeklyCb) strictWeeklyCb.checked = config.strict_weekly_alternation || false;
+
+    fillJefeBaseShiftSelectFromRules();
 }
 
 function setNightMode(val, btn) {
@@ -1033,6 +1083,11 @@ async function updateConfig() {
     config.use_history = document.getElementById("useHistoryContext")?.checked ?? true;
     config.rotation_enabled = document.getElementById("rotationEnabled")?.checked ?? true;
 
+    const jefeBaseSel = document.getElementById("jefeBaseShiftSelect");
+    if (jefeBaseSel && jefeBaseSel.value) {
+        config.jefe_base_shift = jefeBaseSel.value;
+    }
+
     const customContainer = document.getElementById("refuerzoCustomTimeContainer");
     if (customContainer) {
         if (useRefuerzo && refuerzoType === "personalizado") customContainer.classList.remove("hidden");
@@ -1056,97 +1111,47 @@ async function updateConfig() {
     }
 }
 
-// MODALS
+// MODALS (unificado con #planillaEmpModal / openUnifiedEmpModal en planillas_ui.js)
 function openAddModal() {
-    document.getElementById("modalTitle").textContent = "Nuevo Empleado";
-    document.getElementById("editingIndex").value = "-1";
-    document.getElementById("empName").value = "";
-    document.getElementById("empGender").value = "M"; // default value
+    if (typeof openUnifiedEmpModal === "function") {
+        openUnifiedEmpModal(null);
+        return;
+    }
+    console.warn("openUnifiedEmpModal no está disponible");
+}
 
-    // Default Gender UI
-    document.querySelectorAll(".gender-pill").forEach(p => {
-        if (p.textContent.includes("Masculino")) p.classList.add("active");
-        else p.classList.remove("active");
-    });
-
-    document.getElementById("empForcedLibres").checked = false;
-    document.getElementById("empForcedQuebrado").checked = false;
-    document.getElementById("empNoRest").checked = false;
-    document.getElementById("empJefePista").checked = false;
-    document.getElementById("empStrictPreferences").checked = false;
-
-    // Activo by default
-    const empActiveStatus = document.getElementById("empActiveStatus");
-    if (empActiveStatus) empActiveStatus.checked = true;
-
-    // Reset fixed shifts
-    document.querySelectorAll(".shift-select").forEach(s => s.value = "AUTO");
-    resetVacationCheckboxes();
-
-    // Reset Jefe config
-    document.getElementById("jefeShiftSelect").value = "J_06-16";
-    toggleJefeShiftSelect();
-
-    switchTab("tab-general");
-    buildDayCards();
-    document.getElementById("planillaEmpModal").classList.remove("hidden");
+function _horariosEmpToPlanillaShape(emp) {
+    if (!emp) return null;
+    return {
+        id: emp.id,
+        nombre: emp.name,
+        genero: emp.gender || "M",
+        cedula: emp.cedula || "",
+        telefono: emp.telefono || "",
+        correo: emp.correo || "",
+        tipo_pago: emp.tipo_pago || "tarjeta",
+        fecha_inicio: emp.fecha_inicio || "",
+        salario_fijo: emp.salario_fijo,
+        aplica_seguro: emp.aplica_seguro !== undefined ? emp.aplica_seguro : 1,
+        puede_nocturno: emp.can_do_night ? 1 : 0,
+        forced_libres: emp.forced_libres ? 1 : 0,
+        forced_quebrado: emp.forced_quebrado ? 1 : 0,
+        allow_no_rest: emp.allow_no_rest ? 1 : 0,
+        es_jefe_pista: sqlIntFlagOn(emp.is_jefe_pista) ? 1 : 0,
+        es_practicante: emp.is_practicante ? 1 : 0,
+        strict_preferences: emp.strict_preferences ? 1 : 0,
+        activo: emp.activo !== false ? 1 : 0,
+        turnos_fijos: JSON.stringify(emp.fixed_shifts || {}),
+    };
 }
 
 function openEditModal(index) {
     const emp = employees[index];
-    document.getElementById("modalTitle").textContent = "Editar";
-    document.getElementById("editingIndex").value = index;
-    document.getElementById("empName").value = emp.name;
-    document.getElementById("empGender").value = emp.gender;
-
-    // Sync UI gender pills
-    document.querySelectorAll(".gender-pill").forEach(p => {
-        if ((emp.gender === "M" && p.textContent.includes("Masculino")) ||
-            (emp.gender === "F" && p.textContent.includes("Femenino"))) {
-            p.classList.add("active");
-        } else {
-            p.classList.remove("active");
-        }
-    });
-
-    document.getElementById("empForcedLibres").checked = emp.forced_libres || false;
-    document.getElementById("empForcedQuebrado").checked = emp.forced_quebrado || false;
-    document.getElementById("empNoRest").checked = emp.allow_no_rest || false;
-    document.getElementById("empJefePista").checked = emp.is_jefe_pista || false;
-    document.getElementById("empPracticante").checked = emp.is_practicante || false;
-    document.getElementById("empStrictPreferences").checked = emp.strict_preferences || false;
-
-    // Activo flag mapping
-    const empActiveStatus = document.getElementById("empActiveStatus");
-    if (empActiveStatus) empActiveStatus.checked = (emp.activo !== false);
-
-    const fixed = emp.fixed_shifts || {};
-    document.querySelectorAll(".shift-select").forEach(sel => {
-        const day = sel.getAttribute("data-day");
-        sel.value = fixed[day] ? fixed[day] : "AUTO";
-    });
-
-    // Detect if they have a J_07-17 assigned to pre-fill the dropdown
-    // Detect if they have a J_ shift assigned to pre-fill the dropdown
-    let defaultJefeShift = "J_06-16";
-    if (emp.is_jefe_pista) {
-        for (let d of ["Lun", "Mar", "Mié", "Jue", "Vie"]) {
-            if (fixed[d] && fixed[d].startsWith("J_")) {
-                defaultJefeShift = fixed[d];
-                break;
-            }
-        }
+    if (typeof openUnifiedEmpModal === "function") {
+        openUnifiedEmpModal(_horariosEmpToPlanillaShape(emp));
+        return;
     }
-    defaultJefeShift = getJefeBaseSelection(fixed, emp.is_jefe_pista);
-    document.getElementById("jefeShiftSelect").value = defaultJefeShift;
-    toggleJefeShiftSelect();
-
-    // Sync checkboxes
-    syncVacationCheckboxesFromDropdowns();
-
-    switchTab("tab-general");
-    buildDayCards();
-    document.getElementById("planillaEmpModal").classList.remove("hidden");
+    console.warn("openUnifiedEmpModal no está disponible");
 }
 
 function getJefeBaseSelection(fixed = {}, isJefe = false) {
@@ -1271,6 +1276,38 @@ function buildPillGroups(day = null) {
     return groups;
 }
 
+window.buildPillGroupsForDay = buildPillGroups;
+
+function fillJefeBaseShiftSelectFromRules() {
+    const sel = document.getElementById("jefeBaseShiftSelect");
+    if (!sel) return;
+    const cur = config && config.jefe_base_shift ? config.jefe_base_shift : "J_06-16";
+    const codes = new Set(["J_06-16", "T1_05-13", "T2_06-14", "T3_07-15", "T4_08-16", "PM"]);
+    if (typeof buildPillGroups === "function") {
+        try {
+            const g = buildPillGroups("Lun");
+            (g.jefe || []).forEach((x) => codes.add(x.code));
+            (g.morning || []).forEach((x) => codes.add(x.code));
+        } catch (e) {
+            /* validation rules may not be ready */
+        }
+    }
+    const sorted = [...codes].sort((a, b) => a.localeCompare(b, "es"));
+    const lab = typeof formatGeneratorShiftLabel === "function" ? formatGeneratorShiftLabel : (x) => x;
+    sel.innerHTML = sorted
+        .map(
+            (c) =>
+                `<option value="${c.replace(/"/g, "&quot;")}">${String(lab(c))
+                    .replace(/&/g, "&amp;")
+                    .replace(/</g, "&lt;")
+                    .replace(/"/g, "&quot;")}</option>`
+        )
+        .join("");
+    const pick = sorted.includes(cur) ? cur : sorted[0] || "J_06-16";
+    sel.value = pick;
+    if (config) config.jefe_base_shift = pick;
+}
+
 
 function getDayCardInfo(code) {
     if (!code || code === "AUTO") return { label: "Auto", icon: "fa-robot", cls: "dc-auto" };
@@ -1296,13 +1333,65 @@ function getDayCardInfo(code) {
     return { label: code, icon: "fa-clock", cls: "dc-auto" };
 }
 
+/** Etiqueta legible para panel generador / selects (evita mostrar códigos como J_06-16). */
+function _hour24ToAmPm(h) {
+    h = ((Math.round(Number(h)) % 24) + 24) % 24;
+    const am = h < 12;
+    const h12 = h % 12 === 0 ? 12 : h % 12;
+    return `${h12}${am ? "am" : "pm"}`;
+}
+
+function formatGeneratorShiftLabel(code) {
+    if (!code || code === "AUTO") return "Auto";
+    const c = String(code).trim();
+    const std = STANDARD_SHIFTS.find((s) => s.name === c);
+    if (std && std.hours) {
+        return std.hours.replace(/-/g, " – ");
+    }
+    if (c === "PERM") return "Permiso";
+    const rules = typeof baseValidationRules !== "undefined" ? baseValidationRules : validationRules;
+    if (rules && rules.shift_sets && rules.shift_sets[c]) {
+        const hrs = rules.shift_sets[c];
+        if (Array.isArray(hrs) && hrs.length) {
+            const lo = Math.min(...hrs);
+            const hi = Math.max(...hrs);
+            return `${_hour24ToAmPm(lo)} – ${_hour24ToAmPm(hi + 1)}`;
+        }
+    }
+    const jm = c.match(/^J_(\d{1,2})-(\d{1,2})$/);
+    if (jm) {
+        return `${_hour24ToAmPm(parseInt(jm[1], 10))} – ${_hour24ToAmPm(parseInt(jm[2], 10))}`;
+    }
+    if (c.startsWith("N_")) {
+        const stdN = STANDARD_SHIFTS.find((s) => s.name === "N_22-05");
+        if (stdN) return stdN.hours.replace(/-/g, " – ");
+    }
+    const m = c.match(/(\d{2})-(\d{2})/);
+    if (m) {
+        return `${_hour24ToAmPm(parseInt(m[1], 10))} – ${_hour24ToAmPm(parseInt(m[2], 10))}`;
+    }
+    const info = getDayCardInfo(c);
+    return info && info.label ? info.label : c;
+}
+
+window.formatGeneratorShiftLabel = formatGeneratorShiftLabel;
+
+function _isPlantillaPillMode() {
+    return window.__pillEditorMode === "plantilla";
+}
+
 function buildDayCards() {
-    const grid = document.getElementById("dayCardsGrid");
-    if (!grid) return;
+    const isPpt = _isPlantillaPillMode();
+    const gridId = isPpt ? "pptDayCardsGrid" : "dayCardsGrid";
+    const grid = document.getElementById(gridId);
+    const root = isPpt ? document.getElementById("prefPlantillaModal") : document.getElementById("planillaEmpModal");
+    if (!grid || !root) return;
     grid.innerHTML = "";
 
+    const selQ = isPpt ? ".ppt-shift-select" : ".shift-select";
+
     DAYS.forEach(d => {
-        const sel = document.querySelector(`.shift-select[data-day="${d}"]`);
+        const sel = root.querySelector(`${selQ}[data-day="${d}"]`);
         const code = sel ? sel.value : "AUTO";
         const info = getDayCardInfo(code);
 
@@ -1322,39 +1411,43 @@ function buildDayCards() {
 
 function openPillPanel(day, cardEl) {
     activePillDay = day;
-    const panel = document.getElementById("pillSelectorPanel");
-    document.getElementById("pillPanelDay").textContent = day;
+    const isPpt = _isPlantillaPillMode();
+    const panel = document.getElementById(isPpt ? "pptPillSelectorPanel" : "pillSelectorPanel");
+    const dayEl = document.getElementById(isPpt ? "pptPanelDay" : "pillPanelDay");
+    if (dayEl) dayEl.textContent = day;
 
-    // Highlight active card
-    document.querySelectorAll(".day-card").forEach(c => c.classList.remove("dc-active"));
+    const root = isPpt ? document.getElementById("prefPlantillaModal") : document.getElementById("planillaEmpModal");
+    if (root) {
+        root.querySelectorAll(".day-card").forEach(c => c.classList.remove("dc-active"));
+    }
     if (cardEl) cardEl.classList.add("dc-active");
 
-    // Get current value
-    const sel = document.querySelector(`.shift-select[data-day="${day}"]`);
+    const selQ = isPpt ? ".ppt-shift-select" : ".shift-select";
+    const sel = root ? root.querySelector(`${selQ}[data-day="${day}"]`) : null;
     const current = sel ? sel.value : "AUTO";
 
-    // Build groups dynamically from current backend data, filtering by the selected day
     const PILL_GROUPS = buildPillGroups(day);
 
-    // Fill pill groups
-    fillPillGroup("pillGroupSpecial", PILL_GROUPS.special, current);
-    fillPillGroup("pillGroupMorning", PILL_GROUPS.morning, current);
-    fillPillGroup("pillGroupAfternoon", PILL_GROUPS.afternoon, current);
-    fillPillGroup("pillGroupExtended", PILL_GROUPS.extended, current);
+    fillPillGroup(isPpt ? "pptPillGroupSpecial" : "pillGroupSpecial", PILL_GROUPS.special, current);
+    fillPillGroup(isPpt ? "pptPillGroupMorning" : "pillGroupMorning", PILL_GROUPS.morning, current);
+    fillPillGroup(isPpt ? "pptPillGroupAfternoon" : "pillGroupAfternoon", PILL_GROUPS.afternoon, current);
+    fillPillGroup(isPpt ? "pptPillGroupExtended" : "pillGroupExtended", PILL_GROUPS.extended, current);
 
-    const isJefe = document.getElementById("empJefePista")?.checked;
-    const jefeWrap = document.getElementById("pillGroupJefeWrap");
+    const isJefe = !isPpt && document.getElementById("empJefePista")?.checked;
+    const jefeWrap = document.getElementById(isPpt ? "pptPillGroupJefeWrap" : "pillGroupJefeWrap");
     if (jefeWrap) {
         if (isJefe) {
             jefeWrap.style.display = "flex";
-            fillPillGroup("pillGroupJefe", PILL_GROUPS.jefe, current);
+            fillPillGroup(isPpt ? "pptPillGroupJefe" : "pillGroupJefe", PILL_GROUPS.jefe, current);
         } else {
             jefeWrap.style.display = "none";
         }
     }
 
-    panel.classList.remove("hidden");
-    panel.style.animation = "slideDown 0.25s ease-out";
+    if (panel) {
+        panel.classList.remove("hidden");
+        panel.style.animation = "slideDown 0.25s ease-out";
+    }
 }
 
 function fillPillGroup(containerId, options, currentCode) {
@@ -1375,25 +1468,25 @@ function fillPillGroup(containerId, options, currentCode) {
 function selectPill(code, label) {
     if (!activePillDay) return;
 
-    // Update hidden select
-    const sel = document.querySelector(`.shift-select[data-day="${activePillDay}"]`);
+    const isPpt = _isPlantillaPillMode();
+    const root = isPpt ? document.getElementById("prefPlantillaModal") : document.getElementById("planillaEmpModal");
+    const selQ = isPpt ? ".ppt-shift-select" : ".shift-select";
+    const sel = root ? root.querySelector(`${selQ}[data-day="${activePillDay}"]`) : null;
     if (sel) sel.value = code;
 
-    // Update vacation checkboxes sync
-    syncVacationCheckboxesFromDropdowns();
+    if (!isPpt) syncVacationCheckboxesFromDropdowns();
 
-    // Rebuild day cards to reflect the change
     buildDayCards();
-
-    // Close panel
     closePillPanel();
 }
 
 function closePillPanel() {
-    const panel = document.getElementById("pillSelectorPanel");
-    panel.classList.add("hidden");
+    const isPpt = _isPlantillaPillMode();
+    const panel = document.getElementById(isPpt ? "pptPillSelectorPanel" : "pillSelectorPanel");
+    if (panel) panel.classList.add("hidden");
     activePillDay = null;
-    document.querySelectorAll(".day-card").forEach(c => c.classList.remove("dc-active"));
+    const root = isPpt ? document.getElementById("prefPlantillaModal") : document.getElementById("planillaEmpModal");
+    if (root) root.querySelectorAll(".day-card").forEach(c => c.classList.remove("dc-active"));
 }
 
 function syncDayCardsFromSelects() {
@@ -1401,33 +1494,39 @@ function syncDayCardsFromSelects() {
 }
 
 async function saveEmployee() {
-    const index = parseInt(document.getElementById("editingIndex").value);
-    const name = document.getElementById("empName").value;
+    const idxEl = document.getElementById("editingIndex");
+    const nameEl = document.getElementById("empName");
+    if (!idxEl || !nameEl) return;
+    const index = parseInt(idxEl.value);
+    const name = nameEl.value;
     if (!name) return alert("Nombre requerido");
 
-    const gender = document.getElementById("empGender").value;
+    const genderEl = document.getElementById("empGender");
+    const gender = genderEl ? genderEl.value : "M";
 
-    const isJefe = document.getElementById("empJefePista").checked;
+    const jefeEl = document.getElementById("empJefePista");
+    const isJefe = jefeEl ? jefeEl.checked : false;
 
     const empData = {
         name: name,
         gender: gender,
         can_do_night: gender === "M",  // Auto: male can, female cannot
         is_jefe_pista: isJefe,
-        is_practicante: document.getElementById("empPracticante").checked,
-        forced_libres: document.getElementById("empForcedLibres").checked,
-        forced_quebrado: document.getElementById("empForcedQuebrado").checked,
-        allow_no_rest: document.getElementById("empNoRest").checked,
-        strict_preferences: document.getElementById("empStrictPreferences").checked,
+        is_practicante: document.getElementById("empPracticante")?.checked ?? false,
+        forced_libres: document.getElementById("empForcedLibres")?.checked ?? false,
+        forced_quebrado: document.getElementById("empForcedQuebrado")?.checked ?? false,
+        allow_no_rest: document.getElementById("empNoRest")?.checked ?? false,
+        strict_preferences: document.getElementById("empStrictPreferences")?.checked ?? false,
         activo: document.getElementById("empActiveStatus") ? document.getElementById("empActiveStatus").checked : true,
-        fixed_shifts: {}
+        fixed_shifts: {},
     };
 
-    const selectedJefeShift = document.getElementById("jefeShiftSelect").value;
+    const jefeShiftSel = document.getElementById("jefeShiftSelect");
+    const selectedJefeShift = jefeShiftSel ? jefeShiftSel.value : "CUSTOM";
     const isNewEmployee = index === -1;
     const weekdays = ["Lun", "Mar", "Mié", "Jue", "Vie"];
 
-    document.querySelectorAll(".shift-select").forEach(sel => {
+    document.querySelectorAll("#planillaEmpModal .shift-select").forEach((sel) => {
         const day = sel.getAttribute("data-day");
         let val = sel.value;
 
@@ -1450,17 +1549,27 @@ async function saveEmployee() {
         }
     });
 
-    if (index === -1) employees.push(empData);
-    else employees[index] = empData;
-
-    await fetch(`${API_URL}/employees`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(employees)
-    });
+    if (index === -1) {
+        // Nuevo empleado — enviar solo este empleado en el array
+        employees.push(empData);
+        await fetch(`${API_URL}/employees`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify([empData])
+        });
+    } else {
+        // Empleado existente — usar PUT individual para no tocar a los demás
+        const originalName = employees[index].name;
+        employees[index] = empData;
+        await fetch(`${API_URL}/employees/${encodeURIComponent(originalName)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(empData)
+        });
+    }
 
     closeModal();
-    renderEmployees();
+    await loadEmployees();
 }
 
 async function deleteEmployee(index) {
@@ -1536,7 +1645,8 @@ async function generateSchedule() {
             const libresText = result.metadata?.libres_person ? `Libres: ${result.metadata.libres_person}` : "Éxito";
             const solutionsCount = result.metadata?.solutions_found ? ` | Óptimos procesados: ${result.metadata.solutions_found}` : "";
             const historyText = result.metadata?.history_context_label ? ` | ${result.metadata.history_context_label}` : "";
-            document.getElementById("scheduleMeta").textContent = libresText + solutionsCount + historyText;
+            let metaLine = libresText + solutionsCount + historyText;
+            document.getElementById("scheduleMeta").textContent = metaLine;
         } else {
             console.error("Solver Status:", result.status);
             currentMetadata = null;
@@ -1804,7 +1914,7 @@ function toggleVerticalView() {
     }
 }
 
-function renderSchedule(schedule, tableSelector, tasks = {}) {
+function renderSchedule(schedule, tableSelector, tasks = {}, specialDaysOverride = null) {
     const tableEl = document.querySelector(tableSelector);
     const thead = document.querySelector(`${tableSelector} thead tr`);
     const tbody = document.querySelector(`${tableSelector} tbody`);
@@ -1834,7 +1944,7 @@ function renderSchedule(schedule, tableSelector, tasks = {}) {
 
         // --- VERTICAL (CALENDAR) HEADERS ---
         const weekDatesMapV = getWeekDatesMap();
-        const specialDaysV = currentMetadata?.special_days || {};
+        const specialDaysV = specialDaysOverride ?? currentMetadata?.special_days ?? {};
         thead.innerHTML = `<th style="width:120px; text-align:center;">Horario</th>`;
         DAYS.forEach(d => {
             const holiday = getHolidayForDay(d, weekDatesMapV);
@@ -1903,7 +2013,7 @@ function renderSchedule(schedule, tableSelector, tasks = {}) {
 
                     if (belongsInRow) {
                         const emp = employees.find(e => e.name === name);
-                        const role = name === "Refuerzo" ? "REF" : (emp && emp.is_jefe_pista ? "JEFE" : (emp && emp.is_practicante ? "PRACT" : ""));
+                        const role = name === "Refuerzo" ? "REF" : (emp && sqlIntFlagOn(emp.is_jefe_pista) ? "JEFE" : (emp && emp.is_practicante ? "PRACT" : ""));
                         const nightBadge = emp && emp.can_do_night ? '<i class="fa-solid fa-moon" style="font-size:0.7em;"></i> ' : '';
 
                         let info = getShiftInfo(s); // To get colors
@@ -1951,7 +2061,7 @@ function renderSchedule(schedule, tableSelector, tasks = {}) {
 
         // --- HORIZONTAL HEADERS ---
         const weekDatesMap = getWeekDatesMap();
-        const specialDays = currentMetadata?.special_days || {};
+        const specialDays = specialDaysOverride ?? currentMetadata?.special_days ?? {};
         thead.innerHTML = `
             <th id="th-collaborator" style="cursor:pointer; min-width:160px;" title="Click para ordenar (Nombre / Hora)">
                 Empleado <i class="fa-solid fa-sort"></i>
@@ -1994,7 +2104,7 @@ function renderSchedule(schedule, tableSelector, tasks = {}) {
                         <div class="emp-avatar" style="${name === "Refuerzo" ? 'background: var(--accent-color);' : ''}">${initials}</div>
                         <div class="emp-details">
                             <span class="emp-name">${name} ${nightBadge} ${noRestBadge} ${forcedLibresBadge} ${forcedQuebradoBadge} ${refBadge}</span>
-                            <span class="emp-role">${name === "Refuerzo" ? 'Apoyo Extra' : (emp && emp.is_jefe_pista ? 'Jefe de Pista' : (emp && emp.is_practicante ? 'Practicante' : 'Colaborador'))}</span>
+                            <span class="emp-role">${name === "Refuerzo" ? 'Apoyo Extra' : (emp && sqlIntFlagOn(emp.is_jefe_pista) ? 'Jefe de Pista' : (emp && emp.is_practicante ? 'Practicante' : 'Colaborador'))}</span>
                         </div>
                     </div>
                 </td>
@@ -2076,20 +2186,17 @@ async function fetchHistoryEntries(forceRefresh = false) {
     }
 
     let entries = await res.json();
-    
-    // Eliminar duplicados basándose en nombre + timestamp
-    const seen = new Set();
-    entries = entries.filter(entry => {
-        const key = `${entry.name}_${entry.timestamp}`;
-        if (seen.has(key)) {
-            return false;
-        }
-        seen.add(key);
-        return true;
+    if (!Array.isArray(entries)) {
+        entries = [];
+    }
+
+    // Más reciente primero; mismo timestamp → mayor db_id primero (varias filas con el mismo nombre).
+    entries.sort((a, b) => {
+        const tb = new Date(b.timestamp || 0).getTime();
+        const ta = new Date(a.timestamp || 0).getTime();
+        if (tb !== ta) return tb - ta;
+        return (Number(b.db_id) || 0) - (Number(a.db_id) || 0);
     });
-    
-    // Ordenar por timestamp descendente (más reciente primero)
-    entries.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
     
     historyEntriesCache = entries;
     return historyEntriesCache;
@@ -2098,7 +2205,7 @@ async function fetchHistoryEntries(forceRefresh = false) {
 function renderHistoryEntryTable(index) {
     const entry = historyEntriesCache[index];
     if (!entry) return;
-    renderSchedule(entry.schedule, `#hist-table-${index}`, entry.daily_tasks || {});
+    renderSchedule(entry.schedule, `#hist-table-${index}`, entry.daily_tasks || {}, entry.special_days || {});
     applyHistoryHoursVisibility(index);
 }
 
@@ -2200,14 +2307,19 @@ function renderHistoryList() {
     });
 }
 
-async function loadHistory(forceRefresh = true) {
+async function loadHistory(forceRefresh = false) {
     const listContainer = document.getElementById('historyList');
     if (!listContainer) return;
     listContainer.innerHTML = '<div class="loading"><i class="fa-solid fa-spinner fa-spin"></i> Cargando...</div>';
 
     try {
+        // No forzar refetch por defecto — preserva ediciones locales en el cache.
+        // El cache ya se pobló al abrir el overlay. Forzar refetch pisaría
+        // cualquier edición manual que el usuario haya hecho en entradas expandidas.
         await fetchHistoryEntries(forceRefresh);
+        await loadTrash();
         renderHistoryList();
+        renderTrashList();
     } catch (e) {
         console.error(e);
         listContainer.innerHTML = '<div class="error-msg">Error al cargar historial</div>';
@@ -2443,7 +2555,13 @@ async function persistHistoryEntry(index, nextEntry) {
         timestamp: nextEntry.timestamp || "",
     };
 
-    const res = await fetch(`/api/history/${index}`, {
+    const entry = historyEntriesCache[index];
+    const patchUrl =
+        entry && entry.db_id != null
+            ? `/api/history/entry/${entry.db_id}`
+            : `/api/history/${index}`;
+
+    const res = await fetch(patchUrl, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -2518,10 +2636,14 @@ async function renameHistory(i, event) {
         
         // Guardar en el backend
         try {
+            const body =
+                entry.db_id != null
+                    ? { db_id: entry.db_id, name: newName.trim() }
+                    : { index: i, name: newName.trim() };
             const res = await fetch('/api/history', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ index: i, name: newName.trim() })
+                body: JSON.stringify(body)
             });
             
             if (!res.ok) {
@@ -2597,13 +2719,20 @@ async function deleteHistory(i, event) {
         event.preventDefault();
         event.stopPropagation();
     }
-    if (!confirm("¿Borrar este historial permanentemente?")) return;
+    const entry = historyEntriesCache[i];
+    if (!entry) return;
+    
+    if (!confirm(`¿Mover "${entry.name}" a la papelera?\nPodrás restaurarla dentro de 7 días.`)) return;
 
-    const res = await fetch(`/api/history/${i}`, { method: 'DELETE' });
+    const delUrl =
+        entry.db_id != null ? `/api/history/entry/${entry.db_id}` : `/api/history/${i}`;
+    const res = await fetch(delUrl, { method: 'DELETE' });
     if (!res.ok) {
-        alert("No se pudo borrar el historial.");
+        alert("No se pudo mover a la papelera.");
         return;
     }
+    
+    // Remover del cache local
     historyEntriesCache.splice(i, 1);
     expandedHistoryItems = new Set(
         [...expandedHistoryItems]
@@ -2615,8 +2744,132 @@ async function deleteHistory(i, event) {
             .filter(index => index !== i)
             .map(index => (index > i ? index - 1 : index))
     );
+    
+    // Recargar papelera y re-renderizar
+    await loadTrash();
     renderHistoryList();
-    setStatusMessage("Historial eliminado.", "success");
+    setStatusMessage(`"${entry.name}" movido a la papelera.`, "success");
+}
+
+// ── PAPELERA DE RECICLAJE ──
+let trashCache = [];
+
+async function loadTrash() {
+    try {
+        const res = await fetch('/api/history/trash');
+        if (!res.ok) return;
+        trashCache = await res.json();
+    } catch (err) {
+        console.error('Error loading trash:', err);
+        trashCache = [];
+    }
+}
+
+async function restoreHistory(i, event) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+    const entry = trashCache[i];
+    if (!entry) return;
+
+    const restoreUrl =
+        entry.db_id != null
+            ? `/api/history/trash/restore/${entry.db_id}`
+            : `/api/history/${i}/restore`;
+    const res = await fetch(restoreUrl, { method: 'POST' });
+    if (!res.ok) {
+        alert("No se pudo restaurar la semana.");
+        return;
+    }
+    
+    trashCache.splice(i, 1);
+    await fetchHistoryEntries(true);
+    renderHistoryList();
+    renderTrashList();
+    setStatusMessage(`"${entry.name}" restaurada del historial.`, "success");
+}
+
+async function permanentDeleteTrash(i, event) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+    const entry = trashCache[i];
+    if (!entry) return;
+    
+    if (!confirm(`¿Eliminar "${entry.name}" PERMANENTEMENTE?\nEsta acción no se puede deshacer.`)) return;
+
+    const delUrl =
+        entry.db_id != null
+            ? `/api/history/trash/entry/${entry.db_id}`
+            : `/api/history/trash/${i}`;
+    const res = await fetch(delUrl, { method: 'DELETE' });
+    if (!res.ok) {
+        alert("No se pudo eliminar permanentemente.");
+        return;
+    }
+    
+    trashCache.splice(i, 1);
+    renderTrashList();
+    setStatusMessage(`"${entry.name}" eliminada permanentemente.`, "success");
+}
+
+async function purgeTrash(event) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+    if (!confirm('¿Eliminar permanentemente todas las entradas con más de 7 días en la papelera?')) return;
+
+    const res = await fetch('/api/history/trash/purge', { method: 'POST' });
+    if (!res.ok) {
+        alert("No se pudo purgar la papelera.");
+        return;
+    }
+    
+    await loadTrash();
+    renderTrashList();
+    setStatusMessage("Papelera purgada.", "success");
+}
+
+function renderTrashList() {
+    const trashContainer = document.getElementById('trashList');
+    if (!trashContainer) return;
+
+    if (!trashCache.length) {
+        trashContainer.innerHTML = '<div class="empty-msg">La papelera está vacía</div>';
+        return;
+    }
+
+    trashContainer.innerHTML = trashCache.map((t, i) => {
+        const deletedDate = t.deleted_at ? new Date(t.deleted_at).toLocaleDateString() : 'N/A';
+        return `
+            <div class="trash-item" data-trash-index="${i}">
+                <div class="trash-info">
+                    <i class="fa-solid fa-trash-can" style="color: var(--error);"></i>
+                    <span class="t-name">${t.name}</span>
+                    <span class="t-date">Eliminado: ${deletedDate}</span>
+                </div>
+                <div class="trash-actions">
+                    <button type="button" class="btn-icon btn-restore" onclick="restoreHistory(${i}, event)" title="Restaurar">
+                        <i class="fa-solid fa-rotate-left"></i> Restaurar
+                    </button>
+                    <button type="button" class="btn-icon btn-perm-delete" onclick="permanentDeleteTrash(${i}, event)" title="Eliminar permanentemente">
+                        <i class="fa-solid fa-ban"></i>
+                    </button>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function toggleTrashSection() {
+    const body = document.getElementById('trashBody');
+    const arrow = document.getElementById('trashArrow');
+    if (!body) return;
+    body.classList.toggle('hidden');
+    if (arrow) arrow.classList.toggle('rotated');
 }
 
 async function downloadExcel(url) {
@@ -2967,13 +3220,27 @@ function applyValidationUI() {
             const maxReq = getMaxReq(day, h);
             const capExceeded = dayResults[day].capStatus === "error" && count === capValue && maxReq === capValue;
             const atCap = cappedDays.has(day) && count === capValue && maxReq === capValue;
-            let cls = (count < minReq || count > maxReq || capExceeded) ? "hmc-deficit" : (count < softReq || atCap) ? "hmc-warn" : "hmc-ok";
+            let cls = "hmc-ok";
+            if (capExceeded) cls = "hmc-cap";
+            else if (count < minReq) cls = "hmc-under";
+            else if (count > maxReq) cls = "hmc-over";
+            else if (count < softReq || atCap) cls = "hmc-warn";
             const intensityBase = Math.max(softReq || 0, minReq || 0, 1);
             const intensity = Math.min(count / intensityBase, 1);
             const capText = cappedDays.has(day)
                 ? ` | tolerancia ${dayResults[day].capHoursUsed}/${allowedHoursAtCap} en ${capValue}`
                 : "";
-            const tooltip = `${day} ${formatHour(h)}: ${count} pers. (min ${minReq}, ideal ${softReq}, max ${maxReq}${capText})`;
+            const stateHint =
+                cls === "hmc-under"
+                    ? " — por debajo del mínimo"
+                    : cls === "hmc-over"
+                      ? " — por encima del máximo"
+                      : cls === "hmc-cap"
+                        ? " — exceso en tolerancia de plantilla"
+                        : cls === "hmc-warn"
+                          ? " — subóptimo / en tope"
+                          : "";
+            const tooltip = `${day} ${formatHour(h)}: ${count} pers. (min ${minReq}, ideal ${softReq}, max ${maxReq}${capText})${stateHint}`;
             return `<div class="hm-cell ${cls}" title="${tooltip}" style="--intensity:${intensity.toFixed(2)}">${count}</div>`;
         }).join("");
         return `<div class="hm-row">${hourLabel}${cells}</div>`;
@@ -2987,7 +3254,9 @@ function applyValidationUI() {
             <div class="hm-legend">
                 <span class="hml hml-ok">Ideal</span>
                 <span class="hml hml-warn">Sub-optimo</span>
-                <span class="hml hml-deficit">Fuera de regla</span>
+                <span class="hml hml-under">Bajo mínimo</span>
+                <span class="hml hml-over">Sobre máximo</span>
+                <span class="hml hml-cap">Tolerancia tope</span>
             </div>
         </div>
         <div class="hm-grid">
@@ -3007,17 +3276,17 @@ function applyValidationUI() {
 
         const errorDetails = errors.map(e => {
             if (e.type === "cap_limit") {
-                return `<div class="vcard-detail vcard-err"><i class="fa-solid fa-ban"></i>Tolerancia ${e.capValue} personas: ${e.actual}/${e.allowed} horas (${formatCapHours(e.hours)})</div>`;
+                return `<div class="vcard-detail vcard-cap"><i class="fa-solid fa-ban"></i>Tolerancia ${e.capValue} personas: ${e.actual}/${e.allowed} horas (${formatCapHours(e.hours)})</div>`;
             }
             if (e.type === "over") {
-                return `<div class="vcard-detail vcard-err"><i class="fa-solid fa-arrow-up"></i>${e.label}: ${e.actual}/${e.maxReq} max</div>`;
+                return `<div class="vcard-detail vcard-over"><i class="fa-solid fa-arrow-up"></i>${e.label}: ${e.actual} pers. (máx. ${e.maxReq})</div>`;
             }
-            return `<div class="vcard-detail vcard-err"><i class="fa-solid fa-xmark"></i>${e.label}: ${e.actual}/${e.minReq} min</div>`;
+            return `<div class="vcard-detail vcard-under"><i class="fa-solid fa-arrow-down"></i>${e.label}: ${e.actual} pers. (mín. ${e.minReq})</div>`;
         });
         const warningDetails = warnings.map(w =>
             `<div class="vcard-detail vcard-wrn"><i class="fa-solid fa-arrow-up"></i>${w.label}: ${w.actual}->${w.softReq} ideal</div>`
         );
-        const toleranceClass = capStatus === "error" ? "vcard-err" : capStatus === "warn" ? "vcard-wrn" : "vcard-ok";
+        const toleranceClass = capStatus === "error" ? "vcard-cap" : capStatus === "warn" ? "vcard-wrn" : "vcard-ok";
         const toleranceIcon = capStatus === "error" ? "fa-solid fa-ban" : capStatus === "warn" ? "fa-solid fa-clock" : "fa-solid fa-check";
         const toleranceLine = cappedDays.has(day)
             ? `<div class="vcard-detail ${toleranceClass}"><i class="${toleranceIcon}"></i>Tolerancia ${capValue} personas: ${capHoursUsed}/${capHoursAllowed}${capHours.length ? ` (${formatCapHours(capHours)})` : ""}</div>`
@@ -3026,7 +3295,7 @@ function applyValidationUI() {
         let details = [...errorDetails, ...warningDetails, toleranceLine].join("")
             || `<div class="vcard-detail vcard-ok"><i class="fa-solid fa-check"></i>Sin problemas</div>`;
 
-        let allHoursHTML = `<div class="vcard-all-hours" style="display:flex; flex-wrap:wrap; gap:4px; font-size:0.75rem; margin-top:8px;">`;
+        let allHoursHTML = `<div class="vcard-all-hours">`;
         for (let h = 5; h <= 28; h++) {
             const actual = allCoverage[day][h] || 0;
             const minReq = getMinReq(day, h);
@@ -3035,10 +3304,13 @@ function applyValidationUI() {
             if (actual === 0 && minReq === 0) continue;
             const capExceeded = dayResults[day].capStatus === "error" && actual === capValue && maxReq === capValue;
             const atCap = cappedDays.has(day) && actual === capValue && maxReq === capValue;
-            let color = "var(--text-muted)";
-            if (actual < minReq || actual > maxReq || capExceeded) color = "var(--danger)";
-            else if (actual < softReq || atCap) color = "var(--warning)";
-            allHoursHTML += `<div title="min ${minReq} | ideal ${softReq} | max ${maxReq}" style="background:var(--bg-app); padding:2px 4px; border-radius:4px; border:1px solid var(--border-color);"><span style="color:${color}; font-weight:bold;">${formatHour(h)}:</span> ${actual}p [${minReq}/${softReq}/${maxReq}]</div>`;
+            let pillCls = "vhp-neutral";
+            if (capExceeded) pillCls = "vhp-cap";
+            else if (actual < minReq) pillCls = "vhp-under";
+            else if (actual > maxReq) pillCls = "vhp-over";
+            else if (actual < softReq || atCap) pillCls = "vhp-warn";
+            else if (actual > 0 || minReq > 0) pillCls = "vhp-ok";
+            allHoursHTML += `<div class="vhp ${pillCls}" title="min ${minReq} | ideal ${softReq} | max ${maxReq}"><span class="vhp-time">${formatHour(h)}:</span> ${actual}p <span class="vhp-bounds">[${minReq}/${softReq}/${maxReq}]</span></div>`;
         }
         allHoursHTML += `</div>`;
         details += allHoursHTML;
@@ -3059,7 +3331,7 @@ function applyValidationUI() {
                 <i class="fa-solid ${stateConfig.icon}"></i>
                 <span>${stateConfig.label}</span>
             </div>
-            <span class="val-subtitle">${hasGlobalErrors ? "Hay horas fuera de minimos, maximos o de la tolerancia diaria permitida" : hasGlobalWarnings ? "Hay horas por debajo del ideal o ya se uso la tolerancia de 5 personas" : "Todos los dias cumplen minimos, maximos y tolerancias"}</span>
+            <span class="val-subtitle">${hasGlobalErrors ? "Hay horas por debajo del mínimo, por encima del máximo o fuera de la tolerancia diaria (leyenda: colores distintos para cada caso)" : hasGlobalWarnings ? "Hay horas por debajo del ideal o en tope de plantilla; revise el mapa y las tarjetas" : "Todos los días cumplen mínimos, máximos y tolerancias"}</span>
         </div>
         <div class="vcards-row">${cardsHTML}</div>`;
 
@@ -3120,7 +3392,13 @@ function exportHistoryExcel(index, event) {
         event.preventDefault();
         event.stopPropagation();
     }
-    downloadExcel(`/api/export_excel?history_index=${index}`);
+    const entry = historyEntriesCache[index];
+    // Preferimos db_id para evitar desincronía entre índice del array y orden en SQLite.
+    // Fallback al índice posicional si por alguna razón no hay db_id.
+    const param = (entry && entry.db_id != null)
+        ? `history_db_id=${entry.db_id}`
+        : `history_index=${index}`;
+    downloadExcel(`/api/export_excel?${param}`);
 }
 
 window.toggleHistoryHours = function (index, event) {
@@ -3155,7 +3433,12 @@ window.reassignHistoryTasks = async function (index, event) {
         setStatusMessage("Recalculando limpieza...", "info", 0);
         await fetchHistoryEntries();
 
-        const res = await fetch(`/api/history/${index}/reassign_tasks`, {
+        const entry = historyEntriesCache[index];
+        const reassignUrl =
+            entry && entry.db_id != null
+                ? `/api/history/entry/${entry.db_id}/reassign_tasks`
+                : `/api/history/${index}/reassign_tasks`;
+        const res = await fetch(reassignUrl, {
             method: "POST"
         });
         const payload = await res.json().catch(() => ({}));
@@ -3163,7 +3446,6 @@ window.reassignHistoryTasks = async function (index, event) {
             throw new Error(payload.detail || `API returned ${res.status}`);
         }
 
-        const entry = historyEntriesCache[index];
         if (!entry) return;
 
         entry.daily_tasks = payload.daily_tasks || {};
@@ -3255,7 +3537,6 @@ window.exportHistoryImage = async function (index, event) {
 // EDIT HISTORY SHIFT
 async function editHistoryShift(empName, day, histIndex) {
     try {
-        await fetchHistoryEntries();
         const entry = historyEntriesCache[histIndex];
         if (!entry) return;
 
@@ -3409,7 +3690,9 @@ async function confirmSaveSchedule(event) {
 
 // UTILS
 function populateShiftSelects() {
-    document.querySelectorAll(".shift-select").forEach(sel => {
+    document.querySelectorAll(".shift-select, .ppt-shift-select").forEach(sel => {
+        if (sel.options && sel.options.length > 1) return;
+        sel.innerHTML = "";
         SHIFT_OPTIONS.forEach(o => {
             if (o.code === "D4_13-22" && sel.getAttribute("data-day") !== "Dom") {
                 return;
@@ -3424,8 +3707,9 @@ function populateShiftSelects() {
 function switchTab(id) {
     document.querySelectorAll(".m-tab").forEach(t => t.classList.remove("active"));
     document.querySelectorAll(".m-tab-content").forEach(c => c.classList.remove("active"));
-    document.getElementById(id).classList.add("active");
-    // Find button to active... simplified for now
+    const pane = document.getElementById(id);
+    if (pane) pane.classList.add("active");
+    if (id === "tab-schedule") window.__pillEditorMode = "employee";
 }
 function closeModal() { document.getElementById("employeeModal").classList.add("hidden"); }
 
@@ -3472,8 +3756,9 @@ function resetVacationCheckboxes() {
 }
 
 function syncVacationCheckboxesFromDropdowns() {
+    if (window.__pillEditorMode === "plantilla") return;
     // If a dropdown says "VAC", check the box
-    const selects = document.querySelectorAll(".shift-select");
+    const selects = document.querySelectorAll("#planillaEmpModal .shift-select");
     selects.forEach(sel => {
         const d = sel.getAttribute("data-day");
         const isVac = sel.value === "VAC";
@@ -3483,7 +3768,7 @@ function syncVacationCheckboxesFromDropdowns() {
 }
 
 function toggleVacation(day, isChecked) {
-    const sel = document.querySelector(`.shift-select[data-day='${day}']`);
+    const sel = document.querySelector(`#planillaEmpModal .shift-select[data-day='${day}']`);
     if (sel) {
         if (isChecked) sel.value = "VAC";
         else sel.value = "AUTO"; // Revert to auto if unchecked
@@ -3660,18 +3945,15 @@ styleCoverage.innerHTML = `
         color: #34d399;
     }
     .cov-deficit {
-        background: rgba(239, 68, 68, 0.15);
-        color: #dc2626;
+        background: #fff1f2;
+        color: #881337;
         font-weight: 800;
-        animation: pulse-deficit 1.5s infinite;
+        border: 1px solid #fda4af;
     }
     .dark-mode .cov-deficit {
-        background: rgba(239, 68, 68, 0.2);
-        color: #f87171;
-    }
-    @keyframes pulse-deficit {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.7; }
+        background: #450a0a;
+        color: #fecdd3;
+        border-color: #f43f5e;
     }
 `;
 document.head.appendChild(styleCoverage);

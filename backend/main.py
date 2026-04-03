@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional, Dict
 import json
 import os
@@ -75,6 +75,9 @@ DB_FILE_LEGACY = "database.json"  # JSON original, kept for migration reference
 EXPORT_DIR = os.path.join(_runtime_root, "export_horarios")
 os.makedirs(EXPORT_DIR, exist_ok=True)
 
+# Preview del último /api/solve exitoso (no escribe SQLite). Evita save_db en generar.
+_last_generated_preview: Optional[dict] = None
+
 def _sanitize_export_stem(value: str, fallback: str = "horario") -> str:
     normalized = unicodedata.normalize("NFKD", str(value or ""))
     normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
@@ -99,6 +102,43 @@ def _get_export_base_name(entry: Optional[dict], fallback: str = "horario") -> s
 def _get_conn():
     """Get connection to the shared planilla.db"""
     return plan_db.get_conn()
+
+
+def _history_sqlite_row_to_log_entry(r: dict):
+    """Convierte una fila horarios_generados al dict del historial; None si es inválida."""
+    row_id = r.get("id")
+    try:
+        raw_h = r.get("horario")
+        schedule = json.loads(raw_h) if raw_h else {}
+        if not isinstance(schedule, dict):
+            schedule = {}
+    except (json.JSONDecodeError, TypeError):
+        print(f"[load_db] horario JSON inválido id={row_id}, entrada omitida del historial")
+        return None
+    try:
+        raw_t = r.get("tareas")
+        daily_tasks = json.loads(raw_t) if raw_t else {}
+        if not isinstance(daily_tasks, dict):
+            daily_tasks = {}
+    except (json.JSONDecodeError, TypeError):
+        daily_tasks = {}
+    try:
+        raw_m = r.get("metadata")
+        meta = json.loads(raw_m) if raw_m else {}
+        if not isinstance(meta, dict):
+            meta = {}
+    except (json.JSONDecodeError, TypeError):
+        meta = {}
+    entry = {
+        "db_id": row_id,
+        "name": r.get("nombre"),
+        "schedule": schedule,
+        "daily_tasks": daily_tasks,
+        "timestamp": r.get("timestamp"),
+    }
+    entry.update(meta)
+    return entry
+
 
 def load_db():
     """Lee datos de SQLite y devuelve dict compatible con la estructura JSON original."""
@@ -140,26 +180,26 @@ def load_db():
             "sunday_rotation_queue": json.loads(cfg_row["sunday_rotation_queue"]) if cfg_row["sunday_rotation_queue"] else None,
             "use_history": bool(cfg_row["use_history"]) if "use_history" in cfg_row.keys() else True,
             "holidays": json.loads(cfg_row["holidays"]) if "holidays" in cfg_row.keys() and cfg_row["holidays"] else [],
+            "jefe_base_shift": (
+                (cfg_row["jefe_base_shift"] or "J_06-16")
+                if "jefe_base_shift" in cfg_row.keys()
+                else "J_06-16"
+            ),
+            "use_pref_plantilla": bool(cfg_row["use_pref_plantilla"])
+            if "use_pref_plantilla" in cfg_row.keys()
+            else False,
         }
 
-    # History log — LIMITADO a últimas 416 entradas (8 años × 52 semanas)
-    MAX_HISTORY = 416
+    # Historial: todas las filas activas, orden cronológico por id (no se borra al generar).
+    # Filas con JSON corrupto se omiten para no tumbar el arranque ni /api/solve.
     hist_rows = conn.execute(
-        "SELECT * FROM horarios_generados ORDER BY id DESC LIMIT ?", (MAX_HISTORY,)
+        "SELECT * FROM horarios_generados WHERE IFNULL(deleted, 0) = 0 ORDER BY id ASC"
     ).fetchall()
-    # Revertir orden para mantener cronológico (más viejo → más nuevo)
-    hist_rows = list(reversed(hist_rows))
     history_log = []
     for r in hist_rows:
-        entry = {
-            "name": r["nombre"],
-            "schedule": json.loads(r["horario"]),
-            "daily_tasks": json.loads(r["tareas"]) if r["tareas"] else {},
-            "timestamp": r["timestamp"],
-        }
-        meta = json.loads(r["metadata"]) if r["metadata"] else {}
-        entry.update(meta)
-        history_log.append(entry)
+        entry = _history_sqlite_row_to_log_entry(dict(r))
+        if entry:
+            history_log.append(entry)
 
     # Last result: use the most recent history entry or empty
     last_result = {}
@@ -197,7 +237,7 @@ def save_db(data):
                 conn.execute("""
                     UPDATE horario_empleados SET
                         genero=?, puede_nocturno=?, allow_no_rest=?, forced_libres=?,
-                        forced_quebrado=?, es_jefe_pista=?, es_practicante=?, strict_preferences=?, turnos_fijos=?, activo=1
+                        forced_quebrado=?, es_jefe_pista=?, es_practicante=?, strict_preferences=?, turnos_fijos=?, dia_libre_forzado=?, activo=1
                     WHERE nombre=?
                 """, (
                     emp.get("gender", "M"),
@@ -209,14 +249,15 @@ def save_db(data):
                     1 if emp.get("is_practicante", False) else 0,
                     1 if emp.get("strict_preferences", False) else 0,
                     json.dumps(emp.get("fixed_shifts", {}), ensure_ascii=False),
+                    "",
                     emp["name"],
                 ))
             else:
                 conn.execute("""
                     INSERT INTO horario_empleados
                     (nombre, genero, puede_nocturno, allow_no_rest, forced_libres,
-                     forced_quebrado, es_jefe_pista, es_practicante, strict_preferences, turnos_fijos, activo)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                     forced_quebrado, es_jefe_pista, es_practicante, strict_preferences, turnos_fijos, dia_libre_forzado, activo)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
                 """, (
                     emp["name"], emp.get("gender", "M"),
                     1 if emp.get("can_do_night", True) else 0,
@@ -227,6 +268,7 @@ def save_db(data):
                     1 if emp.get("is_practicante", False) else 0,
                     1 if emp.get("strict_preferences", False) else 0,
                     json.dumps(emp.get("fixed_shifts", {}), ensure_ascii=False),
+                    "",
                 ))
 
     # Guardar config
@@ -237,8 +279,9 @@ def save_db(data):
             INSERT INTO horario_config
             (id, night_mode, fixed_night_person, allow_long_shifts, use_refuerzo,
              refuerzo_type, refuerzo_start, refuerzo_end, allow_collision_quebrado,
-             collision_peak_priority, sunday_cycle_index, sunday_rotation_queue, use_history, holidays)
-            VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             collision_peak_priority, sunday_cycle_index, sunday_rotation_queue, use_history, holidays,
+             jefe_base_shift, use_pref_plantilla)
+            VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             cfg.get("night_mode", "rotation"),
             cfg.get("fixed_night_person"),
@@ -253,24 +296,15 @@ def save_db(data):
             json.dumps(cfg.get("sunday_rotation_queue")) if cfg.get("sunday_rotation_queue") else None,
             1 if cfg.get("use_history", True) else 0,
             json.dumps(cfg.get("holidays", [])),
+            str(cfg.get("jefe_base_shift", "J_06-16") or "J_06-16"),
+            1 if cfg.get("use_pref_plantilla", False) else 0,
         ))
 
-    # Guardar history_log (reescribir completo)
-    if "history_log" in data:
-        conn.execute("DELETE FROM horarios_generados")
-        for entry in data["history_log"]:
-            meta = {k: v for k, v in entry.items()
-                    if k not in ("name", "schedule", "daily_tasks", "timestamp")}
-            conn.execute("""
-                INSERT INTO horarios_generados (nombre, horario, tareas, metadata, timestamp)
-                VALUES (?, ?, ?, ?, ?)
-            """, (
-                entry.get("name", "SIN NOMBRE"),
-                json.dumps(entry.get("schedule", {}), ensure_ascii=False),
-                json.dumps(entry.get("daily_tasks", {}), ensure_ascii=False),
-                json.dumps(meta, ensure_ascii=False),
-                entry.get("timestamp", datetime.datetime.now().isoformat()),
-            ))
+    # NOTA: history_log NO se guarda aquí. El historial se maneja exclusivamente
+    # por los endpoints dedicados (/api/history y variantes) que escriben directo
+    # a SQLite. Esto previene borrado silencioso: si save_db() se llama con un
+    # history_log incompleto (ej. desde /api/config o /api/solve), NO se pierden
+    # entradas de historial que ya existen en la DB.
 
     conn.commit()
     conn.close()
@@ -278,7 +312,7 @@ def save_db(data):
 
 _WEEK_NAME_RE = re.compile(r"semana\s*(\d+)", re.IGNORECASE)
 SCHEDULE_DAYS = ("Vie", "Sáb", "Dom", "Lun", "Mar", "Mié", "Jue")
-SPECIAL_DAY_MODES = {"normal", "sunday_like", "holy_thursday", "closed"}
+SPECIAL_DAY_MODES = {"normal", "sunday", "sunday_like", "holy_thursday", "closed"}
 
 
 def _normalize_special_days(raw_special_days):
@@ -290,7 +324,7 @@ def _normalize_special_days(raw_special_days):
         if raw_day not in SCHEDULE_DAYS:
             continue
         mode = raw_mode if raw_mode in SPECIAL_DAY_MODES else "normal"
-        if raw_day == "Dom" and mode == "sunday_like":
+        if raw_day == "Dom" and mode in ("sunday_like", "sunday"):
             continue
         if raw_day != "Jue" and mode == "holy_thursday":
             continue
@@ -416,6 +450,7 @@ def _prepare_history_for_solver(history_list, target_week_start=None, use_histor
             "range_end_name": None,
             "range_end_week_start": None,
             "women_reference_name": None,
+            "selection_fallback": False,
         }
 
     normalized = []
@@ -466,6 +501,15 @@ def _prepare_history_for_solver(history_list, target_week_start=None, use_histor
     else:
         eligible = ordered
 
+    # Entradas sin week_dates ni "Semana N" en el nombre no tienen sort_date: el filtro por
+    # semana objetivo las deja fuera y el solver queda sin contexto o peor. Usar últimas
+    # guardadas como respaldo — no bloquea generar ni “pierde” el historial en la BD.
+    selection_fallback = False
+    if not eligible and ordered:
+        eligible = ordered
+        selection_fallback = True
+        selection_reason = "fallback_no_week_anchor_match"
+
     if not eligible:
         return [], {
             "enabled": True,
@@ -478,6 +522,7 @@ def _prepare_history_for_solver(history_list, target_week_start=None, use_histor
             "range_end_name": None,
             "range_end_week_start": None,
             "women_reference_name": None,
+            "selection_fallback": False,
         }
 
     selected = eligible[-max_entries:]
@@ -493,6 +538,9 @@ def _prepare_history_for_solver(history_list, target_week_start=None, use_histor
     else:
         label = f"Historial usado: Hombres {range_start_name} -> {range_end_name} | Mujeres {range_end_name}"
 
+    if selection_fallback:
+        label += " · Respaldo: sin fecha de semana anterior clara; se usan las últimas guardadas"
+
     return [info["entry"] for info in selected], {
         "enabled": True,
         "label": label,
@@ -504,6 +552,8 @@ def _prepare_history_for_solver(history_list, target_week_start=None, use_histor
         "range_end_name": range_end_name,
         "range_end_week_start": reference_week_start,
         "women_reference_name": range_end_name,
+        "selection_fallback": selection_fallback,
+        "selection_reason": selection_reason,
     }
 
 
@@ -619,6 +669,9 @@ class Config(BaseModel):
     strict_weekly_alternation: bool = False
     custom_shifts: list = []
     holidays: list = []  # Días festivos [{date: "YYYY-MM-DD", name: "..."}]
+    prioritize_jefe_coverage: bool = True  # Suavizar objetivo: favorece asignar turnos al jefe cuando el solver elige
+    jefe_base_shift: str = "J_06-16"  # Turno tipo lun–vie al aplicar plantilla de jefe desde Parámetros
+    use_pref_plantilla: bool = False  # Si False, el motor ignora horario_pref_plantilla (preferencias en turnos_fijos)
 
 class SolverRequest(BaseModel):
     employees: List[Employee]
@@ -640,6 +693,31 @@ class DescontarPermisosRequest(BaseModel):
 class SyncVacPermRequest(BaseModel):
     fecha_inicio: str
     fecha_fin: str
+
+
+class GeneratorParamFlags(BaseModel):
+    forced_libres: Optional[bool] = None
+    forced_quebrado: Optional[bool] = None
+    allow_no_rest: Optional[bool] = None
+    strict_preferences: Optional[bool] = None
+    is_jefe_pista: Optional[bool] = None
+
+
+class GeneratorEmployeeUpdate(BaseModel):
+    employee_id: int
+    flags: Optional[GeneratorParamFlags] = None
+    shift_preferences: Optional[Dict[str, str]] = None
+    pref_plantilla_id: Optional[int] = None
+
+
+class GeneratorParamsBatchPut(BaseModel):
+    week_start: Optional[str] = None
+    updates: List[GeneratorEmployeeUpdate]
+
+
+class GeneratorSyncRrhhRequest(BaseModel):
+    week_start: str
+
 
 class HistoryEntry(BaseModel):
     name: str
@@ -673,6 +751,11 @@ def get_employees(include_inactive: bool = False):
             print(f"/api/employees: turnos_fijos inválido para {e.get('nombre', '<sin_nombre>')}")
             fixed_shifts = {}
             
+        pid = e.get("pref_plantilla_id")
+        try:
+            pid = int(pid) if pid is not None and str(pid).strip() != "" else None
+        except (TypeError, ValueError):
+            pid = None
         legacy_emps.append({
             "name": e.get("nombre", ""),
             "gender": e.get("genero", "M"),
@@ -684,7 +767,9 @@ def get_employees(include_inactive: bool = False):
             "is_practicante": bool(e.get("es_practicante", 0)),
             "strict_preferences": bool(e.get("strict_preferences", 0)),
             "activo": bool(e.get("activo", 1)),
-            "fixed_shifts": fixed_shifts
+            "fixed_shifts": fixed_shifts,
+            "pref_plantilla_id": pid,
+            "pref_plantilla_nombre": e.get("pref_plantilla_nombre"),
         })
         
     return legacy_emps
@@ -711,7 +796,7 @@ def update_employees(employees: List[Employee]):
                 allow_no_rest=1 if e.allow_no_rest else 0,
                 es_jefe_pista=1 if e.is_jefe_pista else 0,
                 strict_preferences=1 if e.strict_preferences else 0,
-                turnos_fijos=json.dumps(e.fixed_shifts)
+                turnos_fijos=json.dumps(e.fixed_shifts),
             )
         else:
             plan_db.add_empleado(
@@ -724,7 +809,7 @@ def update_employees(employees: List[Employee]):
                 allow_no_rest=1 if e.allow_no_rest else 0,
                 es_jefe_pista=1 if e.is_jefe_pista else 0,
                 strict_preferences=1 if e.strict_preferences else 0,
-                turnos_fijos=json.dumps(e.fixed_shifts)
+                turnos_fijos=json.dumps(e.fixed_shifts),
             )
             # Fetch new ID in case it was created without activo
             if not e.activo:
@@ -732,6 +817,33 @@ def update_employees(employees: List[Employee]):
                 if added:
                     plan_db.remove_empleado(added["id"])
     return {"status": "Updated"}
+
+
+@app.put("/api/employees/{name}")
+def update_single_employee(name: str, emp: Employee):
+    """Update a single employee — no bulk array, no stale data risk."""
+    exist = plan_db.get_conn().execute("SELECT id, activo FROM empleados WHERE nombre=?", (name,)).fetchone()
+    if not exist:
+        raise HTTPException(status_code=404, detail="Empleado no encontrado")
+
+    if emp.activo and exist["activo"] == 0:
+        plan_db.reactivar_empleado(exist["id"])
+    elif not emp.activo and exist["activo"] == 1:
+        plan_db.remove_empleado(exist["id"])
+
+    plan_db.update_empleado(
+        exist["id"],
+        genero=emp.gender,
+        puede_nocturno=1 if emp.can_do_night else 0,
+        forced_libres=1 if emp.forced_libres else 0,
+        forced_quebrado=1 if emp.forced_quebrado else 0,
+        allow_no_rest=1 if emp.allow_no_rest else 0,
+        es_jefe_pista=1 if emp.is_jefe_pista else 0,
+        strict_preferences=1 if emp.strict_preferences else 0,
+        turnos_fijos=json.dumps(emp.fixed_shifts),
+    )
+    return {"status": "Updated"}
+
 
 @app.get("/api/config")
 def get_config():
@@ -758,24 +870,21 @@ def solve_schedule(request: SolverRequest):
     # La variable 'employees' en app.js es un 'let' que nunca vive en window,
     # así que planillas_ui.js no puede actualizarla. La fuente de verdad es la DB.
     unified_emps = plan_db.get_empleados(solo_activos=True)
+    use_tpl = plan_db.get_use_pref_plantilla()
     employees_data = []
     for e in unified_emps:
-        try:
-            fixed_shifts = json.loads(e.get("turnos_fijos", "{}")) if e.get("turnos_fijos") else {}
-        except (json.JSONDecodeError, TypeError):
-            print(f"/api/solve: turnos_fijos inválido para {e.get('nombre', '<sin_nombre>')}")
-            fixed_shifts = {}
+        rp = plan_db.resolve_prefs_for_solver(e, use_pref_plantilla=use_tpl)
         employees_data.append({
             "name": e.get("nombre", ""),
             "gender": e.get("genero", "M"),
             "can_do_night": bool(e.get("puede_nocturno", 1)),
-            "allow_no_rest": bool(e.get("allow_no_rest", 0)),
-            "forced_libres": bool(e.get("forced_libres", 0)),
-            "forced_quebrado": bool(e.get("forced_quebrado", 0)),
+            "allow_no_rest": rp["allow_no_rest"],
+            "forced_libres": rp["forced_libres"],
+            "forced_quebrado": rp["forced_quebrado"],
             "is_jefe_pista": bool(e.get("es_jefe_pista", 0)),
             "is_practicante": bool(e.get("es_practicante", 0)),
-            "strict_preferences": bool(e.get("strict_preferences", 0)),
-            "fixed_shifts": fixed_shifts
+            "strict_preferences": rp["strict_preferences"],
+            "fixed_shifts": rp["fixed_shifts"],
         })
 
     config_data = request.config.dict()
@@ -804,14 +913,22 @@ def solve_schedule(request: SolverRequest):
         metadata["history_women_reference_name"] = history_context["women_reference_name"]
         metadata["history_context_label"] = history_context["label"]
         metadata["history_target_week_start"] = request.target_week_start
+        metadata["history_selection_fallback"] = history_context.get("selection_fallback", False)
+        metadata["history_selection_reason"] = history_context.get("selection_reason")
         metadata["special_days"] = special_days
 
-    # Save last result for Export (if feasible or even partial)
-    # We save it to DB so export_excel can read it
-    if result.get("schedule"):
-        db["last_result"] = result
-        save_db(db)
-    
+    # NUNCA llamar save_db() aquí: no persiste last_result en SQLite y sí reescribe
+    # empleados + config en cada generación (riesgo innecesario). El historial solo
+    # cambia con POST /api/history explícito.
+    global _last_generated_preview
+    if isinstance(result, dict) and result.get("schedule"):
+        _last_generated_preview = {
+            "status": result.get("status"),
+            "schedule": result.get("schedule"),
+            "daily_tasks": result.get("daily_tasks") or {},
+            "metadata": dict(result.get("metadata") or {}),
+        }
+
     return result
 
 @app.get("/api/history")
@@ -874,129 +991,243 @@ def get_sunday_rotation():
 
 @app.post("/api/history")
 def save_history(entry: HistoryEntry):
-    db = load_db()
-    history_list = db.get("history_log", [])
-    if not isinstance(history_list, list): history_list = []
-    
-    # Add new entry
-    new_record = entry.dict()
-    if not new_record.get("timestamp"):
-        new_record["timestamp"] = datetime.datetime.now().isoformat()
-    normalized_special_days = _normalize_special_days(entry.special_days)
-    if normalized_special_days:
-        new_record["special_days"] = normalized_special_days
-    else:
-        new_record.pop("special_days", None)
-    if entry.week_dates:
-        new_record["week_dates"] = entry.week_dates
-        
-    history_list.append(new_record)
-    
-    # Limit history size if needed, user requested manual deletion so maybe high limit
-    if len(history_list) > 50:
-        history_list = history_list[-50:]
-        
-    db["history_log"] = history_list
-    
-    # Update Sunday Rotation Queue if present (persist logic state)
-    if "config" not in db: db["config"] = {}
+    """Save a new history entry directly to SQLite — no save_db() involved."""
+    conn = _get_conn()
+
+    horario_json = json.dumps(entry.schedule, ensure_ascii=False)
+    tareas_json = json.dumps(entry.daily_tasks or {}, ensure_ascii=False)
+    metadata_json = json.dumps({
+        "rotation_queue": entry.next_sunday_rotation_queue,
+        "rotation_target": entry.next_sunday_cycle_index,
+        "special_days": entry.special_days or {},
+        "week_dates": entry.week_dates,
+    }, ensure_ascii=False)
+    ts = entry.timestamp or datetime.datetime.now().isoformat()
+
+    # Siempre insertar una entrada nueva — nunca sobreescribir por nombre
+    cursor = conn.execute("""
+        INSERT INTO horarios_generados (nombre, horario, tareas, metadata, timestamp, deleted, deleted_at)
+        VALUES (?, ?, ?, ?, ?, 0, NULL)
+    """, (entry.name, horario_json, tareas_json, metadata_json, ts))
+    row_id = cursor.lastrowid
+
+    # Papelera: solo borrar físicamente lo que lleva >7 días en papelera (no toca activos).
+    conn.execute("""
+        DELETE FROM horarios_generados
+        WHERE deleted = 1 AND deleted_at IS NOT NULL
+        AND datetime(deleted_at) < datetime('now', '-7 days')
+    """)
+
+    # Actualizar cola de domingos en config
     if entry.next_sunday_rotation_queue is not None:
-        db["config"]["sunday_rotation_queue"] = entry.next_sunday_rotation_queue
+        conn.execute(
+            "UPDATE horario_config SET sunday_rotation_queue = ? WHERE id = 1",
+            (json.dumps(entry.next_sunday_rotation_queue),)
+        )
     elif entry.next_sunday_cycle_index is not None:
-        # Legacy fallback
-        db["config"]["sunday_cycle_index"] = entry.next_sunday_cycle_index
-        
-    save_db(db)
-    return {"status": "Saved", "history_len": len(history_list)}
+        conn.execute(
+            "UPDATE horario_config SET sunday_cycle_index = ? WHERE id = 1",
+            (entry.next_sunday_cycle_index,)
+        )
+
+    conn.commit()
+    conn.close()
+
+    total_conn = _get_conn()
+    total = total_conn.execute("SELECT COUNT(*) FROM horarios_generados WHERE deleted = 0").fetchone()[0]
+    total_conn.close()
+
+    global _last_generated_preview
+    _last_generated_preview = None
+
+    return {"status": "Saved", "history_len": total}
+
+# Orden alineado con fetchHistoryEntries() en el frontend: más reciente primero (timestamp, luego id).
+_HISTORY_LIST_ORDER = "timestamp DESC, id DESC"
+
+
+def _soft_delete_history_row(conn, row_id: int) -> bool:
+    now = datetime.datetime.now().isoformat()
+    cur = conn.execute(
+        "UPDATE horarios_generados SET deleted = 1, deleted_at = ? WHERE id = ? AND deleted = 0",
+        (now, row_id),
+    )
+    return cur.rowcount > 0
+
+
+@app.delete("/api/history/entry/{row_id}")
+def delete_history_by_db_id(row_id: int):
+    """Mueve a la papelera por id de fila (robusto ante orden o deduplicación en el cliente)."""
+    conn = _get_conn()
+    if _soft_delete_history_row(conn, row_id):
+        conn.commit()
+        conn.close()
+        return {"status": "Trashed", "message": "Movido a la papelera"}
+    conn.close()
+    raise HTTPException(status_code=404, detail="Entrada no encontrada")
+
 
 @app.delete("/api/history/{index}")
 def delete_history_item(index: int):
-    db = load_db()
-    history_list = db.get("history_log", [])
-    
-    if 0 <= index < len(history_list):
-        history_list.pop(index)
-        db["history_log"] = history_list
-        save_db(db)
-        return {"status": "Deleted"}
+    """Soft delete a history entry — moves to trash instead of permanent deletion."""
+    conn = _get_conn()
+
+    active_rows = conn.execute(
+        f"SELECT id FROM horarios_generados WHERE deleted = 0 ORDER BY {_HISTORY_LIST_ORDER}"
+    ).fetchall()
+
+    if 0 <= index < len(active_rows):
+        row_id = active_rows[index]["id"]
+        if _soft_delete_history_row(conn, row_id):
+            conn.commit()
+            conn.close()
+            return {"status": "Trashed", "message": "Movido a la papelera"}
+
+    conn.close()
     raise HTTPException(status_code=404, detail="Index out of bounds")
+
+def _patch_history_row(conn, row_id: int, entry: HistoryEntry) -> bool:
+    row = conn.execute(
+        "SELECT id, nombre, horario, tareas, metadata FROM horarios_generados WHERE id = ? AND deleted = 0",
+        (row_id,),
+    ).fetchone()
+    if not row:
+        return False
+
+    horario_json = json.dumps(entry.schedule, ensure_ascii=False)
+    tareas_json = json.dumps(entry.daily_tasks or {}, ensure_ascii=False)
+
+    existing_meta = json.loads(row["metadata"]) if row["metadata"] else {}
+    normalized_special_days = _normalize_special_days(entry.special_days)
+    if normalized_special_days:
+        existing_meta["special_days"] = normalized_special_days
+    else:
+        existing_meta.pop("special_days", None)
+    if entry.week_dates is not None:
+        existing_meta["week_dates"] = entry.week_dates
+
+    metadata_json = json.dumps(existing_meta, ensure_ascii=False)
+
+    conn.execute(
+        """
+        UPDATE horarios_generados
+        SET horario = ?, tareas = ?, metadata = ?
+        WHERE id = ?
+        """,
+        (horario_json, tareas_json, metadata_json, row_id),
+    )
+    return True
+
+
+@app.patch("/api/history/entry/{row_id}")
+def update_history_item_by_db_id(row_id: int, entry: HistoryEntry):
+    """Actualiza historial por id de fila."""
+    conn = _get_conn()
+    if _patch_history_row(conn, row_id, entry):
+        conn.commit()
+        conn.close()
+        return {"status": "Updated"}
+    conn.close()
+    raise HTTPException(status_code=404, detail="Entrada no encontrada")
+
 
 @app.patch("/api/history/{index}")
 def update_history_item(index: int, entry: HistoryEntry):
-    db = load_db()
-    history_list = db.get("history_log", [])
-    
-    if 0 <= index < len(history_list):
-        # Update specific fields
-        history_list[index]["schedule"] = entry.schedule
-        history_list[index]["daily_tasks"] = entry.daily_tasks
-        if entry.week_dates is not None:
-            history_list[index]["week_dates"] = entry.week_dates
-        normalized_special_days = _normalize_special_days(entry.special_days)
-        if normalized_special_days:
-            history_list[index]["special_days"] = normalized_special_days
-        else:
-            history_list[index].pop("special_days", None)
-        db["history_log"] = history_list
-        save_db(db)
-        return {"status": "Updated"}
+    """Update a history entry directly in SQLite."""
+    conn = _get_conn()
+
+    active_rows = conn.execute(
+        f"SELECT id FROM horarios_generados WHERE deleted = 0 ORDER BY {_HISTORY_LIST_ORDER}"
+    ).fetchall()
+
+    if 0 <= index < len(active_rows):
+        row_id = active_rows[index]["id"]
+        if _patch_history_row(conn, row_id, entry):
+            conn.commit()
+            conn.close()
+            return {"status": "Updated"}
+
+    conn.close()
     raise HTTPException(status_code=404, detail="Index out of bounds")
 
 
-@app.post("/api/history/{index}/reassign_tasks")
-def reassign_history_tasks(index: int):
-    db = load_db()
-    history_list = db.get("history_log", [])
-
-    if not (0 <= index < len(history_list)):
+def _reassign_history_tasks_for_row(conn, row_id: int) -> dict:
+    row = conn.execute(
+        "SELECT id, nombre, horario, tareas, metadata FROM horarios_generados WHERE id = ? AND deleted = 0",
+        (row_id,),
+    ).fetchone()
+    if not row:
         raise HTTPException(status_code=404, detail="Index out of bounds")
 
-    entry = history_list[index]
-    schedule = entry.get("schedule", {})
+    schedule = json.loads(row["horario"]) if row["horario"] else {}
     if not isinstance(schedule, dict) or not schedule:
         raise HTTPException(status_code=400, detail="El historial no tiene un horario válido")
 
-    employees_data = [
-        dict(employee)
-        for employee in (db.get("employees", []) or [])
-        if isinstance(employee, dict)
-    ]
-    employee_names = {emp.get("name") for emp in employees_data if isinstance(emp, dict)}
+    employees_rows = conn.execute("SELECT * FROM horario_empleados WHERE activo=1").fetchall()
+    employees_data = [dict(e) for e in employees_rows]
+    employee_names = {emp.get("nombre", "") for emp in employees_data}
     for missing_name in sorted(name for name in schedule.keys() if name not in employee_names):
-        employees_data.append({
-            "name": missing_name,
-            "gender": "M",
-            "can_do_night": True,
-            "allow_no_rest": False,
-            "forced_libres": False,
-            "forced_quebrado": False,
-            "is_jefe_pista": False,
-            "is_practicante": False,
-            "strict_preferences": False,
-            "fixed_shifts": {},
-        })
+        employees_data.append({"nombre": missing_name, "genero": "M", "puede_nocturno": 1})
 
-    config_data = dict(db.get("config", {}) or {})
+    config_row = conn.execute("SELECT * FROM horario_config WHERE id=1").fetchone()
+    config_data = dict(config_row) if config_row else {}
     config_data["use_refuerzo"] = "Refuerzo" in schedule
-    special_days = _normalize_special_days(entry.get("special_days", {}))
+    existing_meta = json.loads(row["metadata"]) if row["metadata"] else {}
+    special_days = _normalize_special_days(existing_meta.get("special_days", {}))
     config_data["special_days"] = special_days
 
     scheduler = ShiftScheduler(employees_data, config_data, history_data=[])
     daily_tasks = scheduler.assign_tasks(schedule)
 
-    history_list[index]["daily_tasks"] = daily_tasks
+    existing_meta["daily_tasks"] = daily_tasks
     if special_days:
-        history_list[index]["special_days"] = special_days
+        existing_meta["special_days"] = special_days
     else:
-        history_list[index].pop("special_days", None)
-    db["history_log"] = history_list
-    save_db(db)
+        existing_meta.pop("special_days", None)
+
+    conn.execute(
+        "UPDATE horarios_generados SET tareas = ?, metadata = ? WHERE id = ?",
+        (json.dumps(daily_tasks, ensure_ascii=False), json.dumps(existing_meta, ensure_ascii=False), row_id),
+    )
 
     return {
         "status": "Updated",
         "daily_tasks": daily_tasks,
         "special_days": special_days,
     }
+
+
+@app.post("/api/history/entry/{row_id}/reassign_tasks")
+def reassign_history_tasks_by_db_id(row_id: int):
+    """Recalcular tareas de limpieza por id de fila."""
+    conn = _get_conn()
+    try:
+        out = _reassign_history_tasks_for_row(conn, row_id)
+        conn.commit()
+        return out
+    finally:
+        conn.close()
+
+
+@app.post("/api/history/{index}/reassign_tasks")
+def reassign_history_tasks(index: int):
+    """Reassign tasks for a history entry — reads/writes directly to SQLite."""
+    conn = _get_conn()
+    try:
+        active_rows = conn.execute(
+            f"SELECT id FROM horarios_generados WHERE deleted = 0 ORDER BY {_HISTORY_LIST_ORDER}"
+        ).fetchall()
+
+        if not (0 <= index < len(active_rows)):
+            raise HTTPException(status_code=404, detail="Index out of bounds")
+
+        row_id = active_rows[index]["id"]
+        out = _reassign_history_tasks_for_row(conn, row_id)
+        conn.commit()
+        return out
+    finally:
+        conn.close()
+
 
 def format_shift_code(code: str) -> str:
     """
@@ -1193,7 +1424,7 @@ def _build_validation_rules_impl(special_days=None):
 
             if day_mode == "closed":
                 soft_bounds[d][h] = 0
-            elif day_mode in {"sunday_like", "holy_thursday"}:
+            elif day_mode in {"sunday", "sunday_like", "holy_thursday"}:
                 soft_bounds[d][h] = mn
             else:
                 if 7 <= h <= 10 or 17 <= h <= 19:
@@ -1364,25 +1595,52 @@ def post_validation_rules(request: ValidationRulesRequest):
     return _build_validation_rules_impl(request.special_days)
 
 @app.get("/api/export_excel")
-def export_excel(history_index: Optional[int] = None):
+def export_excel(history_index: Optional[int] = None, history_db_id: Optional[int] = None):
     db = load_db()
-    
+
     target_schedule = {}
     target_tasks = {}
     selected_entry = None
-    
-    if history_index is not None:
+
+    if history_db_id is not None:
+        # Lookup directo por db_id — robusto ante cambios de orden en el historial
+        conn = _get_conn()
+        row = conn.execute(
+            "SELECT * FROM horarios_generados WHERE id = ? AND IFNULL(deleted, 0) = 0",
+            (history_db_id,)
+        ).fetchone()
+        conn.close()
+        if row:
+            selected_entry = _history_sqlite_row_to_log_entry(dict(row))
+            if selected_entry:
+                target_schedule = selected_entry.get("schedule", {})
+                target_tasks = selected_entry.get("daily_tasks", {})
+    elif history_index is not None:
         history_list = db.get("history_log", [])
         if 0 <= history_index < len(history_list):
             selected_entry = history_list[history_index]
             target_schedule = selected_entry.get("schedule", {})
             target_tasks = selected_entry.get("daily_tasks", {})
     else:
-        last_result = db.get("last_result", {})
-        target_schedule = last_result.get("schedule", {})
-        target_tasks = last_result.get("daily_tasks", {})
+        global _last_generated_preview
+        target_schedule = {}
+        target_tasks = {}
+        preview_used = False
+        if _last_generated_preview and _last_generated_preview.get("schedule"):
+            target_schedule = _last_generated_preview.get("schedule") or {}
+            target_tasks = _last_generated_preview.get("daily_tasks") or {}
+            preview_used = True
+        if not target_schedule:
+            last_result = db.get("last_result", {})
+            target_schedule = last_result.get("schedule", {})
+            target_tasks = last_result.get("daily_tasks", {})
         history_list = db.get("history_log", [])
-        if history_list:
+        if preview_used:
+            meta = (_last_generated_preview or {}).get("metadata") or {}
+            wd = meta.get("week_dates")
+            if wd or meta:
+                selected_entry = {"week_dates": wd, "metadata": meta}
+        elif history_list:
             selected_entry = history_list[-1]
     
     if not target_schedule:
@@ -1663,6 +1921,54 @@ class PlanillaEmpleado(BaseModel):
     strict_preferences: Optional[int] = 0
     activo: Optional[int] = 1
     turnos_fijos: Optional[str] = "{}"
+    pref_plantilla_id: Optional[int] = None
+
+
+class PlanillaEmpleadoUpdate(BaseModel):
+    """PUT parcial: solo los campos enviados se persisten (no pisa horario si se omiten)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    nombre: str
+    tipo_pago: str
+    salario_fijo: Optional[float] = None
+    cedula: Optional[str] = None
+    correo: Optional[str] = None
+    telefono: Optional[str] = None
+    fecha_inicio: Optional[str] = None
+    aplica_seguro: Optional[int] = None
+    genero: Optional[str] = None
+    puede_nocturno: Optional[int] = None
+    activo: Optional[int] = None
+    forced_libres: Optional[int] = None
+    forced_quebrado: Optional[int] = None
+    allow_no_rest: Optional[int] = None
+    es_jefe_pista: Optional[int] = None
+    es_practicante: Optional[int] = None
+    strict_preferences: Optional[int] = None
+    turnos_fijos: Optional[str] = None
+    pref_plantilla_id: Optional[int] = None
+
+
+class PlanillaPrefPlantillaCreate(BaseModel):
+    nombre: str
+    descripcion: str = ""
+    activa: int = 1
+    turnos_fijos: str = "{}"
+    strict_preferences: int = 0
+    allow_no_rest: int = 0
+    forced_libres: int = 0
+    forced_quebrado: int = 0
+
+class PlanillaPrefPlantillaUpdate(BaseModel):
+    nombre: Optional[str] = None
+    descripcion: Optional[str] = None
+    activa: Optional[int] = None
+    turnos_fijos: Optional[str] = None
+    strict_preferences: Optional[int] = None
+    allow_no_rest: Optional[int] = None
+    forced_libres: Optional[int] = None
+    forced_quebrado: Optional[int] = None
 
 class PlanillaVacacion(BaseModel):
     empleado_id: int
@@ -1712,37 +2018,110 @@ def add_planilla_empleado(emp: PlanillaEmpleado):
         forced_libres=emp.forced_libres, forced_quebrado=emp.forced_quebrado,
         allow_no_rest=emp.allow_no_rest, es_jefe_pista=emp.es_jefe_pista,
         es_practicante=emp.es_practicante,
-        strict_preferences=emp.strict_preferences, turnos_fijos=emp.turnos_fijos
+        strict_preferences=emp.strict_preferences, turnos_fijos=emp.turnos_fijos,
+        pref_plantilla_id=emp.pref_plantilla_id,
     )
     if not ok:
         raise HTTPException(status_code=400, detail=msg)
     return {"status": "success", "message": msg}
 
 @app.put("/api/planillas/empleados/{emp_id}")
-def update_planilla_empleado(emp_id: int, emp: PlanillaEmpleado):
-    plan_db.update_empleado(
-        emp_id, nombre=emp.nombre, tipo_pago=emp.tipo_pago, salario_fijo=emp.salario_fijo,
-        cedula=emp.cedula, correo=emp.correo, 
-        telefono=emp.telefono, fecha_inicio=emp.fecha_inicio,
-        aplica_seguro=emp.aplica_seguro, genero=emp.genero,
-        puede_nocturno=emp.puede_nocturno,
-        forced_libres=emp.forced_libres, forced_quebrado=emp.forced_quebrado,
-        allow_no_rest=emp.allow_no_rest, es_jefe_pista=emp.es_jefe_pista,
-        es_practicante=emp.es_practicante,
-        strict_preferences=emp.strict_preferences, turnos_fijos=emp.turnos_fijos
-    )
+def update_planilla_empleado(emp_id: int, emp: PlanillaEmpleadoUpdate):
+    data = emp.model_dump(exclude_unset=True)
+    activo_val = data.pop("activo", None) if "activo" in data else None
+    pref_extra: Dict = {}
+    if "pref_plantilla_id" in data:
+        pref_extra["pref_plantilla_id"] = data.pop("pref_plantilla_id")
+    plan_db.update_empleado(emp_id, **data, **pref_extra)
 
-    # Check if the active status changed
-    exist = plan_db.get_conn().execute("SELECT activo FROM empleados WHERE id=?", (emp_id,)).fetchone()
-    if exist:
-        current_state = exist["activo"]
-        new_state = 1 if emp.activo else 0
-        if current_state == 1 and new_state == 0:
-            plan_db.remove_empleado(emp_id)
-        elif current_state == 0 and new_state == 1:
-            plan_db.reactivar_empleado(emp_id)
+    if activo_val is not None:
+        exist = plan_db.get_conn().execute("SELECT activo FROM empleados WHERE id=?", (emp_id,)).fetchone()
+        if exist:
+            current_state = exist["activo"]
+            new_state = 1 if activo_val else 0
+            if current_state == 1 and new_state == 0:
+                plan_db.remove_empleado(emp_id)
+            elif current_state == 0 and new_state == 1:
+                plan_db.reactivar_empleado(emp_id)
 
     return {"status": "success"}
+
+@app.get("/api/planillas/pref-plantillas")
+def list_pref_plantillas(solo_activas: bool = False):
+    return plan_db.list_pref_plantillas(solo_activas=solo_activas)
+
+@app.post("/api/planillas/pref-plantillas")
+def create_pref_plantilla(body: PlanillaPrefPlantillaCreate):
+    try:
+        new_id = plan_db.create_pref_plantilla(
+            body.nombre,
+            descripcion=body.descripcion,
+            activa=body.activa,
+            turnos_fijos=body.turnos_fijos,
+            strict_preferences=body.strict_preferences,
+            allow_no_rest=body.allow_no_rest,
+            forced_libres=body.forced_libres,
+            forced_quebrado=body.forced_quebrado,
+        )
+    except sqlite3.IntegrityError:
+        raise HTTPException(status_code=400, detail="Ya existe una plantilla con ese nombre")
+    return {"status": "success", "id": new_id}
+
+@app.get("/api/planillas/pref-plantillas/{plantilla_id}")
+def get_pref_plantilla(plantilla_id: int):
+    row = plan_db.get_pref_plantilla(plantilla_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Plantilla no encontrada")
+    return row
+
+@app.put("/api/planillas/pref-plantillas/{plantilla_id}")
+def update_pref_plantilla(plantilla_id: int, body: PlanillaPrefPlantillaUpdate):
+    if not plan_db.get_pref_plantilla(plantilla_id):
+        raise HTTPException(status_code=404, detail="Plantilla no encontrada")
+    patch = body.model_dump(exclude_unset=True)
+    if not patch:
+        return {"status": "success"}
+    try:
+        plan_db.update_pref_plantilla(plantilla_id, **patch)
+    except sqlite3.IntegrityError:
+        raise HTTPException(status_code=400, detail="Ya existe una plantilla con ese nombre")
+    return {"status": "success"}
+
+@app.delete("/api/planillas/pref-plantillas/{plantilla_id}")
+def delete_pref_plantilla(plantilla_id: int):
+    if not plan_db.get_pref_plantilla(plantilla_id):
+        raise HTTPException(status_code=404, detail="Plantilla no encontrada")
+    plan_db.delete_pref_plantilla(plantilla_id)
+    return {"status": "success"}
+
+
+# ------------------------------------------------------------------------------
+# PANEL PARÁMETROS DEL GENERADOR (matriz colaboradores + batch JSON)
+# ------------------------------------------------------------------------------
+@app.get("/api/generator/employee-params")
+def get_generator_employee_params(week_start: Optional[str] = None):
+    return plan_db.get_generator_employee_params(week_start)
+
+
+@app.put("/api/generator/employee-params")
+def put_generator_employee_params(body: GeneratorParamsBatchPut):
+    payload = []
+    for u in body.updates:
+        d = {"employee_id": u.employee_id}
+        if u.flags is not None:
+            d["flags"] = {k: v for k, v in u.flags.model_dump().items() if v is not None}
+        if u.shift_preferences is not None:
+            d["shift_preferences"] = dict(u.shift_preferences)
+        if "pref_plantilla_id" in u.model_fields_set:
+            d["pref_plantilla_id"] = u.pref_plantilla_id
+        payload.append(d)
+    return plan_db.apply_generator_employee_params_batch(payload)
+
+
+@app.post("/api/generator/sync-rrhh-to-shifts")
+def post_generator_sync_rrhh(body: GeneratorSyncRrhhRequest):
+    return plan_db.sync_all_rrhh_to_fixed_shifts_for_week(body.week_start)
+
 
 @app.delete("/api/planillas/empleados/{emp_id}")
 def delete_planilla_empleado(emp_id: int):

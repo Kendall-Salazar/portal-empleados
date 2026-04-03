@@ -305,16 +305,13 @@ def migrar_json_a_sqlite(json_path):
 # ═════════════════════════════════════════════════════════════════════════════
 
 def get_horarios_generados():
+    """Listado para planillas: todas las filas activas (mismo nombre puede repetirse)."""
     conn = db.get_conn()
     rows = conn.execute(
         """
-        SELECT id, nombre, timestamp 
-        FROM horarios_generados 
-        WHERE id IN (
-            SELECT MAX(id) 
-            FROM horarios_generados 
-            GROUP BY nombre
-        )
+        SELECT id, nombre, timestamp
+        FROM horarios_generados
+        WHERE IFNULL(deleted, 0) = 0
         ORDER BY id DESC
         """
     ).fetchall()
@@ -336,9 +333,11 @@ def get_horario_por_id(horario_id):
 
 
 def get_horario_por_nombre(nombre):
+    """Si hay varios con el mismo nombre, devuelve el más reciente (mayor id)."""
     conn = db.get_conn()
     row = conn.execute(
-        "SELECT * FROM horarios_generados WHERE nombre=?", (nombre,)
+        "SELECT * FROM horarios_generados WHERE nombre=? AND IFNULL(deleted, 0) = 0 ORDER BY id DESC LIMIT 1",
+        (nombre,),
     ).fetchone()
     conn.close()
     if row:
@@ -351,26 +350,16 @@ def get_horario_por_nombre(nombre):
 
 
 def guardar_horario(nombre, schedule_dict, tasks_dict=None, metadata_dict=None):
+    """Siempre crea una fila nueva (no sobrescribe por nombre)."""
     conn = db.get_conn()
-    row = conn.execute("SELECT id FROM horarios_generados WHERE nombre=?", (nombre,)).fetchone()
-    
     horario_json = json.dumps(schedule_dict, ensure_ascii=False)
     tareas_json = json.dumps(tasks_dict or {}, ensure_ascii=False)
     metadata_json = json.dumps(metadata_dict or {}, ensure_ascii=False)
     ts = datetime.now().isoformat()
-    
-    if row:
-        conn.execute("""
-            UPDATE horarios_generados 
-            SET horario=?, tareas=?, metadata=?, timestamp=?
-            WHERE id=?
-        """, (horario_json, tareas_json, metadata_json, ts, row["id"]))
-    else:
-        conn.execute("""
-            INSERT INTO horarios_generados (nombre, horario, tareas, metadata, timestamp)
-            VALUES (?, ?, ?, ?, ?)
-        """, (nombre, horario_json, tareas_json, metadata_json, ts))
-        
+    conn.execute("""
+        INSERT INTO horarios_generados (nombre, horario, tareas, metadata, timestamp, deleted, deleted_at)
+        VALUES (?, ?, ?, ?, ?, 0, NULL)
+    """, (nombre, horario_json, tareas_json, metadata_json, ts))
     conn.commit()
     conn.close()
 

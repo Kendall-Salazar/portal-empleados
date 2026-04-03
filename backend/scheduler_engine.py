@@ -4,8 +4,6 @@
 from collections import Counter
 import copy
 import json
-import random
-
 from ortools.sat.python import cp_model
 import json
 import logging
@@ -38,11 +36,15 @@ HEAVY_EXTENDED_SHIFTS = frozenset({
 WOMEN_ROTATION_TOKENS = ("AM", "PM")
 MANUAL_SHIFT_PREFIX = "MANUAL_"
 SPECIAL_DAY_MODE_NORMAL = "normal"
+# Domingo real (solo Dom): cobertura y turnos de domingo. No es una "excepción".
+SPECIAL_DAY_MODE_SUNDAY = "sunday"
+# Excepción semanal aplicable a otros días: "como domingo" (misma lógica de cobertura/turnos).
 SPECIAL_DAY_MODE_SUNDAY_LIKE = "sunday_like"
 SPECIAL_DAY_MODE_HOLY_THURSDAY = "holy_thursday"
 SPECIAL_DAY_MODE_CLOSED = "closed"
 SPECIAL_DAY_MODES = frozenset({
     SPECIAL_DAY_MODE_NORMAL,
+    SPECIAL_DAY_MODE_SUNDAY,
     SPECIAL_DAY_MODE_SUNDAY_LIKE,
     SPECIAL_DAY_MODE_HOLY_THURSDAY,
     SPECIAL_DAY_MODE_CLOSED,
@@ -52,6 +54,7 @@ WEEKDAY_LIKE_SPECIAL_DAY_MODES = frozenset({
     SPECIAL_DAY_MODE_HOLY_THURSDAY,
 })
 HISTORY_NEUTRAL_SPECIAL_DAY_MODES = frozenset({
+    SPECIAL_DAY_MODE_SUNDAY,
     SPECIAL_DAY_MODE_SUNDAY_LIKE,
     SPECIAL_DAY_MODE_HOLY_THURSDAY,
     SPECIAL_DAY_MODE_CLOSED,
@@ -109,7 +112,7 @@ def normalize_special_day_modes(raw_modes):
         if raw_day not in DAYS:
             continue
         mode = raw_mode if raw_mode in SPECIAL_DAY_MODES else SPECIAL_DAY_MODE_NORMAL
-        if raw_day == "Dom" and mode == SPECIAL_DAY_MODE_SUNDAY_LIKE:
+        if raw_day == "Dom" and mode in (SPECIAL_DAY_MODE_SUNDAY_LIKE, SPECIAL_DAY_MODE_SUNDAY):
             continue
         if raw_day != "Jue" and mode == SPECIAL_DAY_MODE_HOLY_THURSDAY:
             continue
@@ -119,16 +122,25 @@ def normalize_special_day_modes(raw_modes):
 
 
 def get_effective_day_mode(day: str, special_day_modes=None):
+    """Domingo: siempre `sunday` salvo `closed` explícito. `sunday_like` solo aplica a otros días."""
     normalized = normalize_special_day_modes(special_day_modes)
+    if day == "Dom":
+        if normalized.get(day) == SPECIAL_DAY_MODE_CLOSED:
+            return SPECIAL_DAY_MODE_CLOSED
+        return SPECIAL_DAY_MODE_SUNDAY
     if day in normalized:
         return normalized[day]
-    if day == "Dom":
-        return SPECIAL_DAY_MODE_SUNDAY_LIKE
     return SPECIAL_DAY_MODE_NORMAL
 
 
+def is_sunday_style_mode(mode: str) -> bool:
+    return mode in (SPECIAL_DAY_MODE_SUNDAY, SPECIAL_DAY_MODE_SUNDAY_LIKE)
+
+
 def is_sunday_like_day(day: str, special_day_modes=None) -> bool:
-    return get_effective_day_mode(day, special_day_modes) == SPECIAL_DAY_MODE_SUNDAY_LIKE
+    """True solo si un día que no es Dom tiene excepción 'como domingo'."""
+    normalized = normalize_special_day_modes(special_day_modes or {})
+    return day != "Dom" and normalized.get(day) == SPECIAL_DAY_MODE_SUNDAY_LIKE
 
 
 def is_holy_thursday_day(day: str, special_day_modes=None) -> bool:
@@ -151,7 +163,7 @@ def get_allowed_shifts_for_day(day: str, standard_mode: bool = False, special_da
     if mode == SPECIAL_DAY_MODE_HOLY_THURSDAY:
         return [shift for shift in SHIFTS.keys() if shift != "D4_13-22"]
 
-    if mode == SPECIAL_DAY_MODE_SUNDAY_LIKE and standard_mode:
+    if is_sunday_style_mode(mode) and standard_mode:
         return [
             "OFF",
             "VAC",
@@ -164,7 +176,7 @@ def get_allowed_shifts_for_day(day: str, standard_mode: bool = False, special_da
             "N_22-05",
         ]
 
-    if mode == SPECIAL_DAY_MODE_SUNDAY_LIKE:
+    if is_sunday_style_mode(mode):
         return [shift for shift in SHIFTS.keys() if shift != "AUTO"]
 
     return [shift for shift in SHIFTS.keys() if shift != "D4_13-22"]
@@ -368,12 +380,13 @@ def coverage_bounds(h: int, day: str = None, standard_mode: bool = False, num_em
     Hard min=3 at peak hours guarantees feasibility; existing soft constraints
     (500k penalty) strongly push toward 4 people during h7-h10 and h17-h19.
     
-    DOMINGO: Relaxed except h17-h19 which keeps hard min 3 + soft target 4.
+    DOMINGO (`sunday`) y días con excepción `sunday_like`: 5-6 y noche con reglas propias;
+    7:00-19:00 exactamente 3 personas (min=max=3).
     """
     N = num_emps  # max employees (used as upper bound for 'min' constraints)
     
     mode = special_day_mode or (
-        SPECIAL_DAY_MODE_SUNDAY_LIKE if day == "Dom" else SPECIAL_DAY_MODE_NORMAL
+        SPECIAL_DAY_MODE_SUNDAY if day == "Dom" else SPECIAL_DAY_MODE_NORMAL
     )
 
     if mode == SPECIAL_DAY_MODE_CLOSED:
@@ -389,23 +402,32 @@ def coverage_bounds(h: int, day: str = None, standard_mode: bool = False, num_em
         if 22 <= h <= 28: return (1, 1)
         return (3, N)
 
-    if mode == SPECIAL_DAY_MODE_SUNDAY_LIKE:
+    if is_sunday_style_mode(mode):
         if standard_mode:
-            # PERFECT PUZZLE REQUIREMENTS for Sunday standard mode
-            if 5 <= h <= 6: return (2, 2)     # Exactamente 2
-            if 7 <= h <= 19: return (3, N)    # Minimum 3, max flexible to scale with workforce
-            if 20 <= h <= 21: return (2, 2)   # Exactamente 2
-            if 22 <= h <= 28: return (1, 1)   # Exactamente 1
+            # Domingo / día tipo domingo: 7-19 con exactamente 3 (evita 4 en tardes por mx=N)
+            if 5 <= h <= 6:
+                return (2, 2)
+            if 7 <= h <= 19:
+                return (3, 3)
+            if 20 <= h <= 21:
+                return (2, 2)
+            if 22 <= h <= 28:
+                return (1, 1)
         else:
-            # Short-staffed rules
-            if h == 5: return (2, 2)
-            if h == 6: return (2, 5)
-            if 7 <= h <= 16: return (3, N)
-            if 17 <= h <= 19: return (3, N)  # Hard min 3 + soft target 4 (peak crítico)
-            if 20 <= h <= 21: return (2, 2)    # Exactamente 2 (10pm leaver + 11pm leaver)
-            if h == 22: return (1, 2)          # Relaxed: 1 or 2 (night + optional 11pm leaver)
-            if 23 <= h <= 28: return (1, 1)    # Solo nocturno
-            return (3, N)
+            # Short-staffed: misma meta 7-19 = exactamente 3
+            if h == 5:
+                return (2, 2)
+            if h == 6:
+                return (2, 5)
+            if 7 <= h <= 19:
+                return (3, 3)
+            if 20 <= h <= 21:
+                return (2, 2)
+            if h == 22:
+                return (1, 2)
+            if 23 <= h <= 28:
+                return (1, 1)
+            return (3, 3)
     
     # Weekdays (Lun-Sáb)
     if h == 5: return (2, 2)          # Exactamente 2 de 5am a 6am
@@ -429,6 +451,8 @@ def effective_coverage_bounds(h: int, day: str = None, standard_mode: bool = Fal
 
 def touches_night(shift_name: str) -> bool:
     """Verifica si un turno cubre la franja 20:00-23:00"""
+    if not shift_name or shift_name not in SHIFTS:
+        return False
     shift_hours = SHIFTS[shift_name]
     return any(h in shift_hours for h in [20, 21, 22])
 
@@ -646,7 +670,16 @@ class ShiftScheduler:
         }
         self.config = dict(global_config or {})
         self.config["special_days"] = dict(self.special_day_modes)
-        self.history = history_data or {}
+        # [] es falsy: no convertir a {} o normalize_history_entries no recibe lista vacía bien
+        # para todos los code paths; None → sin historial.
+        if history_data is None:
+            self.history = []
+        elif isinstance(history_data, list):
+            self.history = history_data
+        elif isinstance(history_data, dict):
+            self.history = history_data
+        else:
+            self.history = []
         
         # INJECT REFUERZO si está activado
         if self.config.get('use_refuerzo', False):
@@ -936,7 +969,7 @@ class ShiftScheduler:
         day_modes = dict(self.day_modes)
 
         def is_special_sunday_like(day):
-            return day_modes.get(day) == SPECIAL_DAY_MODE_SUNDAY_LIKE
+            return is_sunday_style_mode(day_modes.get(day, SPECIAL_DAY_MODE_NORMAL))
 
         def is_special_closed(day):
             return day_modes.get(day) == SPECIAL_DAY_MODE_CLOSED
@@ -1027,29 +1060,37 @@ class ShiftScheduler:
         # CORE: OFF Day Limit (Standard = 1 per week)
         # NOTA: PERM es una ausencia EXENTA — no cuenta como día libre.
         # El empleado con PERM aún recibe su OFF normal por separado.
-        # Si el empleado tiene N días de VAC u OFF forzados, el constraint es
-        # OFF+VAC == base_off + forced_vac_or_off.
+        # OFF en pills (fixed_shifts) es restricción dura; aquí se alinea el total semanal OFF+VAC.
         for e in self.employees:
             if self.emp_data[e].get('is_refuerzo'): continue
             fs = self.emp_data[e].get('fixed_shifts', {}) or {}
             
             forced_vac = sum(1 for d in DAYS if fs.get(d) == 'VAC')
-            forced_off = sum(1 for d in DAYS if fs.get(d) == 'OFF')
             forced_closed = sum(
                 1 for d in DAYS
                 if is_special_closed(d) and fs.get(d) not in ['OFF', 'VAC', 'PERM']
             )
-            
-            # Base off is 1, but if they have more forced OFFs, we allow that many.
-            base_off = max(1, forced_off)
-            
+
+            allow_no_rest = self.emp_data[e].get('allow_no_rest', False)
+            off_grid_other = sum(1 for d in DAYS if fs.get(d) == "OFF")
+            if allow_no_rest:
+                required_off_vac = forced_vac + forced_closed + off_grid_other
+            else:
+                required_off_vac = forced_vac + forced_closed + max(1, off_grid_other)
+
             if self.emp_data[e].get('is_jefe_pista'):
-                model.Add(sum(x[(e, d, "OFF")] + x[(e, d, "VAC")] for d in DAYS) == base_off + forced_vac + forced_closed)
+                model.Add(
+                    sum(x[(e, d, "OFF")] + x[(e, d, "VAC")] for d in DAYS)
+                    == required_off_vac
+                )
             elif self.config.get('fixed_night_person') == e:
                 # Night person already handled in LOGICA NIGHT / ELIGIO
                 pass
             else:
-                model.Add(sum(x[(e, d, "OFF")] + x[(e, d, "VAC")] for d in DAYS) == base_off + forced_vac + forced_closed)
+                model.Add(
+                    sum(x[(e, d, "OFF")] + x[(e, d, "VAC")] for d in DAYS)
+                    == required_off_vac
+                )
 
         # Variables para sistema de LIBRES
         persona_hace_libres = {}
@@ -1194,22 +1235,22 @@ class ShiftScheduler:
             
             # Jefe and Night are ALWAYS strict, plus global strict
             force_strict = global_strict or is_strict or is_jefe or is_night
-            
+
             for d, s_code in fixed_map.items():
                 if d in DAYS and s_code in SHIFT_NAMES:
                     if is_special_sunday_like(d) and s_code not in ["OFF", "VAC", "PERM"]:
                         continue
                     if is_special_closed(d) and s_code not in ["VAC", "PERM"]:
                         continue
-                    # VAC and PERM are ALWAYS hard constraints (manual overrides)
-                    if s_code in ["VAC", "PERM"]:
+                    # VAC, PERM, OFF are ALWAYS hard constraints (pills / manual)
+                    if s_code in ["VAC", "PERM", "OFF"]:
                         fixed_constraints[(e, d)] = s_code
                     elif force_strict:
                         fixed_constraints[(e, d)] = s_code
                     else:
                         soft_preferences[(e, d)] = s_code
                     
-        # Apply HARD constraints (strict employees + VAC/PERM)
+        # Apply HARD constraints (strict employees + VAC/PERM/OFF)
         for (e, d), s_code in fixed_constraints.items():
             for s in SHIFT_NAMES:
                 model.Add(x[(e, d, s)] == (1 if s == s_code else 0))
@@ -1238,9 +1279,12 @@ class ShiftScheduler:
         # =========================
         # Legacy fallback: if a Jefe has no explicit Saturday base shift configured,
         # keep the classic Saturday T1. Explicit fixed_shifts always win.
+        # Si el sábado está fijado como libre/ausencia en pills, no forzar T1 (chocaría con OFF duro).
         for e in self.employees:
             if self.emp_data[e].get('is_jefe_pista', False):
                 sat_fixed = (self.emp_data[e].get('fixed_shifts', {}) or {}).get("Sáb")
+                if sat_fixed in ("OFF", "VAC", "PERM"):
+                    continue
                 if day_modes.get("Sáb") == SPECIAL_DAY_MODE_NORMAL and not sat_fixed:
                     for s in SHIFT_NAMES:
                         model.Add(x[(e, "Sáb", s)] == (1 if s == "T1_05-13" else 0))
@@ -1568,9 +1612,11 @@ class ShiftScheduler:
         
         if strict_weekly and alternating_pairs:
             for pair_idx, (w1, w2) in enumerate(alternating_pairs):
+                ed1 = self.emp_data.get(w1) or {}
+                ed2 = self.emp_data.get(w2) or {}
                 # Try to get from fixed_shifts first
-                w1_fixed = self.emp_data.get(w1, {}).get('fixed_shifts', {})
-                w2_fixed = self.emp_data.get(w2, {}).get('fixed_shifts', {})
+                w1_fixed = ed1.get('fixed_shifts', {}) or {}
+                w2_fixed = ed2.get('fixed_shifts', {}) or {}
                 
                 w1_token = None
                 w2_token = None
@@ -1578,20 +1624,20 @@ class ShiftScheduler:
                 # Check if any fixed shift is set (not OFF/VAC/PERM)
                 for d in DAYS:
                     if w1_fixed.get(d) and w1_fixed[d] not in ['OFF', 'VAC', 'PERM']:
-                        w1_token = _fixed_shift_token_for_day(self.emp_data.get(w1, {}), d)
+                        w1_token = _fixed_shift_token_for_day(ed1, d)
                         break
                 for d in DAYS:
                     if w2_fixed.get(d) and w2_fixed[d] not in ['OFF', 'VAC', 'PERM']:
-                        w2_token = _fixed_shift_token_for_day(self.emp_data.get(w2, {}), d)
+                        w2_token = _fixed_shift_token_for_day(ed2, d)
                         break
                 
                 # If no fixed shifts, try history
                 if not w1_token and most_recent_schedule:
                     w1_hist = most_recent_schedule.get(w1, {})
-                    w1_token = _extract_rotation_token_from_week(self.emp_data.get(w1, {}), w1_hist)
+                    w1_token = _extract_rotation_token_from_week(ed1, w1_hist)
                 if not w2_token and most_recent_schedule:
                     w2_hist = most_recent_schedule.get(w2, {})
-                    w2_token = _extract_rotation_token_from_week(self.emp_data.get(w2, {}), w2_hist)
+                    w2_token = _extract_rotation_token_from_week(ed2, w2_hist)
                 
                 # If still no token, default: w1=AM, w2=PM
                 if not w1_token:
@@ -1606,17 +1652,19 @@ class ShiftScheduler:
                 weekly_assignment[pair_idx] = {"w1": w1_token, "w2": w2_token}
 
         for pair_idx, (w1, w2) in enumerate(alternating_pairs):
+            ed1 = self.emp_data.get(w1) or {}
+            ed2 = self.emp_data.get(w2) or {}
             # Pre-compute expected rotation direction for this week based on history.
             w1_expected = None  # "AM" or "PM" -- what w1 SHOULD be this week
             w2_expected = None
             if most_recent_schedule:
                 w1_hist_sched = most_recent_schedule.get(w1, {})
                 w1_hist_token = _extract_rotation_token_from_week(
-                    self.emp_data[w1], w1_hist_sched
+                    ed1, w1_hist_sched
                 )
                 w2_hist_sched = most_recent_schedule.get(w2, {})
                 w2_hist_token = _extract_rotation_token_from_week(
-                    self.emp_data[w2], w2_hist_sched
+                    ed2, w2_hist_sched
                 )
                 if w1_hist_token == "AM":
                     w1_expected = "PM"
@@ -1628,13 +1676,13 @@ class ShiftScheduler:
                     w2_expected = "AM"
 
             for d in DAYS:
-                fixed_w1 = self.emp_data[w1].get('fixed_shifts', {}).get(d)
-                fixed_w2 = self.emp_data[w2].get('fixed_shifts', {}).get(d)
+                fixed_w1 = ed1.get('fixed_shifts', {}).get(d)
+                fixed_w2 = ed2.get('fixed_shifts', {}).get(d)
                 if fixed_w1 in ['OFF', 'VAC', 'PERM'] or fixed_w2 in ['OFF', 'VAC', 'PERM']:
                     continue
 
-                fixed_w1_token = _fixed_shift_token_for_day(self.emp_data[w1], d)
-                fixed_w2_token = _fixed_shift_token_for_day(self.emp_data[w2], d)
+                fixed_w1_token = _fixed_shift_token_for_day(ed1, d)
+                fixed_w2_token = _fixed_shift_token_for_day(ed2, d)
 
                 if fixed_w1_token and fixed_w2_token and fixed_w1_token == fixed_w2_token:
                     continue
@@ -1690,7 +1738,9 @@ class ShiftScheduler:
                     elif w1_expected == "PM":
                         force_w1_am = False
                     else:
-                        force_w1_am = random.choice([True, False])
+                        # Determinista: random.choice alteraba el modelo entre ejecuciones y podía
+                        # marcar INFEASIBLE en un intento y Success en otro con los mismos datos.
+                        force_w1_am = True
                 
                 if force_w1_am:
                     model.Add(sum(x[(w1, d, s)] for s in am_shifts) == 1).OnlyEnforceIf(enforce_opposite)
@@ -1775,11 +1825,21 @@ class ShiftScheduler:
         # THRESHOLD: With >= 10 active employees, standard 8h shifts cover all peaks.
         standard_mode = active_count >= 10
 
+        # Empleados no disponibles por día — incluye VAC/PERM/OFF en fixed_constraints
+        unavailable_per_day = {}
+        for _d in DAYS:
+            _count = 0
+            for _e in self.employees:
+                if fixed_constraints.get((_e, _d)) in ("VAC", "PERM", "OFF"):
+                    _count += 1
+            unavailable_per_day[_d] = _count
+
         # Cobertura
         coverage = {}
         hour_at_cap = {}
         overstaff_policy = get_overstaff_policy_for_days(day_modes)
         for d in DAYS:
+            available_day = len(self.employees) - unavailable_per_day.get(d, 0)
             for h in HOURS:
                 mn, mx = effective_coverage_bounds(
                     h,
@@ -1788,22 +1848,25 @@ class ShiftScheduler:
                     special_day_mode=day_modes.get(d),
                 )
                 terms = []
-                
+
                 if primary_night and h in SHIFTS["N_22-05"]:
                     # Includes VAC/PERM as OFF
                     terms.append(1 - (x[(primary_night, d, "OFF")] + x[(primary_night, d, "VAC")] + x[(primary_night, d, "PERM")]))
-                
+
                 for e in self.employees:
                     for s in SHIFT_NAMES:
                         if h in SHIFTS[s]:
                              if primary_night and e == primary_night and s == "N_22-05":
                                  continue
                              terms.append(x[(e, d, s)])
-                
+
                 cov = model.NewIntVar(0, len(self.employees) + 1, f"cov_{d}_{h}")
                 model.Add(cov == sum(terms))
                 coverage[(d, h)] = cov
-                model.Add(cov >= mn)
+                # Si hay empleados en VAC/PERM, reducir el mínimo requerido para
+                # que el solver nunca sea INFEASIBLE por causa de vacaciones/permisos.
+                mn_adjusted = max(0, min(mn, available_day))
+                model.Add(cov >= mn_adjusted)
                 model.Add(cov <= mx)
                 if d in overstaff_policy["days"] and mx >= overstaff_policy["cap_value"]:
                     at_cap = model.NewBoolVar(f"at_cap_{d}_{h}")
@@ -1827,19 +1890,25 @@ class ShiftScheduler:
         for d in DAYS:
             if day_modes.get(d) != SPECIAL_DAY_MODE_NORMAL:
                 continue
+            # Si hay VAC/PERM que impiden alcanzar 3, no penalizar (no es culpa del horario)
+            if len(self.employees) - unavailable_per_day.get(d, 0) < 3:
+                continue
             # h6 target 3 (6-7am)
             cov6 = coverage[(d, 6)]
             below_3_h6 = model.NewBoolVar(f"below3_h6_{d}")
             model.Add(cov6 < 3).OnlyEnforceIf(below_3_h6)
             model.Add(cov6 >= 3).OnlyEnforceIf(below_3_h6.Not())
             peak_penalties.append(200000 * below_3_h6)
-        
+
         # SOFT: Prefer 4+ people during peak hours (Lun-Sáb, h7-10 and h16-19)
         # AM peak (h7-h10) has a much higher penalty than PM — losing AM coverage can NEVER
         # be compensated by stacking PM shifts. 5M per hour ensures the solver always
         # prioritizes AM coverage over any PM combination.
         for d in DAYS:
             if day_modes.get(d) != SPECIAL_DAY_MODE_NORMAL:
+                continue
+            # Si VAC/PERM impiden tener 4 personas, no aplicar la penalidad de "bajo 4"
+            if len(self.employees) - unavailable_per_day.get(d, 0) < 4:
                 continue
             for h in [7, 8, 9, 10, 16, 17, 18, 19]:
                 cov = coverage[(d, h)]
@@ -1849,11 +1918,13 @@ class ShiftScheduler:
                 # AM hours get 5M penalty (uncrossable), PM hours keep 500k
                 am_penalty = 5000000 if h in [7, 8, 9, 10] else 500000
                 peak_penalties.append(am_penalty * below_4)
-                
+
         # SOFT: Prefer 4+ people during off-peak hours as well (Lun-Sáb, h11-15)
         # But this penalty is much lower, so solver drops these hours first if short-staffed
         for d in DAYS:
             if day_modes.get(d) != SPECIAL_DAY_MODE_NORMAL:
+                continue
+            if len(self.employees) - unavailable_per_day.get(d, 0) < 4:
                 continue
             for h in [11, 12, 13, 14, 15]:
                 cov = coverage[(d, h)]
@@ -2015,13 +2086,33 @@ class ShiftScheduler:
                 continue
             d4_sunday_eligible.append(e)
         
-        if day_modes.get("Dom") == SPECIAL_DAY_MODE_SUNDAY_LIKE and d4_sunday_eligible:
+        if is_sunday_style_mode(day_modes.get("Dom", SPECIAL_DAY_MODE_NORMAL)) and d4_sunday_eligible:
             model.Add(sum(x[(e, "Dom", "D4_13-22")] for e in d4_sunday_eligible) >= 1)
         
+        # Mínimo de "slots" de ausencia flex por día: debe cubrir todo lo ya fijado en duro
+        # (OFF estricto, VAC, PERM). Si no, casos como PERM + 2× OFF el sábado chocan con
+        # max_off = max(2, mandatory_absent) aunque mandatory_absent solo contaba VAC/PERM.
+        hard_flex_absent_per_day = {}
+        for d in weekdays:
+            cnt = 0
+            for e in self.employees:
+                if self.emp_data[e].get('is_refuerzo', False):
+                    continue
+                if e == primary_night:
+                    continue
+                if self.emp_data[e].get('is_jefe_pista', False):
+                    continue
+                if is_special_sunday_like(d) and e in sat_dom_only:
+                    continue
+                fc = fixed_constraints.get((e, d))
+                if fc in ("OFF", "VAC", "PERM"):
+                    cnt += 1
+            hard_flex_absent_per_day[d] = cnt
+
         # HARD: Each weekday, allow up to max_off conditionally.
         for d in weekdays:
-            # We allow 2 people OFF generally.
-            max_off = max(2, mandatory_absent[d])
+            # Tope = al menos 2, o ausencias obligatorias VAC/PERM, o todas las ausencias flex en duro.
+            max_off = max(2, mandatory_absent[d], hard_flex_absent_per_day.get(d, 0))
             model.Add(flex_off_per_day[d] <= max_off)
             
             collision_vars[d] = model.NewBoolVar(f"collision_{d}")
@@ -2517,7 +2608,7 @@ class ShiftScheduler:
                  penalties.append(200 * x[(e, d, "T13_16-22")])
                  
                  # Fuerte incentivo para usar el D4_13-22 el domingo (pedido del usuario)
-                 if d == "Dom" and day_modes.get("Dom") == SPECIAL_DAY_MODE_SUNDAY_LIKE:
+                 if d == "Dom" and is_sunday_style_mode(day_modes.get("Dom", SPECIAL_DAY_MODE_NORMAL)):
                      # Hard limit: D4_13-22 can only be assigned to a maximum of 1 person on Sundays
                      model.Add(sum(x[(e_iter, "Dom", "D4_13-22")] for e_iter in self.employees) <= 1)
                      penalties.append(-10000 * x[(e, d, "D4_13-22")])
@@ -2908,7 +2999,7 @@ class ShiftScheduler:
         rotation_queue = []
         rotation_target = None
         sunday_absence_vars = {}
-        if day_modes.get("Dom") == SPECIAL_DAY_MODE_SUNDAY_LIKE:
+        if is_sunday_style_mode(day_modes.get("Dom", SPECIAL_DAY_MODE_NORMAL)):
             eligible = [e for e in sorted(self.employees)
                         if not self.emp_data[e].get('is_jefe_pista', False)
                         and e not in sat_dom_only]
@@ -2966,8 +3057,12 @@ class ShiftScheduler:
                         )
 
             if rotation_target and rotation_target in sunday_absence_vars:
-                # HARD CONSTRAINT: rotation_target MUST have Sunday OFF — no exceptions
-                model.Add(sunday_absence_vars[rotation_target] == 1)
+                # Antes: restricción dura Add(...==1). Con historial activo el primero en cola
+                # (quien "toca" libre por antigüedad) puede ser incompatible con cobertura
+                # domingo tipo domingo → modelo INFEASIBLE sin mensaje claro.
+                # Penalización fuerte (> 2M del segundo en cola) preserva el comportamiento
+                # habitual pero permite al solver violarla si es la única forma factible.
+                penalties.append(12_000_000 * sunday_absence_vars[rotation_target].Not())
 
             # Second in queue: strongly prefer Sunday OFF for the next person
             if len(rotation_queue) >= 2:
@@ -3011,6 +3106,29 @@ class ShiftScheduler:
                             penalties.append(penalty * x[(e, d, shift_code)])
                         # priority == 50: no change (neutral)
 
+        # =========================
+        # SOFT: Priorizar cobertura con Jefe de Pista (tie-breaker)
+        # Recompensa leve por asignar turnos de trabajo al jefe cuando el solver elige;
+        # no sustituye reglas duras ni preferencias fuertes (órdenes de magnitud menores).
+        # =========================
+        if self.config.get("prioritize_jefe_coverage", True):
+            jefe_candidates = [
+                e for e in self.employees
+                if self.emp_data[e].get("is_jefe_pista")
+                and not self.emp_data[e].get("is_refuerzo", False)
+            ]
+            if len(jefe_candidates) == 1:
+                jefe_nm = jefe_candidates[0]
+                jefe_reward = 40
+                for d in DAYS:
+                    if day_modes.get(d) == SPECIAL_DAY_MODE_CLOSED:
+                        continue
+                    for s in SHIFT_NAMES:
+                        if s in ("OFF", "VAC", "PERM"):
+                            continue
+                        if (jefe_nm, d, s) in x:
+                            penalties.append(-jefe_reward * x[(jefe_nm, d, s)])
+
         # Optimization
         model.Minimize(sum(penalties) + sum(peak_penalties))
         
@@ -3021,11 +3139,16 @@ class ShiftScheduler:
         solver.parameters.max_time_in_seconds = max_t
         # Use more threads for speed.
         solver.parameters.log_search_progress = bool(self.config.get("log_search_progress", True))
+        # Reproducibilidad: con muchos workers + PORTFOLIO vimos INFEASIBLE esporádico en el mismo modelo.
+        solver.parameters.random_seed = int(self.config.get("cp_sat_random_seed", 1))
         
         # --- CAMBIO 3: Solver Optimizations ---
         # PORTFOLIO_SEARCH and num_search_workers allows CP-SAT to run multiple different 
         # heuristic strategies in parallel, wildly improving the schedule quality found in the 5s window.
-        if hasattr(os, 'cpu_count') and os.cpu_count():
+        _nw = self.config.get("cp_sat_num_search_workers")
+        if _nw is not None:
+            solver.parameters.num_search_workers = max(1, int(_nw))
+        elif hasattr(os, 'cpu_count') and os.cpu_count():
             solver.parameters.num_search_workers = os.cpu_count()
         else:
             solver.parameters.num_search_workers = 8
@@ -3073,7 +3196,7 @@ class ShiftScheduler:
                      libres_found = e
              
              sunday_off_person = None
-             if day_modes.get("Dom") == SPECIAL_DAY_MODE_SUNDAY_LIKE:
+             if is_sunday_style_mode(day_modes.get("Dom", SPECIAL_DAY_MODE_NORMAL)):
                  for e_check in self.employees:
                      if (
                          res[e_check].get("Dom") in ["OFF", "VAC"]
@@ -3084,7 +3207,7 @@ class ShiftScheduler:
                          break
             
              rotation_target = rotation_queue[0] if rotation_queue else None
-             
+
              return {
                  "status": "Success",
                  "schedule": res, 
@@ -3096,7 +3219,7 @@ class ShiftScheduler:
                      "rotation_target": rotation_target,
                      "sunday_off_person": sunday_off_person,
                      "special_days": dict(self.special_day_modes),
-                     "solutions_found": solution_counter.solution_count
+                     "solutions_found": solution_counter.solution_count,
                  }
              }
         if status == cp_model.INFEASIBLE:

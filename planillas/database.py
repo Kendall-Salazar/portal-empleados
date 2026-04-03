@@ -3,10 +3,15 @@ database.py - Módulo de acceso a datos SQLite para el Gestor de Planilla
 =========================================================================
 Maneja empleados, tarifas, meses y semanas generadas.
 """
+import json
 import sqlite3
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta, date
+from typing import Any, Dict, List, Optional
+
+# Días de la semana del scheduler (mismo orden que backend/scheduler_engine.DAYS)
+_HORARIO_DIAS = ("Vie", "Sáb", "Dom", "Lun", "Mar", "Mié", "Jue")
 
 
 def _get_planillas_base_dir():
@@ -18,6 +23,43 @@ def _get_planillas_base_dir():
 
 
 DB_FILE = os.path.join(_get_planillas_base_dir(), "planilla.db")
+
+# Columnas 0/1 que nunca deben pasar por bool() en Python (bool("0") es True).
+_HORARIO_INT_FIELDS = (
+    "puede_nocturno",
+    "allow_no_rest",
+    "forced_libres",
+    "forced_quebrado",
+    "es_jefe_pista",
+    "es_practicante",
+    "strict_preferences",
+    "activo",
+)
+
+
+def _coerce_sql_int(v, default=0):
+    """Normaliza flags SQLite (evita TEXT '0' o tipos raros)."""
+    if v is None:
+        return default
+    if isinstance(v, bool):
+        return 1 if v else 0
+    if isinstance(v, int):
+        return 1 if v else 0
+    if isinstance(v, float):
+        return 1 if int(v) != 0 else 0
+    if isinstance(v, str):
+        s = v.strip()
+        if not s:
+            return default
+        try:
+            return 1 if int(float(s)) != 0 else 0
+        except ValueError:
+            low = s.lower()
+            if low in ("true", "yes", "si", "sí", "on"):
+                return 1
+            return default
+    return default
+
 
 def get_conn():
     """Get a connection to the database with proper timeout and settings."""
@@ -97,6 +139,7 @@ def init_db():
             es_practicante INTEGER DEFAULT 0,
             strict_preferences INTEGER DEFAULT 0,
             turnos_fijos TEXT DEFAULT '{}',
+            dia_libre_forzado TEXT DEFAULT '',
             activo INTEGER DEFAULT 1
         );
 
@@ -123,7 +166,9 @@ def init_db():
             horario TEXT NOT NULL,
             tareas TEXT,
             metadata TEXT,
-            timestamp TEXT NOT NULL
+            timestamp TEXT NOT NULL,
+            deleted INTEGER DEFAULT 0,
+            deleted_at TEXT
         );
 
         -- ══ SALARIOS MENSUALES (para aguinaldo) ══
@@ -221,9 +266,15 @@ def init_db():
         ("horario_config", "refuerzo_end", "TEXT DEFAULT '12:00'"),
         ("horario_config", "strict_weekly_alternation", "INTEGER DEFAULT 0"),
         ("horario_config", "holidays", "TEXT DEFAULT '[]'"),
+        ("horario_config", "use_pref_plantilla", "INTEGER DEFAULT 0"),
+        ("horario_config", "jefe_base_shift", "TEXT DEFAULT 'J_06-16'"),
     ]
     for table, col, col_type in _scheduler_config_migrations:
         _ensure_column(table, col, col_type)
+
+    # Migration: soft delete for history entries (papelera de reciclaje)
+    _ensure_column("horarios_generados", "deleted", "INTEGER DEFAULT 0")
+    _ensure_column("horarios_generados", "deleted_at", "TEXT")
 
     # Create vacaciones table + documentos RRHH registry
     conn = get_conn()
@@ -306,22 +357,34 @@ def get_empleados(solo_activos=True):
                COALESCE(h.forced_libres, 0) as forced_libres,
                COALESCE(h.forced_quebrado, 0) as forced_quebrado,
                COALESCE(h.es_jefe_pista, 0) as es_jefe_pista,
-               COALESCE(h.strict_preferences, 0) as strict_preferences,
-               COALESCE(h.turnos_fijos, '{{}}') as turnos_fijos
+               COALESCE(h.es_practicante, 0) as es_practicante,
+                COALESCE(h.strict_preferences, 0) as strict_preferences,
+                COALESCE(h.turnos_fijos, '{{}}') as turnos_fijos,
+                h.pref_plantilla_id as pref_plantilla_id,
+                (SELECT pp.nombre FROM horario_pref_plantilla pp WHERE pp.id = h.pref_plantilla_id) as pref_plantilla_nombre
         FROM empleados e
         LEFT JOIN horario_empleados h ON e.nombre = h.nombre
         {where}
         ORDER BY e.nombre
     """).fetchall()
     conn.close()
-    return [dict(r) for r in rows]
+    _flag_defaults = {"puede_nocturno": 1, "activo": 1}
+    out = []
+    for r in rows:
+        d = dict(r)
+        for k in _HORARIO_INT_FIELDS:
+            if k in d:
+                d[k] = _coerce_sql_int(d.get(k), _flag_defaults.get(k, 0))
+        out.append(d)
+    return out
 
 
 def add_empleado(nombre, tipo_pago, salario_fijo=None, cedula=None,
                  correo=None, telefono=None, fecha_inicio=None,
                  aplica_seguro=1, genero='M', puede_nocturno=1,
                  forced_libres=0, forced_quebrado=0, allow_no_rest=0,
-                 es_jefe_pista=0, es_practicante=0, strict_preferences=0, turnos_fijos='{}'):
+                 es_jefe_pista=0, es_practicante=0, strict_preferences=0,
+                 turnos_fijos='{}', pref_plantilla_id=None):
     """Inserta en ambas tablas: empleados + horario_empleados."""
     conn = get_conn()
     try:
@@ -334,9 +397,23 @@ def add_empleado(nombre, tipo_pago, salario_fijo=None, cedula=None,
         existing = conn.execute("SELECT id FROM horario_empleados WHERE nombre=?", (nombre.strip(),)).fetchone()
         if not existing:
             conn.execute(
-                "INSERT INTO horario_empleados (nombre, genero, puede_nocturno, forced_libres, forced_quebrado, allow_no_rest, es_jefe_pista, es_practicante, strict_preferences, turnos_fijos) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (nombre.strip(), genero, puede_nocturno, forced_libres, forced_quebrado, allow_no_rest, es_jefe_pista, es_practicante, strict_preferences, turnos_fijos)
+                "INSERT INTO horario_empleados (nombre, genero, puede_nocturno, forced_libres, forced_quebrado, allow_no_rest, es_jefe_pista, es_practicante, strict_preferences, turnos_fijos, dia_libre_forzado) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (nombre.strip(), genero, puede_nocturno, forced_libres, forced_quebrado, allow_no_rest, es_jefe_pista, es_practicante, strict_preferences, turnos_fijos, "")
             )
+            nm = nombre.strip()
+            if _coerce_sql_int(es_jefe_pista, 0) == 1:
+                conn.execute(
+                    "UPDATE horario_empleados SET es_jefe_pista=0 WHERE nombre != ?",
+                    (nm,),
+                )
+            if pref_plantilla_id:
+                try:
+                    conn.execute(
+                        "UPDATE horario_empleados SET pref_plantilla_id=? WHERE nombre=?",
+                        (int(pref_plantilla_id), nombre.strip()),
+                    )
+                except (TypeError, ValueError):
+                    pass
         conn.commit()
         return True, "Empleado agregado"
     except sqlite3.IntegrityError:
@@ -392,11 +469,15 @@ def reactivar_empleado(emp_id):
     conn.close()
 
 
+_UNSET = object()
+
+
 def update_empleado(emp_id, nombre=None, tipo_pago=None, salario_fijo=None,
                     cedula=None, correo=None, telefono=None, fecha_inicio=None,
                     aplica_seguro=None, genero=None, puede_nocturno=None,
                     forced_libres=None, forced_quebrado=None, allow_no_rest=None,
-                    es_jefe_pista=None, es_practicante=None, strict_preferences=None, turnos_fijos=None):
+                    es_jefe_pista=None, es_practicante=None, strict_preferences=None,
+                    turnos_fijos=None, pref_plantilla_id=_UNSET):
     """Actualiza campos en ambas tablas (empleados + horario_empleados)."""
     conn = get_conn()
     # Get current name for horario_empleados link
@@ -438,15 +519,474 @@ def update_empleado(emp_id, nombre=None, tipo_pago=None, salario_fijo=None,
             conn.execute("UPDATE horario_empleados SET allow_no_rest=? WHERE nombre=?", (allow_no_rest, old_name))
         if es_jefe_pista is not None:
             conn.execute("UPDATE horario_empleados SET es_jefe_pista=? WHERE nombre=?", (es_jefe_pista, old_name))
+            if _coerce_sql_int(es_jefe_pista, 0) == 1:
+                conn.execute(
+                    "UPDATE horario_empleados SET es_jefe_pista=0 WHERE nombre != ?",
+                    (old_name,),
+                )
         if es_practicante is not None:
             conn.execute("UPDATE horario_empleados SET es_practicante=? WHERE nombre=?", (es_practicante, old_name))
         if strict_preferences is not None:
             conn.execute("UPDATE horario_empleados SET strict_preferences=? WHERE nombre=?", (strict_preferences, old_name))
         if turnos_fijos is not None:
             conn.execute("UPDATE horario_empleados SET turnos_fijos=? WHERE nombre=?", (turnos_fijos, old_name))
+        if pref_plantilla_id is not _UNSET:
+            if pref_plantilla_id is None or pref_plantilla_id == "":
+                pid = None
+            else:
+                try:
+                    pid = int(pref_plantilla_id)
+                except (TypeError, ValueError):
+                    pid = None
+            conn.execute(
+                "UPDATE horario_empleados SET pref_plantilla_id=? WHERE nombre=?",
+                (pid, old_name),
+            )
 
     conn.commit()
     conn.close()
+
+
+# ── PLANTILLAS DE PREFERENCIAS DE HORARIO ───────────────────────────────────
+
+def _ensure_pref_plantilla_schema():
+    conn = get_conn()
+    try:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS horario_pref_plantilla (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nombre TEXT NOT NULL UNIQUE,
+                descripcion TEXT,
+                activa INTEGER DEFAULT 1,
+                turnos_fijos TEXT DEFAULT '{}',
+                strict_preferences INTEGER DEFAULT 0,
+                allow_no_rest INTEGER DEFAULT 0,
+                forced_libres INTEGER DEFAULT 0,
+                forced_quebrado INTEGER DEFAULT 0
+            )
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    _ensure_column("horario_empleados", "pref_plantilla_id", "INTEGER")
+
+
+def list_pref_plantillas(solo_activas: bool = False) -> List[Dict[str, Any]]:
+    conn = get_conn()
+    try:
+        q = "SELECT id, nombre, descripcion, activa, turnos_fijos, strict_preferences, allow_no_rest, forced_libres, forced_quebrado FROM horario_pref_plantilla"
+        if solo_activas:
+            q += " WHERE COALESCE(activa,1) = 1"
+        q += " ORDER BY nombre"
+        rows = conn.execute(q).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def get_pref_plantilla(plantilla_id: int) -> Optional[Dict[str, Any]]:
+    conn = get_conn()
+    try:
+        r = conn.execute(
+            "SELECT * FROM horario_pref_plantilla WHERE id=?",
+            (int(plantilla_id),),
+        ).fetchone()
+        return dict(r) if r else None
+    finally:
+        conn.close()
+
+
+def create_pref_plantilla(
+    nombre: str,
+    descripcion: str = "",
+    activa: int = 1,
+    turnos_fijos: str = "{}",
+    strict_preferences: int = 0,
+    allow_no_rest: int = 0,
+    forced_libres: int = 0,
+    forced_quebrado: int = 0,
+) -> int:
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            """
+            INSERT INTO horario_pref_plantilla
+            (nombre, descripcion, activa, turnos_fijos, strict_preferences, allow_no_rest, forced_libres, forced_quebrado)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                nombre.strip(),
+                (descripcion or "").strip(),
+                _coerce_sql_int(activa, 1),
+                turnos_fijos or "{}",
+                _coerce_sql_int(strict_preferences, 0),
+                _coerce_sql_int(allow_no_rest, 0),
+                _coerce_sql_int(forced_libres, 0),
+                _coerce_sql_int(forced_quebrado, 0),
+            ),
+        )
+        conn.commit()
+        return int(cur.lastrowid)
+    finally:
+        conn.close()
+
+
+def update_pref_plantilla(
+    plantilla_id: int,
+    nombre: Optional[str] = None,
+    descripcion: Optional[str] = None,
+    activa: Optional[int] = None,
+    turnos_fijos: Optional[str] = None,
+    strict_preferences: Optional[int] = None,
+    allow_no_rest: Optional[int] = None,
+    forced_libres: Optional[int] = None,
+    forced_quebrado: Optional[int] = None,
+) -> None:
+    conn = get_conn()
+    try:
+        fields = []
+        vals = []
+        if nombre is not None:
+            fields.append("nombre=?")
+            vals.append(nombre.strip())
+        if descripcion is not None:
+            fields.append("descripcion=?")
+            vals.append(descripcion.strip())
+        if activa is not None:
+            fields.append("activa=?")
+            vals.append(_coerce_sql_int(activa, 1))
+        if turnos_fijos is not None:
+            fields.append("turnos_fijos=?")
+            vals.append(turnos_fijos)
+        if strict_preferences is not None:
+            fields.append("strict_preferences=?")
+            vals.append(_coerce_sql_int(strict_preferences, 0))
+        if allow_no_rest is not None:
+            fields.append("allow_no_rest=?")
+            vals.append(_coerce_sql_int(allow_no_rest, 0))
+        if forced_libres is not None:
+            fields.append("forced_libres=?")
+            vals.append(_coerce_sql_int(forced_libres, 0))
+        if forced_quebrado is not None:
+            fields.append("forced_quebrado=?")
+            vals.append(_coerce_sql_int(forced_quebrado, 0))
+        if not fields:
+            return
+        vals.append(int(plantilla_id))
+        conn.execute(
+            f"UPDATE horario_pref_plantilla SET {', '.join(fields)} WHERE id=?",
+            vals,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def delete_pref_plantilla(plantilla_id: int) -> None:
+    conn = get_conn()
+    try:
+        conn.execute(
+            "UPDATE horario_empleados SET pref_plantilla_id=NULL WHERE pref_plantilla_id=?",
+            (int(plantilla_id),),
+        )
+        conn.execute("DELETE FROM horario_pref_plantilla WHERE id=?", (int(plantilla_id),))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_use_pref_plantilla() -> bool:
+    """Si es True, resolve_prefs_for_solver puede usar horario_pref_plantilla."""
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT use_pref_plantilla FROM horario_config WHERE id=1").fetchone()
+        if not row:
+            return False
+        if "use_pref_plantilla" not in row.keys():
+            return False
+        return bool(_coerce_sql_int(row["use_pref_plantilla"], 0))
+    finally:
+        conn.close()
+
+
+def resolve_prefs_for_solver(
+    emp_row: Dict[str, Any], use_pref_plantilla: Optional[bool] = None
+) -> Dict[str, Any]:
+    """
+    Devuelve fixed_shifts y flags de preferencia para ShiftScheduler.
+    Si use_pref_plantilla y hay pref_plantilla_id y la plantilla existe y está activa, usa la plantilla;
+    si no, usa columnas de horario_empleados (modo legado).
+    """
+    if use_pref_plantilla is None:
+        use_pref_plantilla = get_use_pref_plantilla()
+
+    pid = emp_row.get("pref_plantilla_id")
+    try:
+        pid = int(pid) if pid is not None and str(pid).strip() != "" else None
+    except (TypeError, ValueError):
+        pid = None
+
+    if use_pref_plantilla and pid:
+        tpl = get_pref_plantilla(pid)
+        if tpl and _coerce_sql_int(tpl.get("activa"), 1):
+            try:
+                fs = json.loads(tpl.get("turnos_fijos") or "{}")
+            except (json.JSONDecodeError, TypeError):
+                fs = {}
+            if not isinstance(fs, dict):
+                fs = {}
+            return {
+                "fixed_shifts": fs,
+                "strict_preferences": bool(_coerce_sql_int(tpl.get("strict_preferences"), 0)),
+                "allow_no_rest": bool(_coerce_sql_int(tpl.get("allow_no_rest"), 0)),
+                "forced_libres": bool(_coerce_sql_int(tpl.get("forced_libres"), 0)),
+                "forced_quebrado": bool(_coerce_sql_int(tpl.get("forced_quebrado"), 0)),
+            }
+
+    try:
+        fs = json.loads(emp_row.get("turnos_fijos") or "{}")
+    except (json.JSONDecodeError, TypeError):
+        fs = {}
+    if not isinstance(fs, dict):
+        fs = {}
+    return {
+        "fixed_shifts": fs,
+        "strict_preferences": bool(_coerce_sql_int(emp_row.get("strict_preferences"), 0)),
+        "allow_no_rest": bool(_coerce_sql_int(emp_row.get("allow_no_rest"), 0)),
+        "forced_libres": bool(_coerce_sql_int(emp_row.get("forced_libres"), 0)),
+        "forced_quebrado": bool(_coerce_sql_int(emp_row.get("forced_quebrado"), 0)),
+    }
+
+
+def _parse_friday_week_start(week_start: Optional[str]) -> date:
+    """ISO date; si es viernes se usa tal cual; si no, se retrocede al viernes anterior."""
+    if not week_start or not str(week_start).strip():
+        d = date.today()
+        while d.weekday() != 4:
+            d -= timedelta(days=1)
+        return d
+    d = datetime.strptime(str(week_start).strip()[:10], "%Y-%m-%d").date()
+    while d.weekday() != 4:
+        d -= timedelta(days=1)
+    return d
+
+
+def _week_day_date_map(week_friday: date) -> Dict[str, str]:
+    keys = list(_HORARIO_DIAS)
+    out: Dict[str, str] = {}
+    cur = week_friday
+    for k in keys:
+        out[k] = cur.isoformat()
+        cur += timedelta(days=1)
+    return out
+
+
+def _absences_from_resolved_shifts(
+    resolved_shifts: Dict[str, Any], day_dates: Dict[str, str]
+) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for dk in _HORARIO_DIAS:
+        code = resolved_shifts.get(dk)
+        if code in ("VAC", "PERM", "OFF"):
+            out.append(
+                {
+                    "type": code,
+                    "date": day_dates.get(dk, ""),
+                    "note": "turnos_fijos_resolved",
+                }
+            )
+    return out
+
+
+def _hr_absence_hints_for_week(
+    conn, empleado_id: int, resolved_shifts: Dict[str, Any], day_dates: Dict[str, str]
+) -> List[Dict[str, Any]]:
+    hints: List[Dict[str, Any]] = []
+    for dk, ds in day_dates.items():
+        resolved = resolved_shifts.get(dk)
+        vac = conn.execute(
+            """SELECT id FROM vacaciones
+               WHERE empleado_id=? AND fecha_inicio <= ? AND fecha_fin >= ?""",
+            (empleado_id, ds, ds),
+        ).fetchone()
+        if vac and resolved != "VAC":
+            hints.append(
+                {
+                    "type": "VAC",
+                    "date": ds,
+                    "source": "rrhh",
+                    "note": "Registrado en RR.HH.; no coincide con turno fijo del generador",
+                }
+            )
+        perm = conn.execute(
+            "SELECT id FROM permisos WHERE empleado_id=? AND fecha=?",
+            (empleado_id, ds),
+        ).fetchone()
+        if perm and resolved != "PERM":
+            hints.append(
+                {
+                    "type": "PERM",
+                    "date": ds,
+                    "source": "rrhh",
+                    "note": "Registrado en RR.HH.; no coincide con turno fijo del generador",
+                }
+            )
+    return hints
+
+
+def get_generator_employee_params(week_start: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Panel de Parámetros del Generador: snapshot JSON por employee_id.
+    Ausencias efectivas para el solver = turnos fijos resueltos (plantilla o inline).
+    hr_absence_hints = solo informativo (vacaciones/permisos en BD vs turnos).
+    """
+    wf = _parse_friday_week_start(week_start)
+    day_dates = _week_day_date_map(wf)
+    emps = get_empleados(solo_activos=True)
+    employees: Dict[str, Any] = {}
+    conn = get_conn()
+    try:
+        use_tpl = get_use_pref_plantilla()
+        for e in emps:
+            emp_id = int(e["id"])
+            rp = resolve_prefs_for_solver(e, use_pref_plantilla=use_tpl)
+            shifts = dict(rp["fixed_shifts"] or {})
+            if not isinstance(shifts, dict):
+                shifts = {}
+            pid = e.get("pref_plantilla_id")
+            try:
+                pid = int(pid) if pid is not None and str(pid).strip() != "" else None
+            except (TypeError, ValueError):
+                pid = None
+            pref_source = "plantilla" if (use_tpl and pid) else "inline"
+            shift_preferences: Dict[str, str] = {}
+            for dk in _HORARIO_DIAS:
+                v = shifts.get(dk)
+                if v is None or v == "":
+                    shift_preferences[dk] = "AUTO"
+                else:
+                    shift_preferences[dk] = str(v)
+            absences = _absences_from_resolved_shifts(shifts, day_dates)
+            hr_hints = _hr_absence_hints_for_week(conn, emp_id, shifts, day_dates)
+            employees[str(emp_id)] = {
+                "employee_id": emp_id,
+                "nombre": e.get("nombre", ""),
+                "flags": {
+                    "forced_libres": bool(rp["forced_libres"]),
+                    "forced_quebrado": bool(rp["forced_quebrado"]),
+                    "allow_no_rest": bool(rp["allow_no_rest"]),
+                    "strict_preferences": bool(rp["strict_preferences"]),
+                    "is_jefe_pista": bool(_coerce_sql_int(e.get("es_jefe_pista"), 0)),
+                },
+                "preference_source": pref_source,
+                "pref_plantilla_id": pid,
+                "pref_plantilla_nombre": e.get("pref_plantilla_nombre"),
+                "shift_preferences": shift_preferences,
+                "absences": absences,
+                "hr_absence_hints": hr_hints,
+            }
+    finally:
+        conn.close()
+    return {
+        "version": 1,
+        "week_context": {
+            "week_start": wf.isoformat(),
+            "week_end": (wf + timedelta(days=6)).isoformat(),
+            "label": f"Semana Vie–Jue desde viernes {wf.isoformat()}",
+        },
+        "employees": employees,
+        "absences_strategy": {
+            "solver_source_of_truth": "turnos_fijos_resolved",
+            "rrhh_hints": "informational_only",
+        },
+    }
+
+
+def apply_generator_employee_params_batch(
+    updates: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """
+    Actualización por lote. Aplica flags + merge de shift_preferences sobre turnos_fijos.
+    Si el payload incluye pref_plantilla_id, también actualiza esa columna (API legado).
+    """
+    active = {e["id"]: e for e in get_empleados(solo_activos=True)}
+    row_results: List[Dict[str, Any]] = []
+    for raw in updates:
+        eid = raw.get("employee_id")
+        if eid is None:
+            row_results.append({"employee_id": None, "ok": False, "error": "missing employee_id"})
+            continue
+        try:
+            eid = int(eid)
+        except (TypeError, ValueError):
+            row_results.append({"employee_id": eid, "ok": False, "error": "invalid employee_id"})
+            continue
+        e = active.get(eid)
+        if not e:
+            row_results.append({"employee_id": eid, "ok": False, "error": "employee_not_found_or_inactive"})
+            continue
+        flags = raw.get("flags") if isinstance(raw.get("flags"), dict) else {}
+        shifts_patch = raw.get("shift_preferences") if isinstance(raw.get("shift_preferences"), dict) else None
+        pref_in_payload = "pref_plantilla_id" in raw
+        warnings: List[str] = []
+        kwargs: Dict[str, Any] = {}
+        if pref_in_payload:
+            v = raw.get("pref_plantilla_id")
+            try:
+                ep = int(v) if v is not None and str(v).strip() != "" else None
+            except (TypeError, ValueError):
+                ep = None
+            kwargs["pref_plantilla_id"] = ep
+        if flags:
+            if flags.get("forced_libres") is not None:
+                kwargs["forced_libres"] = 1 if flags["forced_libres"] else 0
+            if flags.get("forced_quebrado") is not None:
+                kwargs["forced_quebrado"] = 1 if flags["forced_quebrado"] else 0
+            if flags.get("allow_no_rest") is not None:
+                kwargs["allow_no_rest"] = 1 if flags["allow_no_rest"] else 0
+            if flags.get("strict_preferences") is not None:
+                kwargs["strict_preferences"] = 1 if flags["strict_preferences"] else 0
+            if flags.get("is_jefe_pista") is not None:
+                kwargs["es_jefe_pista"] = 1 if flags["is_jefe_pista"] else 0
+        if shifts_patch:
+            try:
+                fs = json.loads(e.get("turnos_fijos") or "{}")
+            except (json.JSONDecodeError, TypeError):
+                fs = {}
+            if not isinstance(fs, dict):
+                fs = {}
+            for k, v in shifts_patch.items():
+                if k not in _HORARIO_DIAS:
+                    continue
+                if v is None or str(v).strip().upper() == "AUTO" or str(v).strip() == "":
+                    fs.pop(k, None)
+                else:
+                    fs[k] = str(v).strip()
+            kwargs["turnos_fijos"] = json.dumps(fs, ensure_ascii=False)
+        if kwargs:
+            update_empleado(eid, **kwargs)
+            row_results.append({"employee_id": eid, "ok": True, "warnings": warnings})
+        else:
+            row_results.append({"employee_id": eid, "ok": True, "warnings": ["sin cambios"]})
+    ok_count = sum(1 for r in row_results if r.get("ok"))
+    return {
+        "ok": (not row_results) or all(r.get("ok") for r in row_results),
+        "applied_rows": ok_count,
+        "results": row_results,
+    }
+
+
+def sync_all_rrhh_to_fixed_shifts_for_week(fecha_viernes: str) -> Dict[str, Any]:
+    """Ejecuta sync_vac_perm_to_fixed_shifts para todos los empleados activos."""
+    wf = _parse_friday_week_start(fecha_viernes)
+    fecha_inicio = wf.isoformat()
+    fecha_fin = (wf + timedelta(days=6)).isoformat()
+    emps = get_empleados(solo_activos=True)
+    for e in emps:
+        sync_vac_perm_to_fixed_shifts(e["nombre"], fecha_inicio, fecha_fin)
+    return {"ok": True, "empleados": len(emps), "fecha_inicio": fecha_inicio, "fecha_fin": fecha_fin}
 
 
 # ── VACACIONES ───────────────────────────────────────────────────────────────
@@ -1385,5 +1925,54 @@ def get_documentos_rrhh(empleado_id=None, tipo=None, limit=50):
     return [dict(r) for r in rows]
 
 
+def _migrate_dia_libre_forzado_into_turnos_fijos():
+    """Una vez: copia dia_libre_forzado → turnos_fijos[día]=OFF y limpia la columna legada."""
+    conn = get_conn()
+    try:
+        if not _column_exists(conn, "horario_empleados", "dia_libre_forzado"):
+            return
+        rows = conn.execute(
+            "SELECT nombre, turnos_fijos, dia_libre_forzado FROM horario_empleados"
+        ).fetchall()
+        for r in rows:
+            dlf = (r["dia_libre_forzado"] or "").strip()
+            if not dlf or dlf not in _HORARIO_DIAS:
+                continue
+            raw_tf = r["turnos_fijos"] or "{}"
+            try:
+                tf = json.loads(raw_tf) if raw_tf else {}
+            except (json.JSONDecodeError, TypeError):
+                tf = {}
+            if not isinstance(tf, dict):
+                tf = {}
+            existing = tf.get(dlf)
+            ex = str(existing).strip() if existing is not None else ""
+            if not ex:
+                tf[dlf] = "OFF"
+                conn.execute(
+                    "UPDATE horario_empleados SET turnos_fijos=?, dia_libre_forzado=? WHERE nombre=?",
+                    (json.dumps(tf, ensure_ascii=False), "", r["nombre"]),
+                )
+            elif ex in ("OFF", "VAC", "PERM"):
+                conn.execute(
+                    "UPDATE horario_empleados SET dia_libre_forzado=? WHERE nombre=?",
+                    ("", r["nombre"]),
+                )
+            else:
+                # Conflicto con turno ya fijado en pills: no sobrescribir; dejar de usar la columna legada.
+                conn.execute(
+                    "UPDATE horario_empleados SET dia_libre_forzado=? WHERE nombre=?",
+                    ("", r["nombre"]),
+                )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 # Inicializar al importar
 init_db()
+
+# Migración: agregar columna dia_libre_forzado si no existe (legado; ya no se expone en API)
+_ensure_column("horario_empleados", "dia_libre_forzado", "TEXT DEFAULT ''")
+_migrate_dia_libre_forzado_into_turnos_fijos()
+_ensure_pref_plantilla_schema()

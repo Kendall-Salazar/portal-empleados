@@ -12,6 +12,13 @@
 
  */
 
+function _horarioFlagOn(v) {
+    if (v === true || v === 1) return true;
+    if (v === false || v === 0 || v == null || v === "") return false;
+    const n = Number(v);
+    return !Number.isNaN(n) && n !== 0;
+}
+
 function showToast(message, type = 'success') {
 
     // Remove any existing toast of same type to avoid stacking
@@ -205,6 +212,11 @@ function switchMainTab(tabId) {
     if (tabId === 'utilidades') loadUtilidadesTab();
 
     if (tabId === 'inventario') loadInventarioTab();
+
+    if (tabId === 'parametros') {
+        if (typeof refreshPrefPlantillasList === 'function') refreshPrefPlantillasList();
+        if (typeof refreshGeneratorParamsPanel === 'function') refreshGeneratorParamsPanel();
+    }
 
 
 
@@ -646,76 +658,6 @@ function openUnifiedEmpModal(emp = null) {
 
 
 
-    // --- Schedule Preferences ---
-
-    document.getElementById('empForcedLibres').checked = isEdit ? !!emp.forced_libres : false;
-
-    document.getElementById('empForcedQuebrado').checked = isEdit ? !!emp.forced_quebrado : false;
-
-    document.getElementById('empNoRest').checked = isEdit ? !!emp.allow_no_rest : false;
-
-    document.getElementById('empJefePista').checked = isEdit ? !!emp.es_jefe_pista : false;
-
-    document.getElementById('empPracticante').checked = isEdit ? !!emp.es_practicante : false;
-
-    document.getElementById('empStrictPreferences').checked = isEdit ? !!emp.strict_preferences : false;
-
-
-
-    // Fixed Shifts & Vaccations need their specific UI rendering functions
-
-    // Note: ensure window.renderVacationCheckboxes and window.renderDayCards exist and are called if we switch to the tab!
-
-    // We will call them globally or assume they hook up correctly. For safety, let's call init if they exist from app.js.
-
-    if (typeof window.toggleJefeShiftSelect === 'function') window.toggleJefeShiftSelect();
-
-
-
-    // We need to parse turnos_fijos for the grid and jefe
-
-    const fixedShifts = isEdit ? (typeof emp.turnos_fijos === 'string' ? JSON.parse(emp.turnos_fijos || '{}') : (emp.turnos_fijos || {})) : {};
-
-
-
-    // If it's jefe de pista, pre-load the main J_ role
-
-    if (emp && emp.es_jefe_pista && fixedShifts['Lun']) {
-
-        document.getElementById('jefeShiftSelect').value = fixedShifts['Lun'];
-
-    }
-
-
-
-    // Load shifts into hidden selects so the old app.js script picks them up for the UI
-
-    document.querySelectorAll('.shift-select').forEach(sel => {
-
-        const d = sel.dataset.day;
-
-        sel.value = fixedShifts[d] || 'AUTO';
-
-    });
-
-
-
-    // Render the visual cards with the new values
-
-    if (typeof window.buildDayCards === 'function') {
-
-        window.buildDayCards();
-
-    }
-
-    if (typeof window.syncVacationCheckboxesFromDropdowns === 'function') {
-
-        window.syncVacationCheckboxesFromDropdowns();
-
-    }
-
-
-
     toggleSalarioFijoInput();
 
     document.getElementById('planillaEmpModal').classList.remove('hidden');
@@ -790,89 +732,20 @@ async function guardarPlanillaEmp() {
 
         genero: document.getElementById('planEmpGenero').value,
 
-        forced_libres: document.getElementById('empForcedLibres').checked ? 1 : 0,
-
-        forced_quebrado: document.getElementById('empForcedQuebrado').checked ? 1 : 0,
-
-        allow_no_rest: document.getElementById('empNoRest').checked ? 1 : 0,
-
-        es_jefe_pista: document.getElementById('empJefePista').checked ? 1 : 0,
-
-        es_practicante: document.getElementById('empPracticante').checked ? 1 : 0,
-
-        strict_preferences: document.getElementById('empStrictPreferences').checked ? 1 : 0,
-
         activo: document.getElementById('empActiveStatus') ? (document.getElementById('empActiveStatus').checked ? 1 : 0) : 1,
-
-        turnos_fijos: '{}'
 
     };
 
-
-
-    // Construct turnos fijos JSON
-
-    const shifts = {};
-
-    const isJefe = data.es_jefe_pista;
-
-    const jefeVal = document.getElementById('jefeShiftSelect').value;
-
-
-
-    const vacCheckboxes = document.querySelectorAll('.vacation-checkbox');
-
-    const checkedVacDays = Array.from(vacCheckboxes).filter(cb => cb.checked).map(cb => cb.value);
-
-
-
-    // Old hidden selects maintained by app.js pill selector
-
-    document.querySelectorAll('.shift-select').forEach(sel => {
-
-        const d = sel.dataset.day;
-
-        if (checkedVacDays.includes(d)) {
-
-            shifts[d] = 'VAC';
-
-        } else if (isJefe) {
-
-            // Jefe de pista: respect whatever the user picked per-day.
-
-            // Only fill in the jefeVal default when the day is still AUTO and
-
-            // jefeShiftSelect is not CUSTOM (same logic as app.js saveEmployee).
-
-            const weekdays = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie'];
-
-            if (sel.value === 'AUTO' && weekdays.includes(d) && jefeVal !== 'CUSTOM') {
-
-                shifts[d] = jefeVal;
-
-            } else if (sel.value !== 'AUTO') {
-
-                shifts[d] = sel.value;
-
-            }
-
-        } else {
-
-            if (sel.value !== 'AUTO') {
-
-                shifts[d] = sel.value;
-
-            }
-
-        }
-
-    });
-
-
-
-    data.turnos_fijos = JSON.stringify(shifts);
-
-
+    if (!id) {
+        data.forced_libres = 0;
+        data.forced_quebrado = 0;
+        data.allow_no_rest = 0;
+        data.es_jefe_pista = 0;
+        data.es_practicante = 0;
+        data.strict_preferences = 0;
+        data.turnos_fijos = '{}';
+        data.pref_plantilla_id = null;
+    }
 
     if (!data.nombre) { alert('El nombre es requerido.'); return; }
 

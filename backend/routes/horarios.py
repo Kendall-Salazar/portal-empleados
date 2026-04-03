@@ -55,9 +55,13 @@ except (ImportError, AttributeError):
         return special_days if isinstance(special_days, dict) else {}
     
     def _prepare_history_for_solver(history_list, target_week_start=None, use_history=True, max_entries=3):
-        return [], {"enabled": False, "label": "Mock"}
+        return [], {"enabled": False, "label": "Mock", "selection_fallback": False}
 
 router = APIRouter(prefix="/api", tags=["horarios"])
+
+# Mismo orden que el listado del cliente (más reciente primero).
+_HISTORY_LIST_ORDER = "timestamp DESC, id DESC"
+_TRASH_LIST_ORDER = "deleted_at DESC, id DESC"
 
 
 # Models
@@ -88,6 +92,7 @@ class Config(BaseModel):
     use_history: bool = True
     sunday_cycle_index: int = 0
     sunday_rotation_queue: Optional[List[str]] = None
+    prioritize_jefe_coverage: bool = True
 
 
 class SolverRequest(BaseModel):
@@ -124,23 +129,21 @@ def solve_schedule(request: SolverRequest):
         unified_emps = _plan_db.get_empleados(solo_activos=True)
     except Exception:
         unified_emps = []
+    use_tpl = _plan_db.get_use_pref_plantilla()
     employees_data = []
     for e in unified_emps:
-        try:
-            fixed_shifts = json.loads(e.get("turnos_fijos", "{}")) if e.get("turnos_fijos") else {}
-        except (json.JSONDecodeError, TypeError):
-            fixed_shifts = {}
+        rp = _plan_db.resolve_prefs_for_solver(e, use_pref_plantilla=use_tpl)
         employees_data.append({
             "name": e.get("nombre", ""),
             "gender": e.get("genero", "M"),
             "can_do_night": bool(e.get("puede_nocturno", 1)),
-            "allow_no_rest": bool(e.get("allow_no_rest", 0)),
-            "forced_libres": bool(e.get("forced_libres", 0)),
-            "forced_quebrado": bool(e.get("forced_quebrado", 0)),
+            "allow_no_rest": rp["allow_no_rest"],
+            "forced_libres": rp["forced_libres"],
+            "forced_quebrado": rp["forced_quebrado"],
             "is_jefe_pista": bool(e.get("es_jefe_pista", 0)),
             "is_practicante": bool(e.get("es_practicante", 0)),
-            "strict_preferences": bool(e.get("strict_preferences", 0)),
-            "fixed_shifts": fixed_shifts
+            "strict_preferences": rp["strict_preferences"],
+            "fixed_shifts": rp["fixed_shifts"],
         })
 
     config_data = request.config.dict()
@@ -174,112 +177,286 @@ def get_history():
     return db.get("history_log", [])
 
 
-# Límite de historial: 8 años × 52 semanas = 416
-MAX_HISTORY_WEEKS = 416
-
 @router.post("/history")
 def save_history(entry: HistoryEntry):
-    """Save a new history entry directly to SQLite with auto-purge."""
-    import database as db_module
-    
-    # Guardar directamente en SQLite
+    """Misma semántica que main: siempre INSERT (varios con el mismo nombre), sin purga de activos."""
     horario_json = json.dumps(entry.schedule, ensure_ascii=False)
     tareas_json = json.dumps(entry.daily_tasks or {}, ensure_ascii=False)
     metadata_json = json.dumps({
         "rotation_queue": entry.dict().get("next_sunday_rotation_queue"),
         "rotation_target": entry.dict().get("next_sunday_cycle_index"),
         "special_days": entry.special_days or {},
+        "week_dates": entry.week_dates,
     }, ensure_ascii=False)
     ts = entry.timestamp or datetime.datetime.now().isoformat()
-    
-    conn = db_module.get_conn()
-    
-    # Insertar nueva entrada
+
+    conn = plan_db.get_conn()
     conn.execute("""
-        INSERT INTO horarios_generados (nombre, horario, tareas, metadata, timestamp)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO horarios_generados (nombre, horario, tareas, metadata, timestamp, deleted, deleted_at)
+        VALUES (?, ?, ?, ?, ?, 0, NULL)
     """, (entry.name, horario_json, tareas_json, metadata_json, ts))
-    
-    # Purga automática: borrar las entradas más viejas si excedemos el límite
-    total = conn.execute("SELECT COUNT(*) FROM horarios_generados").fetchone()[0]
-    if total > MAX_HISTORY_WEEKS:
-        excess = total - MAX_HISTORY_WEEKS
-        conn.execute("""
-            DELETE FROM horarios_generados WHERE id IN (
-                SELECT id FROM horarios_generados ORDER BY id ASC LIMIT ?
-            )
-        """, (excess,))
-        print(f"[history] Purgadas {excess} entradas antiguas (límite: {MAX_HISTORY_WEEKS})")
-    
-    # Actualizar cola de domingos en config
+
+    conn.execute("""
+        DELETE FROM horarios_generados
+        WHERE deleted = 1 AND deleted_at IS NOT NULL
+        AND datetime(deleted_at) < datetime('now', '-7 days')
+    """)
+
     if entry.next_sunday_rotation_queue is not None:
-        conn.execute("""
-            UPDATE horario_config SET sunday_rotation_queue = ?
-        """, (json.dumps(entry.next_sunday_rotation_queue),))
+        conn.execute(
+            "UPDATE horario_config SET sunday_rotation_queue = ? WHERE id = 1",
+            (json.dumps(entry.next_sunday_rotation_queue),),
+        )
     elif entry.next_sunday_cycle_index is not None:
-        conn.execute("""
-            UPDATE horario_config SET sunday_cycle_index = ?
-        """, (entry.next_sunday_cycle_index,))
-    
+        conn.execute(
+            "UPDATE horario_config SET sunday_cycle_index = ? WHERE id = 1",
+            (entry.next_sunday_cycle_index,),
+        )
+
     conn.commit()
     conn.close()
-    
-    return {"status": "Saved", "history_len": min(total, MAX_HISTORY_WEEKS)}
+
+    total_conn = plan_db.get_conn()
+    total = total_conn.execute("SELECT COUNT(*) FROM horarios_generados WHERE IFNULL(deleted, 0) = 0").fetchone()[0]
+    total_conn.close()
+    return {"status": "Saved", "history_len": total}
 
 
 @router.delete("/history/{index}")
 def delete_history_item(index: int):
-    """Delete a history entry."""
-    db = _load_db()
-    history_list = db.get("history_log", [])
+    """Soft delete a history entry — moves to trash instead of permanent deletion."""
+    import database as db_module
     
-    if 0 <= index < len(history_list):
-        history_list.pop(index)
-        db["history_log"] = history_list
-        save_db(db)
-        return {"status": "Deleted"}
+    conn = db_module.get_conn()
+    
+    # Get the entry by id (not index — we need to map index to actual row)
+    active_rows = conn.execute(
+        f"SELECT id FROM horarios_generados WHERE deleted = 0 ORDER BY {_HISTORY_LIST_ORDER}"
+    ).fetchall()
+    
+    if 0 <= index < len(active_rows):
+        row_id = active_rows[index]["id"]
+        now = datetime.datetime.now().isoformat()
+        conn.execute(
+            "UPDATE horarios_generados SET deleted = 1, deleted_at = ? WHERE id = ? AND deleted = 0",
+            (now, row_id)
+        )
+        conn.commit()
+        conn.close()
+        return {"status": "Trashed", "message": "Movido a la papelera"}
+    
+    conn.close()
     raise HTTPException(status_code=404, detail="Index out of bounds")
+
+
+@router.get("/history/trash")
+def get_trash():
+    """List soft-deleted history entries (papelera de reciclaje)."""
+    import database as db_module
+    
+    conn = db_module.get_conn()
+    rows = conn.execute(
+        "SELECT id, nombre, timestamp, deleted_at FROM horarios_generados "
+        "WHERE deleted = 1 ORDER BY deleted_at DESC"
+    ).fetchall()
+    conn.close()
+    
+    return [
+        {
+            "db_id": r["id"],
+            "name": r["nombre"],
+            "timestamp": r["timestamp"],
+            "deleted_at": r["deleted_at"],
+        }
+        for r in rows
+    ]
+
+
+@router.post("/history/{index}/restore")
+def restore_history_item(index: int):
+    """Restore a soft-deleted history entry from trash."""
+    import database as db_module
+    
+    conn = db_module.get_conn()
+    
+    # Get trash entries
+    trash_rows = conn.execute(
+        f"SELECT id FROM horarios_generados WHERE deleted = 1 ORDER BY {_TRASH_LIST_ORDER}"
+    ).fetchall()
+    
+    if 0 <= index < len(trash_rows):
+        row_id = trash_rows[index]["id"]
+        conn.execute(
+            "UPDATE horarios_generados SET deleted = 0, deleted_at = NULL WHERE id = ?",
+            (row_id,)
+        )
+        conn.commit()
+        conn.close()
+        return {"status": "Restored", "message": "Semana restaurada del historial"}
+    
+    conn.close()
+    raise HTTPException(status_code=404, detail="Index out of bounds")
+
+
+@router.post("/history/trash/restore/{row_id}")
+def restore_history_item_by_row_id(row_id: int):
+    """Restaurar desde la papelera por id de fila (alineado con db_id del listado)."""
+    import database as db_module
+    
+    conn = db_module.get_conn()
+    row = conn.execute(
+        "SELECT id FROM horarios_generados WHERE id = ? AND deleted = 1", (row_id,)
+    ).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Entrada no encontrada en la papelera")
+    conn.execute(
+        "UPDATE horarios_generados SET deleted = 0, deleted_at = NULL WHERE id = ?",
+        (row_id,),
+    )
+    conn.commit()
+    conn.close()
+    return {"status": "Restored", "message": "Semana restaurada del historial"}
+
+
+@router.delete("/history/trash/{index}")
+def permanent_delete_history_item(index: int):
+    """Permanently delete a soft-deleted entry from trash."""
+    import database as db_module
+    
+    conn = db_module.get_conn()
+    
+    trash_rows = conn.execute(
+        f"SELECT id FROM horarios_generados WHERE deleted = 1 ORDER BY {_TRASH_LIST_ORDER}"
+    ).fetchall()
+    
+    if 0 <= index < len(trash_rows):
+        row_id = trash_rows[index]["id"]
+        conn.execute("DELETE FROM horarios_generados WHERE id = ?", (row_id,))
+        conn.commit()
+        conn.close()
+        return {"status": "Permanently deleted"}
+    
+    conn.close()
+    raise HTTPException(status_code=404, detail="Index out of bounds")
+
+
+@router.delete("/history/trash/entry/{row_id}")
+def permanent_delete_history_item_by_row_id(row_id: int):
+    """Eliminar permanentemente por id de fila."""
+    import database as db_module
+    
+    conn = db_module.get_conn()
+    cur = conn.execute(
+        "DELETE FROM horarios_generados WHERE id = ? AND deleted = 1", (row_id,)
+    )
+    if cur.rowcount == 0:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Entrada no encontrada en la papelera")
+    conn.commit()
+    conn.close()
+    return {"status": "Permanently deleted"}
+
+
+@router.post("/history/trash/purge")
+def purge_old_trash():
+    """Permanently delete entries that have been in trash for more than 7 days."""
+    import database as db_module
+    
+    conn = db_module.get_conn()
+    
+    # Delete entries where deleted_at is older than 7 days
+    conn.execute("""
+        DELETE FROM horarios_generados 
+        WHERE deleted = 1 AND deleted_at IS NOT NULL 
+        AND datetime(deleted_at) < datetime('now', '-7 days')
+    """)
+    affected = conn.total_changes
+    conn.commit()
+    conn.close()
+    
+    return {"status": "Purged", "deleted_count": affected}
 
 
 @router.patch("/history/{index}")
 def update_history_item(index: int, entry: HistoryEntry):
-    """Update a history entry."""
-    db = load_db()
-    history_list = db.get("history_log", [])
-    
-    if 0 <= index < len(history_list):
-        history_list[index]["schedule"] = entry.schedule
-        history_list[index]["daily_tasks"] = entry.daily_tasks
-        if entry.week_dates is not None:
-            history_list[index]["week_dates"] = entry.week_dates
+    """Update a history entry directly in SQLite — no save_db() involved."""
+    conn = plan_db.get_conn()
+
+    active_rows = conn.execute(
+        f"SELECT id, nombre, horario, tareas, metadata FROM horarios_generados WHERE deleted = 0 ORDER BY {_HISTORY_LIST_ORDER}"
+    ).fetchall()
+
+    if 0 <= index < len(active_rows):
+        row = active_rows[index]
+        row_id = row["id"]
+
+        horario_json = json.dumps(entry.schedule, ensure_ascii=False)
+        tareas_json = json.dumps(entry.daily_tasks or {}, ensure_ascii=False)
+
+        existing_meta = json.loads(row["metadata"]) if row["metadata"] else {}
         normalized_special_days = _normalize_special_days(entry.special_days)
         if normalized_special_days:
-            history_list[index]["special_days"] = normalized_special_days
+            existing_meta["special_days"] = normalized_special_days
         else:
-            history_list[index].pop("special_days", None)
-        db["history_log"] = history_list
-        save_db(db)
+            existing_meta.pop("special_days", None)
+        if entry.week_dates is not None:
+            existing_meta["week_dates"] = entry.week_dates
+
+        metadata_json = json.dumps(existing_meta, ensure_ascii=False)
+
+        conn.execute("""
+            UPDATE horarios_generados SET horario = ?, tareas = ?, metadata = ? WHERE id = ?
+        """, (horario_json, tareas_json, metadata_json, row_id))
+        conn.commit()
+        conn.close()
         return {"status": "Updated"}
+
+    conn.close()
     raise HTTPException(status_code=404, detail="Index out of bounds")
 
 
 @router.put("/history")
 def rename_history_entry(rename_data: dict):
-    """Rename a history entry."""
-    db = _load_db()
-    history_list = db.get("history_log", [])
-    
-    index = rename_data.get("index")
+    """Rename a history entry directly in SQLite — no save_db() involved."""
+    conn = plan_db.get_conn()
+
     new_name = rename_data.get("name", "").strip()
-    
-    if index is None or not new_name:
+    db_id = rename_data.get("db_id")
+
+    if not new_name:
+        conn.close()
         raise HTTPException(status_code=400, detail="Index and name are required")
-    
-    if 0 <= index < len(history_list):
-        history_list[index]["name"] = new_name
-        db["history_log"] = history_list
-        _save_db(db)
+
+    if db_id is not None:
+        cur = conn.execute(
+            "UPDATE horarios_generados SET nombre = ? WHERE id = ? AND deleted = 0",
+            (new_name, int(db_id)),
+        )
+        if cur.rowcount:
+            conn.commit()
+            conn.close()
+            return {"status": "Renamed", "name": new_name}
+        conn.close()
+        raise HTTPException(status_code=404, detail="Index out of bounds")
+
+    index = rename_data.get("index")
+    if index is None:
+        conn.close()
+        raise HTTPException(status_code=400, detail="Index and name are required")
+
+    active_rows = conn.execute(
+        f"SELECT id FROM horarios_generados WHERE deleted = 0 ORDER BY {_HISTORY_LIST_ORDER}"
+    ).fetchall()
+
+    if 0 <= index < len(active_rows):
+        row_id = active_rows[index]["id"]
+        conn.execute("UPDATE horarios_generados SET nombre = ? WHERE id = ?", (new_name, row_id))
+        conn.commit()
+        conn.close()
         return {"status": "Renamed", "name": new_name}
+
+    conn.close()
     raise HTTPException(status_code=404, detail="Index out of bounds")
 
 
@@ -375,53 +552,55 @@ def get_sunday_rotation():
 
 @router.post("/history/{index}/reassign_tasks")
 def reassign_history_tasks(index: int):
-    """Reassign tasks for a history entry."""
-    db = load_db()
-    history_list = db.get("history_log", [])
+    """Reassign tasks for a history entry — reads/writes directly to SQLite."""
+    conn = plan_db.get_conn()
 
-    if not (0 <= index < len(history_list)):
+    active_rows = conn.execute(
+        f"SELECT id, nombre, horario, tareas, metadata FROM horarios_generados WHERE IFNULL(deleted, 0) = 0 ORDER BY {_HISTORY_LIST_ORDER}"
+    ).fetchall()
+
+    if not (0 <= index < len(active_rows)):
+        conn.close()
         raise HTTPException(status_code=404, detail="Index out of bounds")
 
-    entry = history_list[index]
-    schedule = entry.get("schedule", {})
+    row = active_rows[index]
+    row_id = row["id"]
+    schedule = json.loads(row["horario"]) if row["horario"] else {}
+
     if not isinstance(schedule, dict) or not schedule:
+        conn.close()
         raise HTTPException(status_code=400, detail="El historial no tiene un horario válido")
 
-    employees_data = [
-        dict(employee)
-        for employee in (db.get("employees", []) or [])
-        if isinstance(employee, dict)
-    ]
-    employee_names = {emp.get("name") for emp in employees_data if isinstance(emp, dict)}
+    # Read employees and config from DB
+    employees_rows = conn.execute("SELECT * FROM horario_empleados WHERE activo=1").fetchall()
+    employees_data = [dict(e) for e in employees_rows]
+    employee_names = {emp.get("nombre", "") for emp in employees_data}
     for missing_name in sorted(name for name in schedule.keys() if name not in employee_names):
-        employees_data.append({
-            "name": missing_name,
-            "gender": "M",
-            "can_do_night": True,
-            "allow_no_rest": False,
-            "forced_libres": False,
-            "forced_quebrado": False,
-            "is_jefe_pista": False,
-            "is_practicante": False,
-            "strict_preferences": False,
-            "fixed_shifts": {},
-        })
+        employees_data.append({"nombre": missing_name, "genero": "M", "puede_nocturno": 1})
 
-    config_data = dict(db.get("config", {}) or {})
+    config_row = conn.execute("SELECT * FROM horario_config WHERE id=1").fetchone()
+    config_data = dict(config_row) if config_row else {}
     config_data["use_refuerzo"] = "Refuerzo" in schedule
-    special_days = _normalize_special_days(entry.get("special_days", {}))
+    existing_meta = json.loads(row["metadata"]) if row["metadata"] else {}
+    special_days = _normalize_special_days(existing_meta.get("special_days", {}))
     config_data["special_days"] = special_days
 
     scheduler = ShiftScheduler(employees_data, config_data, history_data=[])
     daily_tasks = scheduler.assign_tasks(schedule)
 
-    history_list[index]["daily_tasks"] = daily_tasks
+    # Update tasks in metadata
+    existing_meta["daily_tasks"] = daily_tasks
     if special_days:
-        history_list[index]["special_days"] = special_days
+        existing_meta["special_days"] = special_days
     else:
-        history_list[index].pop("special_days", None)
-    db["history_log"] = history_list
-    save_db(db)
+        existing_meta.pop("special_days", None)
+
+    conn.execute(
+        "UPDATE horarios_generados SET tareas = ?, metadata = ? WHERE id = ?",
+        (json.dumps(daily_tasks, ensure_ascii=False), json.dumps(existing_meta, ensure_ascii=False), row_id)
+    )
+    conn.commit()
+    conn.close()
 
     return {
         "status": "Updated",

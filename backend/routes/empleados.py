@@ -49,6 +49,7 @@ def get_employees(include_inactive: bool = False):
             fixed_shifts = {}
             
         legacy_emps.append({
+            "id": e.get("id"),
             "name": e.get("nombre", ""),
             "gender": e.get("genero", "M"),
             "can_do_night": bool(e.get("puede_nocturno", 1)),
@@ -59,7 +60,7 @@ def get_employees(include_inactive: bool = False):
             "is_practicante": bool(e.get("es_practicante", 0)),
             "strict_preferences": bool(e.get("strict_preferences", 0)),
             "activo": bool(e.get("activo", 1)),
-            "fixed_shifts": fixed_shifts
+            "fixed_shifts": fixed_shifts,
         })
         
     return legacy_emps
@@ -86,7 +87,7 @@ def update_employees(employees: List[Employee]):
                 allow_no_rest=1 if e.allow_no_rest else 0,
                 es_jefe_pista=1 if e.is_jefe_pista else 0,
                 strict_preferences=1 if e.strict_preferences else 0,
-                turnos_fijos=json.dumps(e.fixed_shifts)
+                turnos_fijos=json.dumps(e.fixed_shifts),
             )
         else:
             plan_db.add_empleado(
@@ -99,11 +100,38 @@ def update_employees(employees: List[Employee]):
                 allow_no_rest=1 if e.allow_no_rest else 0,
                 es_jefe_pista=1 if e.is_jefe_pista else 0,
                 strict_preferences=1 if e.strict_preferences else 0,
-                turnos_fijos=json.dumps(e.fixed_shifts)
+                turnos_fijos=json.dumps(e.fixed_shifts),
             )
             # Fetch new ID in case it was created without activo
             if not e.activo:
                 added = plan_db.get_conn().execute("SELECT id FROM empleados WHERE nombre=?", (e.name,)).fetchone()
                 if added:
                     plan_db.remove_empleado(added["id"])
+    return {"status": "Updated"}
+
+
+@router.put("/employees/{name}")
+def update_single_employee(name: str, emp: Employee):
+    """Update a single employee by name — avoids bulk array stale-data risk."""
+    from fastapi import HTTPException
+    exist = plan_db.get_conn().execute("SELECT id, activo FROM empleados WHERE nombre=?", (name,)).fetchone()
+    if not exist:
+        raise HTTPException(status_code=404, detail="Empleado no encontrado")
+
+    if emp.activo and exist["activo"] == 0:
+        plan_db.reactivar_empleado(exist["id"])
+    elif not emp.activo and exist["activo"] == 1:
+        plan_db.remove_empleado(exist["id"])
+
+    plan_db.update_empleado(
+        exist["id"],
+        genero=emp.gender,
+        puede_nocturno=1 if emp.can_do_night else 0,
+        forced_libres=1 if emp.forced_libres else 0,
+        forced_quebrado=1 if emp.forced_quebrado else 0,
+        allow_no_rest=1 if emp.allow_no_rest else 0,
+        es_jefe_pista=1 if emp.is_jefe_pista else 0,
+        strict_preferences=1 if emp.strict_preferences else 0,
+        turnos_fijos=json.dumps(emp.fixed_shifts),
+    )
     return {"status": "Updated"}
