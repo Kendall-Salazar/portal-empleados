@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional, Dict
@@ -730,6 +730,17 @@ class HistoryEntry(BaseModel):
     timestamp: str = "" 
 
 
+class HorarioExcelImportItem(BaseModel):
+    name: str = Field(min_length=1)
+    schedule: Dict[str, Dict[str, str]]
+    week_dates: Dict[str, str]
+    daily_tasks: Optional[Dict[str, Dict[str, Optional[str]]]] = None
+
+
+class HorarioExcelImportConfirm(BaseModel):
+    items: List[HorarioExcelImportItem]
+
+
 class ValidationRulesRequest(BaseModel):
     special_days: Dict[str, str] = Field(default_factory=dict)
 
@@ -988,6 +999,156 @@ def get_sunday_rotation():
         else: res["priority"] = "Le toca trabajar"
         
     return result
+
+def _upsert_history_horario_import(
+    conn,
+    name: str,
+    schedule: dict,
+    week_dates: dict,
+    daily_tasks: Optional[dict],
+):
+    """Inserta o actualiza por metadata.week_dates['Vie'] (misma cadena DD/MM/YYYY)."""
+    daily_tasks = daily_tasks or {}
+    vie = week_dates.get("Vie")
+    if not vie:
+        raise HTTPException(status_code=400, detail="week_dates debe incluir Vie")
+
+    row_id = None
+    rows = conn.execute(
+        "SELECT id, metadata FROM horarios_generados WHERE IFNULL(deleted, 0) = 0"
+    ).fetchall()
+    for row in rows:
+        meta = {}
+        if row["metadata"]:
+            try:
+                meta = json.loads(row["metadata"])
+            except (json.JSONDecodeError, TypeError):
+                meta = {}
+        wd = meta.get("week_dates") or {}
+        if isinstance(wd, dict) and wd.get("Vie") == vie:
+            row_id = row["id"]
+            break
+
+    horario_json = json.dumps(schedule, ensure_ascii=False)
+    tareas_json = json.dumps(daily_tasks, ensure_ascii=False)
+    ts = datetime.datetime.now().isoformat()
+
+    if row_id:
+        row = conn.execute(
+            "SELECT metadata FROM horarios_generados WHERE id = ? AND IFNULL(deleted, 0) = 0",
+            (row_id,),
+        ).fetchone()
+        existing_meta = {}
+        if row and row["metadata"]:
+            try:
+                existing_meta = json.loads(row["metadata"])
+            except (json.JSONDecodeError, TypeError):
+                existing_meta = {}
+        existing_meta["week_dates"] = week_dates
+        metadata_json = json.dumps(existing_meta, ensure_ascii=False)
+        conn.execute(
+            """
+            UPDATE horarios_generados
+            SET nombre = ?, horario = ?, tareas = ?, metadata = ?, timestamp = ?
+            WHERE id = ?
+            """,
+            (name, horario_json, tareas_json, metadata_json, ts, row_id),
+        )
+        return row_id, "updated"
+
+    metadata_json = json.dumps(
+        {"week_dates": week_dates, "special_days": {}},
+        ensure_ascii=False,
+    )
+    cursor = conn.execute(
+        """
+        INSERT INTO horarios_generados (nombre, horario, tareas, metadata, timestamp, deleted, deleted_at)
+        VALUES (?, ?, ?, ?, ?, 0, NULL)
+        """,
+        (name, horario_json, tareas_json, metadata_json, ts),
+    )
+    return cursor.lastrowid, "inserted"
+
+
+@app.post("/api/history/import-horario-excel/preview")
+async def import_horario_excel_preview(
+    file: UploadFile = File(...),
+    sheets: str = Form("[]"),
+):
+    import horario_excel_import as hei
+
+    suffix = os.path.splitext(file.filename or "")[1].lower()
+    if suffix not in (".xlsx", ".xlsm"):
+        raise HTTPException(status_code=400, detail="Solo se admiten .xlsx o .xlsm")
+
+    raw = await file.read()
+    if len(raw) > 25 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Archivo demasiado grande (máx. 25 MB)")
+
+    fd, path = tempfile.mkstemp(suffix=suffix or ".xlsx")
+    os.close(fd)
+    try:
+        with open(path, "wb") as f:
+            f.write(raw)
+        try:
+            want = json.loads(sheets) if (sheets or "").strip() else []
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=400, detail=f"sheets debe ser JSON array: {exc}") from exc
+        if not isinstance(want, list):
+            raise HTTPException(status_code=400, detail="sheets debe ser un array JSON")
+        if not want:
+            sns = hei.list_sheet_names(path)
+            return {"sheetnames": sns, "drafts": []}
+
+        drafts = hei.parse_workbook_sheets(path, [str(s) for s in want])
+        _, inv_collisions = hei.build_inverse_shift_map()
+        return {
+            "sheetnames": None,
+            "drafts": drafts,
+            "inverse_map_warnings": inv_collisions[:30],
+        }
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+@app.post("/api/history/import-horario-excel/confirm")
+def import_horario_excel_confirm(body: HorarioExcelImportConfirm):
+    import horario_excel_import as hei
+
+    days_order = hei.DAYS_ORDER
+    results = []
+    conn = _get_conn()
+    try:
+        for item in body.items:
+            wd = item.week_dates or {}
+            missing = [d for d in days_order if d not in wd]
+            if missing:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"week_dates incompleto para {item.name!r}: faltan {missing}",
+                )
+            row_id, action = _upsert_history_horario_import(
+                conn,
+                item.name,
+                item.schedule,
+                wd,
+                item.daily_tasks,
+            )
+            results.append({"row_id": row_id, "action": action, "name": item.name})
+        conn.commit()
+    except HTTPException:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    global _last_generated_preview
+    _last_generated_preview = None
+    return {"status": "ok", "results": results}
+
 
 @app.post("/api/history")
 def save_history(entry: HistoryEntry):
@@ -2987,9 +3148,10 @@ def importar_horario_semana(req: PlanillaImportarHorario):
         horario_db.sincronizar_empleados_a_planilla()
         
     archivo_path = os.path.join(_planillas_dir, mes_activo["archivo"])
+    _cfg = load_db()
     ok, msg, hours_data = horario_db.rellenar_horas_en_excel(
         archivo_path, req.semana_nombre, horario["horario"],
-        holidays=db.get("config", {}).get("holidays", [])
+        holidays=_cfg.get("config", {}).get("holidays", []),
     )
     
     if not ok:
@@ -3015,7 +3177,8 @@ def importar_horario_semana(req: PlanillaImportarHorario):
                     bruto = (h["diurnas"] * tarifas["tarifa_diurna"]) + \
                             (h["mixtas"] * tarifas["tarifa_mixta"]) + \
                             (h["nocturnas"] * tarifas["tarifa_nocturna"]) + \
-                            (h["extra"] * (tarifas["tarifa_diurna"] * 1.5)) # Extra typically 1.5x
+                            (h["extra"] * (tarifas["tarifa_diurna"] * 1.5)) + \
+                            float(h.get("recargo_feriado") or 0)
                 
                 plan_db.guardar_salario_semanal(
                     emp_map[emp_nombre], emp_nombre,
@@ -3049,9 +3212,10 @@ def importar_horario_semana_historico(mes_id: int, semana_nombre: str, req: Plan
     if not os.path.exists(archivo_path):
         raise HTTPException(status_code=404, detail=f"No se encontró el Excel: {mes_target['archivo']}")
 
+    _cfg_h = load_db()
     ok, msg, hours_data = horario_db.rellenar_horas_en_excel(
         archivo_path, semana_nombre, horario["horario"],
-        holidays=db.get("config", {}).get("holidays", [])
+        holidays=_cfg_h.get("config", {}).get("holidays", []),
     )
 
     if not ok:
@@ -3076,7 +3240,8 @@ def importar_horario_semana_historico(mes_id: int, semana_nombre: str, req: Plan
                     bruto = (h["diurnas"] * tarifas["tarifa_diurna"]) + \
                             (h["mixtas"] * tarifas["tarifa_mixta"]) + \
                             (h["nocturnas"] * tarifas["tarifa_nocturna"]) + \
-                            (h["extra"] * (tarifas["tarifa_diurna"] * 1.5))
+                            (h["extra"] * (tarifas["tarifa_diurna"] * 1.5)) + \
+                            float(h.get("recargo_feriado") or 0)
 
                 plan_db.guardar_salario_semanal(
                     emp_map[emp_nombre], emp_nombre,

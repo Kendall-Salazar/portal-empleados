@@ -54,6 +54,9 @@
                     <button id="nav-schedule" class="nav-btn" onclick="switchMainTab('schedule')">
                         <i class="fa-solid fa-calendar-days"></i> Generar Horario
                     </button>
+                    <button id="nav-partial" class="nav-btn" onclick="switchMainTab('partial')">
+                        <i class="fa-solid fa-scissors"></i> Horario Parcial
+                    </button>
                     <button id="nav-history" class="nav-btn" onclick="openOverlay('overlay-history')">
                         <i class="fa-solid fa-clock-rotate-left"></i> Historial Horarios
                     </button>
@@ -196,6 +199,9 @@
                 <div class="overlay-content">
                     <div class="toolbar">
                         <p class="helper-text">Semanas guardadas previamente.</p>
+                        <button type="button" class="btn-action" onclick="openImportHorarioExcelHistorialModal()">
+                            <i class="fa-solid fa-file-import"></i> Importar horarios
+                        </button>
                         <button class="btn-action" onclick="loadHistory()">
                             <i class="fa-solid fa-rotate"></i> Actualizar
                         </button>
@@ -789,6 +795,186 @@
 
             </section>
 
+            <!-- TAB: HORARIO PARCIAL -->
+            <section id="tab-partial" class="schedule-view hidden" data-main-tab>
+                <div class="portal-view">
+
+                    <!-- Header -->
+                    <div class="portal-header">
+                        <div class="portal-header-left">
+                            <div class="portal-title-row">
+                                <div class="portal-icon-wrap" style="--accent: #f97316;">
+                                    <i class="fa-solid fa-scissors"></i>
+                                </div>
+                                <div>
+                                    <h2 class="portal-title">Generador de Horario Parcial</h2>
+                                    <p class="portal-subtitle">Regenera días específicos de una semana ya guardada ante bajas o ausencias imprevistas</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="portal-header-right">
+                            <span id="partialStatusBadge" class="meta-tag" style="background: rgba(249,115,22,0.12); color: #f97316; border: 1px solid rgba(249,115,22,0.25); padding: 0.35rem 0.75rem; border-radius: 20px; font-size: 0.78rem; font-weight: 600;">Sin configurar</span>
+                        </div>
+                    </div>
+
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-top: 1.5rem;">
+
+                        <!-- ═══════════════════════════════════════════════
+                             PASO 1 — Seleccionar horario base
+                        ═══════════════════════════════════════════════ -->
+                        <div class="vac-emp-card param-card" style="padding: 1.5rem; grid-column: 1 / -1;">
+                            <h3 style="margin: 0 0 0.75rem 0; color: var(--text-main); font-size: 1rem; display: flex; align-items: center; gap: 0.6rem;">
+                                <span style="background: rgba(249,115,22,0.12); color: #f97316; width: 26px; height: 26px; border-radius: 7px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 0.75rem; font-weight: 700;">1</span>
+                                Horario base del historial
+                            </h3>
+                            <p class="helper-text-sm" style="margin: 0 0 0.85rem 0;">Buscá el horario de la semana que querés regenerar parcialmente.</p>
+
+                            <div style="position: relative;">
+                                <div style="position: relative;">
+                                    <i class="fa-solid fa-magnifying-glass" style="position: absolute; left: 0.75rem; top: 50%; transform: translateY(-50%); color: var(--text-muted); font-size: 0.85rem; pointer-events: none;"></i>
+                                    <input type="text" id="partialSearchInput"
+                                        placeholder="Buscar por nombre (ej: Semana 15)"
+                                        oninput="partialSearchHistory(this.value)"
+                                        onfocus="partialSearchHistory(this.value)"
+                                        style="width: 100%; padding: 0.6rem 0.75rem 0.6rem 2.2rem; border-radius: 10px; border: 1px solid var(--border-color); background: var(--surface-2); color: var(--text-main); font-size: 0.9rem; box-sizing: border-box;">
+                                </div>
+                                <div id="partialSearchResults"
+                                    style="display: none; position: absolute; top: calc(100% + 4px); left: 0; right: 0; background: var(--bg-panel); border: 1px solid var(--border-color); border-radius: 10px; z-index: 50; max-height: 220px; overflow-y: auto; box-shadow: 0 8px 24px rgba(0,0,0,0.25);">
+                                </div>
+                            </div>
+
+                            <!-- Resultado seleccionado -->
+                            <div id="partialSelectedBase" style="display: none; margin-top: 0.85rem; padding: 0.75rem 1rem; border-radius: 10px; background: rgba(249,115,22,0.07); border: 1px solid rgba(249,115,22,0.2); display: flex; align-items: center; gap: 0.75rem;">
+                                <i class="fa-solid fa-calendar-check" style="color: #f97316; font-size: 1rem;"></i>
+                                <div style="flex: 1;">
+                                    <p id="partialBaseName" style="margin: 0; font-weight: 600; color: var(--text-main); font-size: 0.9rem;">-</p>
+                                    <p id="partialBaseRange" style="margin: 0; font-size: 0.75rem; color: var(--text-muted);">-</p>
+                                </div>
+                                <button onclick="partialClearBase()" style="background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 0.85rem; padding: 0.25rem;" title="Limpiar selección">
+                                    <i class="fa-solid fa-xmark"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- ═══════════════════════════════════════════════
+                             PASO 2 — Días a regenerar
+                        ═══════════════════════════════════════════════ -->
+                        <div class="vac-emp-card param-card" style="padding: 1.5rem;">
+                            <h3 style="margin: 0 0 0.75rem 0; color: var(--text-main); font-size: 1rem; display: flex; align-items: center; gap: 0.6rem;">
+                                <span style="background: rgba(249,115,22,0.12); color: #f97316; width: 26px; height: 26px; border-radius: 7px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 0.75rem; font-weight: 700;">2</span>
+                                Días a regenerar
+                            </h3>
+                            <p class="helper-text-sm" style="margin: 0 0 0.85rem 0;">Los días pasados se detectan automáticamente. Podés ajustar si es necesario.</p>
+                            <div id="partialDaySelector" style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
+                                <p class="helper-text-sm" style="color: var(--text-muted);">Seleccioná un horario base primero.</p>
+                            </div>
+                        </div>
+
+                        <!-- ═══════════════════════════════════════════════
+                             PASO 3 — Empleados que se van
+                        ═══════════════════════════════════════════════ -->
+                        <div class="vac-emp-card param-card" style="padding: 1.5rem;">
+                            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;">
+                                <h3 style="margin: 0; color: var(--text-main); font-size: 1rem; display: flex; align-items: center; gap: 0.6rem;">
+                                    <span style="background: rgba(249,115,22,0.12); color: #f97316; width: 26px; height: 26px; border-radius: 7px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 0.75rem; font-weight: 700;">3</span>
+                                    Colaboradores que causan baja
+                                </h3>
+                                <button onclick="partialAddDeparted()" class="btn-action" style="padding: 0.35rem 0.75rem; font-size: 0.8rem; border-radius: 8px;">
+                                    <i class="fa-solid fa-plus"></i> Agregar
+                                </button>
+                            </div>
+                            <p class="helper-text-sm" style="margin: 0 0 0.85rem 0;">Indicá desde qué día el colaborador deja de contar. Sus días anteriores se mantienen del horario base.</p>
+                            <div id="partialDepartedList" style="display: flex; flex-direction: column; gap: 0.5rem;">
+                                <p id="partialDepartedEmpty" class="helper-text-sm" style="color: var(--text-muted); margin: 0;">Sin bajas configuradas.</p>
+                            </div>
+                        </div>
+
+                        <!-- ═══════════════════════════════════════════════
+                             PASO 4 — Clasificación de días libres
+                        ═══════════════════════════════════════════════ -->
+                        <div class="vac-emp-card param-card" style="padding: 1.5rem; grid-column: 1 / -1;">
+                            <h3 style="margin: 0 0 0.75rem 0; color: var(--text-main); font-size: 1rem; display: flex; align-items: center; gap: 0.6rem;">
+                                <span style="background: rgba(249,115,22,0.12); color: #f97316; width: 26px; height: 26px; border-radius: 7px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 0.75rem; font-weight: 700;">4</span>
+                                Días libres en los días activos
+                            </h3>
+                            <p class="helper-text-sm" style="margin: 0 0 0.85rem 0;">Marcá cuáles libres el motor <strong>debe respetar</strong> y cuáles puede <strong>reasignar</strong> si la cobertura lo requiere.</p>
+                            <div id="partialOffTable">
+                                <p class="helper-text-sm" style="color: var(--text-muted);">Los libres aparecerán al seleccionar el horario base y configurar los días activos.</p>
+                            </div>
+                        </div>
+
+                        <!-- ═══════════════════════════════════════════════
+                             BOTÓN GENERAR
+                        ═══════════════════════════════════════════════ -->
+                        <div style="grid-column: 1 / -1; display: flex; justify-content: center; padding: 0.5rem 0;">
+                            <button id="btnGeneratePartial"
+                                onclick="generatePartialSchedule()"
+                                class="btn-generate"
+                                style="min-width: 260px; font-size: 1rem; padding: 0.85rem 2rem; border-radius: 14px; display: flex; align-items: center; gap: 0.75rem;">
+                                <i class="fa-solid fa-wand-magic-sparkles"></i>
+                                <span>Generar Horario Parcial</span>
+                            </button>
+                        </div>
+
+                    </div><!-- end grid -->
+
+                    <!-- ═══════════════════════════════════════════════
+                         ZONA DE PREVIEW
+                    ═══════════════════════════════════════════════ -->
+                    <div id="partialPreviewZone" style="display: none; margin-top: 2rem;">
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; padding-bottom: 0.75rem; border-bottom: 1px solid var(--border-color);">
+                            <div style="display: flex; align-items: center; gap: 0.75rem;">
+                                <h3 style="margin: 0; font-size: 1.05rem; color: var(--text-main);">Vista previa del horario parcial</h3>
+                                <span style="background: rgba(249,115,22,0.12); color: #f97316; font-size: 0.72rem; padding: 0.2rem 0.55rem; border-radius: 6px; font-weight: 600; border: 1px solid rgba(249,115,22,0.25);">PARCIAL</span>
+                            </div>
+                            <div style="display: flex; gap: 0.6rem; align-items: center;">
+                                <p id="partialHistoryContextLabel" class="helper-text-sm" style="margin: 0; max-width: 340px; text-align: right; color: var(--text-muted);"></p>
+                                <button onclick="savePartialSchedule()" class="btn-action primary" style="padding: 0.55rem 1.1rem; border-radius: 10px; font-size: 0.88rem; display: flex; align-items: center; gap: 0.5rem;">
+                                    <i class="fa-solid fa-floppy-disk"></i> Guardar en historial
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Leyenda -->
+                        <div style="display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 0.85rem;">
+                            <span style="display: flex; align-items: center; gap: 0.4rem; font-size: 0.78rem; color: var(--text-muted);">
+                                <span style="width: 14px; height: 14px; background: rgba(100,116,139,0.15); border-radius: 4px; border: 1px solid rgba(100,116,139,0.3); display: inline-block;"></span>
+                                Día pasado (sin cambios)
+                            </span>
+                            <span style="display: flex; align-items: center; gap: 0.4rem; font-size: 0.78rem; color: var(--text-muted);">
+                                <span style="width: 14px; height: 14px; background: repeating-linear-gradient(45deg, rgba(239,68,68,0.08) 0px, rgba(239,68,68,0.08) 3px, transparent 3px, transparent 8px); border: 1px solid rgba(239,68,68,0.25); border-radius: 4px; display: inline-block;"></span>
+                                Colaborador dado de baja (activo)
+                            </span>
+                            <span style="display: flex; align-items: center; gap: 0.4rem; font-size: 0.78rem; color: var(--text-muted);">
+                                <span style="width: 14px; height: 14px; background: rgba(16,185,129,0.1); border: 1px solid rgba(16,185,129,0.3); border-radius: 4px; display: inline-block;"></span>
+                                Día regenerado
+                            </span>
+                        </div>
+
+                        <!-- Tabla de preview -->
+                        <div class="big-table-wrapper" id="partialScheduleCapture">
+                            <table id="partialScheduleTable" style="width: 100%;">
+                                <thead>
+                                    <tr>
+                                        <th>Empleado</th>
+                                        <th id="partial-th-Vie">Vie</th>
+                                        <th id="partial-th-Sáb">Sáb</th>
+                                        <th id="partial-th-Dom">Dom</th>
+                                        <th id="partial-th-Lun">Lun</th>
+                                        <th id="partial-th-Mar">Mar</th>
+                                        <th id="partial-th-Mié">Mié</th>
+                                        <th id="partial-th-Jue">Jue</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="partialScheduleTbody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                </div><!-- end portal-view -->
+            </section>
+            <!-- END TAB: HORARIO PARCIAL -->
+
         </main>
 
     </div>
@@ -1256,6 +1442,42 @@
                 <button class="btn-text" onclick="closeNuevaSemanaModal()">Cancelar</button>
                 <button class="btn-action primary" onclick="guardarNuevaSemana()"><i class="fa-solid fa-plus"></i>
                     Agregar Semana</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: IMPORTAR EXCEL DE HORARIOS AL HISTORIAL -->
+    <div id="importHorarioExcelHistorialModal" class="modal-backdrop hidden">
+        <div class="modal-dialog" style="max-width: 920px; width: 95%;">
+            <div class="modal-header-simple">
+                <h3><i class="fa-solid fa-file-excel"></i> Importar horarios (Excel)</h3>
+                <button type="button" class="close-icon" onclick="closeImportHorarioExcelHistorialModal()"><i
+                        class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-body-scroll" style="max-height: 72vh; overflow-y: auto;">
+                <p class="helper-text-sm" style="margin-bottom: 12px;">
+                    Archivo tipo <strong>HORARIO 2026.xlsx</strong>: elija pestañas (p. ej. 10–13), genere la vista previa y confirme. Se guarda por la fecha del viernes de la semana.
+                </p>
+                <div class="input-group">
+                    <label for="importHorarioExcelFileInput">Archivo (.xlsx / .xlsm)</label>
+                    <input type="file" id="importHorarioExcelFileInput" accept=".xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        onchange="onImportHorarioExcelHistorialFileChange(event)">
+                </div>
+                <div id="importHorarioExcelSheetList" class="import-excel-sheet-list" style="margin: 14px 0;"></div>
+                <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px;">
+                    <button type="button" class="btn-action" onclick="runImportHorarioExcelHistorialPreview()">
+                        <i class="fa-solid fa-eye"></i> Vista previa
+                    </button>
+                    <span id="importHorarioExcelStatus" class="helper-text-sm" style="align-self: center;"></span>
+                </div>
+                <div id="importHorarioExcelInverseWarnings" class="helper-text-sm" style="color: var(--warning, #d97706); margin-bottom: 8px;"></div>
+                <div id="importHorarioExcelPreview"></div>
+            </div>
+            <div class="modal-actions-footer">
+                <button type="button" class="btn-text" onclick="closeImportHorarioExcelHistorialModal()">Cancelar</button>
+                <button type="button" class="btn-action primary" id="importHorarioExcelConfirmBtn" onclick="confirmImportHorarioExcelHistorial()" disabled>
+                    <i class="fa-solid fa-check"></i> Aceptar e importar
+                </button>
             </div>
         </div>
     </div>

@@ -206,6 +206,97 @@ def procesar_horario_semana(horario_dict):
     return resultado
 
 
+# Orden de días en hoja semanal (Vie → Jue)
+DIAS_SEMANA_PLANILLA = ("Vie", "Sáb", "Dom", "Lun", "Mar", "Mié", "Jue")
+
+# Horas estándar para feriado no laborado / permiso en feriado (fila ★)
+HORAS_FERIADO_SIN_LABOR = 8
+# Horas diurnas cargadas en planilla por día de vacaciones
+HORAS_VAC_DIURNAS = 8
+
+
+def turno_categoria_planilla(turno_code):
+    """VAC | PERM | OFF | WORK según código de turno del horario."""
+    n = normalize_manual_shift_code(turno_code)
+    if n == "VAC":
+        return "VAC"
+    if n == "PERM":
+        return "PERM"
+    if n == "OFF":
+        return "OFF"
+    return "WORK"
+
+
+def horas_base_dia_planilla(turno_code):
+    """
+    Horas (diurnas, nocturnas, mixtas) antes del cap de jefe.
+    VAC → 8 diurnas; PERM/OFF → 0; resto → clasificar_turno.
+    """
+    cat = turno_categoria_planilla(turno_code)
+    if cat == "VAC":
+        return (HORAS_VAC_DIURNAS, 0, 0)
+    if cat in ("PERM", "OFF"):
+        return (0, 0, 0)
+    return clasificar_turno(turno_code)
+
+
+def aplicar_cap_jefe_pista(h_diurna, h_nocturna, h_mixta, es_jefe):
+    """Excedente de 8h por tipo → horas extra. Devuelve (h_d, h_n, h_m, h_extra)."""
+    h_extra = 0
+    if es_jefe:
+        if h_diurna > 8:
+            h_extra += h_diurna - 8
+            h_diurna = 8
+        if h_mixta > 8:
+            h_extra += h_mixta - 8
+            h_mixta = 8
+        if h_nocturna > 8:
+            h_extra += h_nocturna - 8
+            h_nocturna = 8
+    return h_diurna, h_nocturna, h_mixta, h_extra
+
+
+def tarifa_tipo_desde_totales_semana(total_d, total_m, total_n):
+    """
+    Igual criterio que _calcular_tarifa_dominante: mixta si todo 0;
+    si no, tipo con más horas.
+    Retorna (tarifa_tipo_str|None, es_todo_cero).
+    """
+    if total_d == 0 and total_m == 0 and total_n == 0:
+        return None, True
+    max_hours = max(total_d, total_m, total_n)
+    if total_d == max_hours:
+        return "diurna", False
+    if total_m == max_hours:
+        return "mixta", False
+    return "nocturna", False
+
+
+def feriado_celda_horas(cat, tiene_horas_en_jornadas_normales):
+    """
+    Horas a escribir en fila ★ Feriado para un día que es feriado.
+    VAC o jornada con horas → 0; OFF/PERM → HORAS_FERIADO_SIN_LABOR;
+    WORK sin horas → HORAS_FERIADO_SIN_LABOR.
+    """
+    if cat == "VAC":
+        return 0
+    if tiene_horas_en_jornadas_normales:
+        return 0
+    if cat in ("OFF", "PERM"):
+        return HORAS_FERIADO_SIN_LABOR
+    return HORAS_FERIADO_SIN_LABOR
+
+
+def _valor_tarifa_tipo(tarifa_tipo, tarifas):
+    if tarifa_tipo == "diurna":
+        return tarifas.get("tarifa_diurna", 0) or 0
+    if tarifa_tipo == "mixta":
+        return tarifas.get("tarifa_mixta", 0) or 0
+    if tarifa_tipo == "nocturna":
+        return tarifas.get("tarifa_nocturna", 0) or 0
+    return 0
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # MIGRACIÓN JSON → SQLITE
 # ═════════════════════════════════════════════════════════════════════════════
@@ -475,8 +566,12 @@ def rellenar_horas_en_excel(excel_path, nombre_hoja, horario_dict, holidays=None
     # Si hay feriados, desocultar filas de feriado para todos los empleados
     has_holidays_this_week = len(semana_feriados) > 0
 
-    # Procesar horas
-    horas = procesar_horario_semana(horario_dict)
+    from openpyxl.styles import PatternFill
+    from openpyxl.comments import Comment
+
+    NO_FILL = PatternFill(fill_type=None)
+    VAC_FILL = PatternFill(fill_type="solid", fgColor="FEF9C3")
+
     recap_horas = {}
 
     def _buscar_fila_empleado(emp_nombre, tipo_pago):
@@ -498,43 +593,7 @@ def rellenar_horas_en_excel(excel_path, nombre_hoja, horario_dict, holidays=None
 
         return None
 
-    def _calcular_tarifa_dominante(emp_nombre, dias_horas):
-        """
-        Calcula la tarifa que más se repite en la semana laboral del empleado.
-        Para empleados OFF (libres), usa tarifa mixta.
-        Retorna (tarifa, es_off).
-        """
-        # Contar horas por tipo de jornada
-        total_d = 0; total_m = 0; total_n = 0
-        for dia_sched, (h_diurna, h_nocturna, h_mixta) in dias_horas.items():
-            total_d += h_diurna
-            total_m += h_mixta
-            total_n += h_nocturna
-
-        # Si no trabajó nada (todo OFF), usar tarifa mixta
-        if total_d == 0 and total_m == 0 and total_n == 0:
-            return None, True  # None = tarifa mixta por defecto, True = off
-
-        # La tarifa que más horas tiene es la dominante
-        max_hours = max(total_d, total_m, total_n)
-        if total_d == max_hours:
-            return "diurna", False
-        elif total_m == max_hours:
-            return "mixta", False
-        else:
-            return "nocturna", False
-
-    def _get_tarifa_value(tarifa_tipo, tarifas):
-        """Obtiene el valor numérico de una tarifa."""
-        if tarifa_tipo == "diurna":
-            return tarifas.get("tarifa_diurna", 0)
-        elif tarifa_tipo == "mixta":
-            return tarifas.get("tarifa_mixta", 0)
-        elif tarifa_tipo == "nocturna":
-            return tarifas.get("tarifa_nocturna", 0)
-        return 0
-
-    for emp_nombre, dias_horas in horas.items():
+    for emp_nombre in horario_dict:
         emp_info = empleados_planilla.get(emp_nombre, {})
         tipo_pago = emp_info.get("tipo_pago")
         salario_fijo = emp_info.get("salario_fijo") or 0
@@ -554,84 +613,103 @@ def rellenar_horas_en_excel(excel_path, nombre_hoja, horario_dict, holidays=None
                 "mixtas": 0,
                 "nocturnas": 0,
                 "extra": 0,
+                "horas_feriado_no_labor": 0,
+                "recargo_feriado": 0,
                 "salario_bruto": round(salario_fijo / 4.33, 2) if salario_fijo else 0,
             }
             continue
 
-        total_emp_d = 0; total_emp_m = 0; total_emp_n = 0; total_emp_e = 0
+        emp_schedule = horario_dict.get(emp_nombre) or {}
+        es_jefe = emp_nombre in jefes
 
-        for dia_sched, (h_diurna, h_nocturna, h_mixta) in dias_horas.items():
+        # Limpiar bloque C–I (jornadas + feriado) para evitar datos de importaciones previas
+        for col_clear in range(3, 10):
+            for rel in range(0, 5):
+                c_clear = ws.cell(row=emp_row + rel, column=col_clear)
+                c_clear.value = None
+                c_clear.fill = NO_FILL
+                c_clear.comment = None
+
+        total_emp_d = 0
+        total_emp_m = 0
+        total_emp_n = 0
+        total_emp_e = 0
+
+        for dia_sched in DIAS_SEMANA_PLANILLA:
             col = DIAS_COL.get(dia_sched)
             if col is None:
                 continue
 
-            h_extra = 0
-            # Lógica Jefe de Pista: excedente de 8h totales → horas extra
-            if emp_nombre in jefes:
-                if h_diurna > 8:
-                    h_extra += h_diurna - 8
-                    h_diurna = 8
-                if h_mixta > 8:
-                    h_extra += h_mixta - 8
-                    h_mixta = 8
-                if h_nocturna > 8:
-                    h_extra += h_nocturna - 8
-                    h_nocturna = 8
+            turno = emp_schedule.get(dia_sched, "OFF")
+            cat = turno_categoria_planilla(turno)
+            h_diurna, h_nocturna, h_mixta = horas_base_dia_planilla(turno)
+            h_diurna, h_nocturna, h_mixta, h_extra = aplicar_cap_jefe_pista(
+                h_diurna, h_nocturna, h_mixta, es_jefe
+            )
 
-            # Escribir en la fila de jornada + columna de día
-            if h_diurna > 0:
-                ws.cell(row=emp_row + FILA_DIURNA, column=col).value = h_diurna
-            if h_mixta > 0:
-                ws.cell(row=emp_row + FILA_MIXTA,  column=col).value = h_mixta
-            if h_nocturna > 0:
-                ws.cell(row=emp_row + FILA_NOCT,   column=col).value = h_nocturna
-            if h_extra > 0:
-                ws.cell(row=emp_row + FILA_EXTRA,  column=col).value = h_extra
+            r_d = emp_row + FILA_DIURNA
+            r_m = emp_row + FILA_MIXTA
+            r_n = emp_row + FILA_NOCT
+            r_e = emp_row + FILA_EXTRA
+
+            ws.cell(row=r_d, column=col).value = h_diurna if h_diurna > 0 else None
+            ws.cell(row=r_m, column=col).value = h_mixta if h_mixta > 0 else None
+            ws.cell(row=r_n, column=col).value = h_nocturna if h_nocturna > 0 else None
+            ws.cell(row=r_e, column=col).value = h_extra if h_extra > 0 else None
+
+            if cat == "VAC":
+                for rel_row in (r_d, r_m, r_n, r_e):
+                    vc = ws.cell(row=rel_row, column=col)
+                    vc.fill = VAC_FILL
+                ws.cell(row=r_d, column=col).comment = Comment("VAC", "planilla")
 
             total_emp_d += h_diurna
             total_emp_m += h_mixta
             total_emp_n += h_nocturna
             total_emp_e += h_extra
 
-        recap_horas[emp_nombre] = {
-            "diurnas": total_emp_d,
-            "mixtas": total_emp_m,
-            "nocturnas": total_emp_n,
-            "extra": total_emp_e
-        }
+        total_hrs_feriado = 0
+        recargo_feriado = 0.0
 
-        # ── Rellenar fila de feriado si hay feriados esta semana ──
         if has_holidays_this_week:
-            # Desocultar fila de feriado
             holiday_row = emp_row + FILA_FERIADO
             ws.row_dimensions[holiday_row].hidden = False
 
-            # Calcular tarifa dominante
-            tarifa_tipo, es_off = _calcular_tarifa_dominante(emp_nombre, dias_horas)
-
-            # Obtener tarifas del Excel (fila 3)
             tarifas = {
                 "tarifa_diurna": ws.cell(row=3, column=4).value or 0,
                 "tarifa_mixta": ws.cell(row=3, column=6).value or 0,
                 "tarifa_nocturna": ws.cell(row=3, column=8).value or 0,
             }
 
-            # Determinar qué tarifa usar: mixta si OFF, dominante si trabajó
+            tarifa_tipo, es_off = tarifa_tipo_desde_totales_semana(
+                total_emp_d, total_emp_m, total_emp_n
+            )
             if es_off:
-                tarifa_usar = tarifas["tarifa_mixta"]
+                tarifa_usar = float(tarifas["tarifa_mixta"] or 0)
             else:
-                tarifa_usar = _get_tarifa_value(tarifa_tipo, tarifas)
+                tarifa_usar = float(_valor_tarifa_tipo(tarifa_tipo, tarifas) or 0)
 
-            # Para cada feriado de esta semana, poner 8h en la columna correspondiente
-            num_feriados = len(semana_feriados)
-            total_hrs_feriado = 8 * num_feriados
+            for dia_es, col_idx, _hn in semana_feriados:
+                turno_f = emp_schedule.get(dia_es, "OFF")
+                cat_f = turno_categoria_planilla(turno_f)
+                hd, hn, hm = horas_base_dia_planilla(turno_f)
+                hd, hn, hm, _hx = aplicar_cap_jefe_pista(hd, hn, hm, es_jefe)
+                tiene_jornada = (hd + hn + hm) > 0
+                fh = feriado_celda_horas(cat_f, tiene_jornada)
+                ws.cell(row=holiday_row, column=col_idx).value = fh if fh else None
+                total_hrs_feriado += fh
+
             recargo_feriado = round(total_hrs_feriado * tarifa_usar, 2)
-
-            for dia_es, col_idx, holiday_name in semana_feriados:
-                ws.cell(row=holiday_row, column=col_idx).value = 8
-
-            # Columna L: recargo feriado calculado directamente
             ws.cell(row=holiday_row, column=12).value = recargo_feriado
+
+        recap_horas[emp_nombre] = {
+            "diurnas": total_emp_d,
+            "mixtas": total_emp_m,
+            "nocturnas": total_emp_n,
+            "extra": total_emp_e,
+            "horas_feriado_no_labor": total_hrs_feriado,
+            "recargo_feriado": recargo_feriado,
+        }
 
     wb.save(excel_path)
     wb.close()

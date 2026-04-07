@@ -259,6 +259,31 @@ SAME_SHIFT_STACK_PENALTY_5 = 90000
 INFEASIBLE_DIAGNOSTIC_MAX_TIME_SECONDS = 6
 
 
+def build_rest_incompatible_pairs(min_rest_hours, shift_names, shift_is_working, shift_min_hour, shift_max_hour):
+    """Pares (s1,s2) con descanso estrictamente menor a min_rest_hours entre fin(s1) e inicio(s2) al día siguiente."""
+    bad = set()
+    for s1 in shift_names:
+        if not shift_is_working.get(s1):
+            continue
+        end1 = shift_max_hour[s1] + 1
+        for s2 in shift_names:
+            if not shift_is_working.get(s2):
+                continue
+            start2 = shift_min_hour[s2]
+            rest = (start2 + 24) - end1
+            if rest < min_rest_hours:
+                bad.add((s1, s2))
+    return bad
+
+
+def rest_hours_between_shifts(s1, s2, shift_min_hour, shift_max_hour, shift_is_working):
+    if not s1 or not s2 or not shift_is_working.get(s1) or not shift_is_working.get(s2):
+        return None
+    end1 = shift_max_hour[s1] + 1
+    start2 = shift_min_hour[s2]
+    return (start2 + 24) - end1
+
+
 def _parse_refuerzo_hour(value, default_hour):
     if isinstance(value, int):
         hour = value
@@ -430,7 +455,10 @@ def coverage_bounds(h: int, day: str = None, standard_mode: bool = False, num_em
             return (3, 3)
     
     # Weekdays (Lun-Sáb)
-    if h == 5: return (2, 2)          # Exactamente 2 de 5am a 6am
+    if h == 5:
+        if standard_mode:
+            return (2, 2)             # 10+ empleados: exactamente 2 a las 5am
+        return (2, 3)                 # Short-staffed: permitir 3 para habilitar Q1 + T1×2
     if h == 6: return (2, N)          # Hard min 2 (soft target 3, J_07-17 compatibility)
     if 7 <= h <= 10: return (3, N)    # Hard min 3 (soft target 4 via 500k penalty)
     if h == 11: return (3, N)         # Mínimo 3
@@ -892,11 +920,90 @@ class ShiftScheduler:
         
         return res_tasks
 
+    def _build_rest_between_shifts_report(
+        self, schedule, most_recent_schedule, shift_min_hour, shift_max_hour, shift_is_working, applied_rest_hours=None
+    ):
+        """Huecos entre turnos consecutivos (hist Jue→Vie y días dentro de la semana)."""
+        non_working = frozenset({"OFF", "VAC", "PERM"})
+        target = int(self.config.get("min_rest_hours_target", 12))
+        applied = int(applied_rest_hours) if applied_rest_hours is not None else target
+        per_employee = {}
+        for e in self.employees:
+            if self.emp_data[e].get("allow_no_rest", False):
+                per_employee[e] = {
+                    "min_gap_hours": None,
+                    "gaps": [],
+                    "skipped": True,
+                    "meets_target": True,
+                    "meets_applied": True,
+                }
+                continue
+            gaps = []
+            min_g = None
+            last_j = (most_recent_schedule.get(e) or {}).get("Jue")
+            sv = (schedule.get(e) or {}).get("Vie")
+            if last_j and last_j not in non_working and sv and sv not in non_working:
+                h = rest_hours_between_shifts(last_j, sv, shift_min_hour, shift_max_hour, shift_is_working)
+                if h is not None:
+                    gaps.append({
+                        "from": "Jue (histórico)",
+                        "to": "Vie",
+                        "hours": h,
+                        "meets_target": h >= target,
+                        "meets_applied": h >= applied,
+                    })
+                    min_g = h if min_g is None else min(min_g, h)
+            for i in range(len(DAYS) - 1):
+                d1, d2 = DAYS[i], DAYS[i + 1]
+                s1 = (schedule.get(e) or {}).get(d1)
+                s2 = (schedule.get(e) or {}).get(d2)
+                if not s1 or not s2 or s1 in non_working or s2 in non_working:
+                    continue
+                h = rest_hours_between_shifts(s1, s2, shift_min_hour, shift_max_hour, shift_is_working)
+                if h is None:
+                    continue
+                gaps.append({
+                    "from": d1,
+                    "to": d2,
+                    "hours": h,
+                    "meets_target": h >= target,
+                    "meets_applied": h >= applied,
+                })
+                min_g = h if min_g is None else min(min_g, h)
+            per_employee[e] = {
+                "min_gap_hours": min_g,
+                "gaps": gaps,
+                "meets_target": (min_g >= target) if min_g is not None else True,
+                "meets_applied": (min_g >= applied) if min_g is not None else True,
+            }
+        return {"per_employee": per_employee, "target_hours": target, "applied_hours": applied}
 
     def solve(self):
         current_refuerzo_custom_shift = sync_refuerzo_custom_shift(self.config)
         sync_custom_shifts(self.config)  # Load custom shifts with priorities
         default_diurno_refuerzo_shift = ensure_manual_shift_code(7, 12)
+        rest_floor = max(6, int(self.config.get("min_rest_hours_floor", 6)))
+        rest_target = max(rest_floor, min(int(self.config.get("min_rest_hours_target", 12)), 24))
+        last_out = None
+        for min_rest_try in range(rest_target, rest_floor - 1, -1):
+            last_out = self._solve_with_min_rest(
+                min_rest_try, current_refuerzo_custom_shift, default_diurno_refuerzo_shift
+            )
+            if last_out.get("status") == "Success":
+                md = last_out.setdefault("metadata", {})
+                md["min_rest_hours_applied"] = min_rest_try
+                md["min_rest_hours_target"] = rest_target
+                md["min_rest_hours_floor"] = rest_floor
+                if min_rest_try < rest_target:
+                    logger.warning(
+                        "Horario factible con descanso mínimo entre turnos de %sh (objetivo %sh).",
+                        min_rest_try,
+                        rest_target,
+                    )
+                return last_out
+        return last_out if last_out else {"status": "Infeasible", "message": "No se pudo generar horario."}
+
+    def _solve_with_min_rest(self, min_rest_hours: int, current_refuerzo_custom_shift, default_diurno_refuerzo_shift):
         model = cp_model.CpModel()
 
         employee_name_map = {}
@@ -1009,27 +1116,14 @@ class ShiftScheduler:
             and SHIFT_MIN_HOUR[s_name] < 13
         }
 
-        # Precomputar pares de turnos incompatibles por descanso mínimo
-        # 12h para empleados normales, 8h para la persona de libres
-        _min_rest_normal = 12
-        _min_rest_libres = 8
-        INCOMPATIBLE_REST_PAIRS_12H = set()
-        INCOMPATIBLE_REST_PAIRS_8H = set()
-        for _s1 in SHIFT_NAMES:
-            if not SHIFT_IS_WORKING[_s1]:
-                continue
-            _end1 = SHIFT_MAX_HOUR[_s1] + 1
-            for _s2 in SHIFT_NAMES:
-                if not SHIFT_IS_WORKING[_s2]:
-                    continue
-                _start2 = SHIFT_MIN_HOUR[_s2]
-                _rest = (_start2 + 24) - _end1
-                if _rest < _min_rest_normal:
-                    INCOMPATIBLE_REST_PAIRS_12H.add((_s1, _s2))
-                if _rest < _min_rest_libres:
-                    INCOMPATIBLE_REST_PAIRS_8H.add((_s1, _s2))
-        # Pares que SOLO aplican con 12h (no con 8h) — para condicional de libres
-        INCOMPATIBLE_ONLY_12H = INCOMPATIBLE_REST_PAIRS_12H - INCOMPATIBLE_REST_PAIRS_8H
+        # Pares incompatibles: descanso estrictamente < min_rest_hours (intento 12→…→6 en solve()).
+        INCOMPATIBLE_LT = build_rest_incompatible_pairs(
+            min_rest_hours,
+            SHIFT_NAMES,
+            SHIFT_IS_WORKING,
+            SHIFT_MIN_HOUR,
+            SHIFT_MAX_HOUR,
+        )
 
         x = {} 
         penalties = []
@@ -1264,10 +1358,13 @@ class ShiftScheduler:
                     model.Add(x[(e, d, s)] == (1 if s == "OFF" else 0))
         
         # Apply SOFT constraints (flexible employees)
-        # Penalty: 5000000 per day of deviation. This is extremely high, making it
-        # act essentially like a hard constraint but without causing Infeasible crashes
-        # if mathematically impossible (it will just eat the penalty and warn).
-        PREF_DEVIATION_PENALTY = 5000000
+        # Penalty per day of deviation.  In standard mode (≥10 employees), 2M is
+        # high enough to respect preferences while still allowing coverage-driven
+        # deviations.  In short-staff mode (<10 employees), Q shifts MUST win
+        # consistently: Q reward (-800k) - 2M penalty = +1.2M net cost, which is
+        # only 800k better than the PM coverage gap (2M) — too close for the solver
+        # to commit reliably.  At 600k: Q net = -200k (reward), gap vs no-Q = 2.2M.
+        PREF_DEVIATION_PENALTY = 2000000 if standard_mode else 600000
         for (e, d), s_code in soft_preferences.items():
             pref_violated = model.NewBoolVar(f"pref_violated_{e}_{d}")
             model.Add(x[(e, d, s_code)] == 0).OnlyEnforceIf(pref_violated)
@@ -1750,15 +1847,12 @@ class ShiftScheduler:
                     model.Add(sum(x[(w1, d, s)] for s in pm_shifts) == 1).OnlyEnforceIf(enforce_opposite)
                     model.Add(sum(x[(w2, d, s)] for s in am_shifts) == 1).OnlyEnforceIf(enforce_opposite)
         # =========================
-        # RESTRICCIÓN: DESCANSO MÍNIMO (12h normal, 8h libres)
+        # RESTRICCIÓN: DESCANSO MÍNIMO ENTRE TURNOS (param min_rest_hours, 12→6 vía solve)
         # =========================
-        # Empleados normales: 12h de descanso entre turnos consecutivos.
-        # Persona de libres: solo 8h (por ley, al cubrir distintos turnos).
-        # OPTIMIZADO: pares precomputados en 3 grupos:
-        #   - 8H pairs: SIEMPRE prohibidos para TODOS
-        #   - ONLY_12H pairs: prohibidos SOLO si NO eres la persona de libres
-        
+        # Misma regla para todos (incl. persona de libres). allow_no_rest: sin esta restricción.
         for e in self.employees:
+            if self.emp_data[e].get("allow_no_rest", False):
+                continue
             # 1. CROSS-WEEK BOUNDARY: Thursday (History) -> Friday (Current)
             last_jue_shift = most_recent_schedule.get(e, {}).get("Jue", "OFF")
             if last_jue_shift not in SHIFT_NAMES:
@@ -1781,32 +1875,15 @@ class ShiftScheduler:
                 s1 = last_jue_shift
                 d2 = "Vie"
                 for s2 in SHIFT_NAMES:
-                    if (s1, s2) in INCOMPATIBLE_REST_PAIRS_8H:
+                    if (s1, s2) in INCOMPATIBLE_LT:
                         model.Add(x[(e, d2, s2)] == 0)
-                    if (s1, s2) in INCOMPATIBLE_ONLY_12H:
-                        if e in persona_hace_libres:
-                            model.Add(x[(e, d2, s2)] == 0).OnlyEnforceIf(persona_hace_libres[e].Not())
-                        else:
-                            model.Add(x[(e, d2, s2)] == 0)
-                            
+
             # 2. INTRA-WEEK BOUNDARY: Day i -> Day i+1
             for i in range(len(DAYS) - 1):
                 d1 = DAYS[i]
                 d2 = DAYS[i + 1]
-                # 8h pairs: hard constraint for everyone (including libres)
-                for (s1, s2) in INCOMPATIBLE_REST_PAIRS_8H:
+                for (s1, s2) in INCOMPATIBLE_LT:
                     model.Add(x[(e, d2, s2)] == 0).OnlyEnforceIf(x[(e, d1, s1)])
-                
-                # 12h-only pairs: only for non-libres employees
-                if e in persona_hace_libres:
-                    for (s1, s2) in INCOMPATIBLE_ONLY_12H:
-                        model.Add(x[(e, d2, s2)] == 0).OnlyEnforceIf(
-                            [x[(e, d1, s1)], persona_hace_libres[e].Not()]
-                        )
-                else:
-                    # Not a libres candidate — always apply 12h
-                    for (s1, s2) in INCOMPATIBLE_ONLY_12H:
-                        model.Add(x[(e, d2, s2)] == 0).OnlyEnforceIf(x[(e, d1, s1)])
 
         # =========================
         # DYNAMIC PENALTY MODE (Standard Mode Detection)
@@ -1955,20 +2032,53 @@ class ShiftScheduler:
                     model.Add(x[(e, d, "Q2_07-11+17-20")] == 0)
                     model.Add(x[(e, d, "Q3_05-11+17-22")] == 0)
         
-        # Soft: penalize each person who has ANY broken shift (prefer concentration)
-        for e in self.employees:
-            if e == night_person_name or self.emp_data[e].get('is_jefe_pista', False) or self.emp_data[e].get('is_practicante', False):
-                continue
-            has_any_q = model.NewBoolVar(f"has_any_q_{e}")
-            q_sum = sum(x[(e, d, "Q1_05-11+17-20")] + x[(e, d, "Q2_07-11+17-20")] + x[(e, d, "Q3_05-11+17-22")] for d in DAYS)
-            model.Add(q_sum >= 1).OnlyEnforceIf(has_any_q)
-            model.Add(q_sum == 0).OnlyEnforceIf(has_any_q.Not())
-            # 100 penalty per person with broken shifts (much less than 2000/hour coverage penalty)
-            pen_q_spread = model.NewIntVar(0, 100, f"pen_q_spread_{e}")
-            model.Add(pen_q_spread == 100).OnlyEnforceIf(has_any_q)
-            model.Add(pen_q_spread == 0).OnlyEnforceIf(has_any_q.Not())
-            peak_penalties.append(pen_q_spread)
-            
+        # Soft: standard_mode — ligera preferencia por concentrar Q en menos gente.
+        if standard_mode:
+            for e in self.employees:
+                if e == night_person_name or self.emp_data[e].get('is_jefe_pista', False) or self.emp_data[e].get('is_practicante', False):
+                    continue
+                has_any_q = model.NewBoolVar(f"has_any_q_{e}")
+                q_sum = sum(x[(e, d, "Q1_05-11+17-20")] + x[(e, d, "Q2_07-11+17-20")] + x[(e, d, "Q3_05-11+17-22")] for d in DAYS)
+                model.Add(q_sum >= 1).OnlyEnforceIf(has_any_q)
+                model.Add(q_sum == 0).OnlyEnforceIf(has_any_q.Not())
+                pen_q_spread = model.NewIntVar(0, 100, f"pen_q_spread_{e}")
+                model.Add(pen_q_spread == 100).OnlyEnforceIf(has_any_q)
+                model.Add(pen_q_spread == 0).OnlyEnforceIf(has_any_q.Not())
+                peak_penalties.append(pen_q_spread)
+
+        # Short-staff: preferir UNA sola persona distinta con quebrados en la semana.
+        if not standard_mode:
+            q_carrier_eligible = []
+            for e in self.employees:
+                if self.emp_data[e].get("is_refuerzo", False):
+                    continue
+                if e == night_person_name or self.emp_data[e].get("is_jefe_pista", False) or self.emp_data[e].get("is_practicante", False):
+                    continue
+                q_carrier_eligible.append(e)
+            if q_carrier_eligible:
+                carrier_bools = []
+                for e in q_carrier_eligible:
+                    cq = model.NewBoolVar(f"q_week_carrier_{e}")
+                    q_week = sum(
+                        x[(e, d, "Q1_05-11+17-20")]
+                        + x[(e, d, "Q2_07-11+17-20")]
+                        + x[(e, d, "Q3_05-11+17-22")]
+                        for d in DAYS
+                    )
+                    model.Add(q_week >= 1).OnlyEnforceIf(cq)
+                    model.Add(q_week == 0).OnlyEnforceIf(cq.Not())
+                    carrier_bools.append(cq)
+                nq_distinct = model.NewIntVar(0, len(carrier_bools), "q_distinct_carriers_week")
+                model.Add(nq_distinct == sum(carrier_bools))
+                at_most_one_distinct = model.NewBoolVar("q_at_most_one_distinct_carrier")
+                model.Add(nq_distinct <= 1).OnlyEnforceIf(at_most_one_distinct)
+                model.Add(nq_distinct >= 2).OnlyEnforceIf(at_most_one_distinct.Not())
+                q_extra_carriers = model.NewIntVar(0, max(0, len(carrier_bools) - 1), "q_extra_carriers_beyond_first")
+                model.Add(q_extra_carriers == 0).OnlyEnforceIf(at_most_one_distinct)
+                model.Add(q_extra_carriers == nq_distinct - 1).OnlyEnforceIf(at_most_one_distinct.Not())
+                QUEBRADO_EXTRA_CARRIER_PENALTY = 1_200_000
+                peak_penalties.append(QUEBRADO_EXTRA_CARRIER_PENALTY * q_extra_carriers)
+
         # =========================
         # RESTRICCIÓN: PENALIZACIÓN DE TURNOS OVERTIME (T11, T16)
         # =========================
@@ -2467,9 +2577,12 @@ class ShiftScheduler:
             t12_reward = -1200   # T12_14-22 (8h) covers h14-h21 — strong PM coverage
             t9_reward = -800     # T9_14-21 (7h) covers h14-h20
         else:
-            # Short-staffed: Q shifts are needed for peak coverage (low penalty)
-            q1_penalty = 50
-            q2_penalty = 25
+            # Short-staffed: Q shifts are ESSENTIAL for peak coverage.
+            # Negative penalty = REWARD.  The solver actively seeks Q assignments
+            # because they bridge AM+PM peaks with one person, saving 500k/h in
+            # coverage-gap penalties while earning this direct bonus.
+            q1_penalty = -800000
+            q2_penalty = -600000
             t8_reward = 0
             t12_reward = -400
             t9_reward = -300
@@ -2513,8 +2626,9 @@ class ShiftScheduler:
                         # =========================================================
                         # REGLAS DE ENTRE SEMANA (Lun-Sáb)
                         # =========================================================
-                        if not allow_collision_q:
+                        if not allow_collision_q and standard_mode:
                             # Hard block Q shifts in standard mode without collision toggle
+                            # In short-staffed mode, Q shifts are controlled by penalties/rewards
                             model.Add(x[(e, d, "Q1_05-11+17-20")] == 0)
                             model.Add(x[(e, d, "Q2_07-11+17-20")] == 0)
                             model.Add(x[(e, d, "Q3_05-11+17-22")] == 0)
@@ -2767,8 +2881,11 @@ class ShiftScheduler:
                      penalties.append(-1000 * x[(e, d, "T3_07-15")])
                  # Reward T1_05-13 to ensure early morning coverage when needed
                  penalties.append(-2000 * x[(e, d, "T1_05-13")])
-                 # Prefer 15-23 over 14-23
-                 penalties.append(-1500 * x[(e, d, "D3_15-23")])
+                 # Short-staff: D3 (15:00–23:00) solo como último recurso; preferir T17 (16:00–23:00).
+                 # Antes D3 tenía recompensa (-1500), lo que lo favorecía indebidamente frente a T17.
+                 if not standard_mode:
+                     penalties.append(800000 * x[(e, d, "D3_15-23")])
+                     penalties.append(-350000 * x[(e, d, "T17_16-23")])
                  # D2_14-22: recompensa condicional (ver O9c abajo)
 
         # O9c. Preferencia T10_15-22 sobre D2_14-22 de Lun-Vie
@@ -3208,6 +3325,15 @@ class ShiftScheduler:
             
              rotation_target = rotation_queue[0] if rotation_queue else None
 
+             rest_report = self._build_rest_between_shifts_report(
+                 res,
+                 most_recent_schedule,
+                 SHIFT_MIN_HOUR,
+                 SHIFT_MAX_HOUR,
+                 SHIFT_IS_WORKING,
+                 min_rest_hours,
+             )
+
              return {
                  "status": "Success",
                  "schedule": res, 
@@ -3220,6 +3346,8 @@ class ShiftScheduler:
                      "sunday_off_person": sunday_off_person,
                      "special_days": dict(self.special_day_modes),
                      "solutions_found": solution_counter.solution_count,
+                     "min_rest_hours_applied": min_rest_hours,
+                     "rest_between_shifts": rest_report,
                  }
              }
         if status == cp_model.INFEASIBLE:

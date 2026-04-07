@@ -607,3 +607,268 @@ def reassign_history_tasks(index: int):
         "daily_tasks": daily_tasks,
         "special_days": special_days,
     }
+
+
+# =============================================================================
+# GENERADOR DE HORARIO PARCIAL
+# Permite regenerar únicamente los días activos de una semana ya guardada,
+# respetando los días trabajados del horario base y excluyendo empleados
+# que hayan causado baja a partir de un día específico.
+# =============================================================================
+
+# Orden canónico de días tal como lo define scheduler_engine.DAYS
+_WEEK_DAYS_ORDER = ["Vie", "Sáb", "Dom", "Lun", "Mar", "Mié", "Jue"]
+
+# Caché en RAM del último resultado parcial generado (igual a _last_generated_preview
+# en main.py). Se sobreescribe en cada llamada a /api/solve-partial.
+_last_partial_preview: Optional[dict] = None
+
+
+class PartialOffClassification(BaseModel):
+    """
+    Clasificación de un día libre (OFF/VAC/PERM) que el usuario hace
+    de forma manual en la UI del Generador Parcial.
+
+    fixed=True  → el solver DEBE respetar ese libre (se inyecta en fixed_shifts).
+    fixed=False → el solver PUEDE reasignarlo si la cobertura lo requiere.
+    """
+    employee: str
+    day: str      # "Vie" | "Sáb" | "Dom" | "Lun" | "Mar" | "Mié" | "Jue"
+    fixed: bool   # True = fijo, False = flexible (reasignable)
+
+
+class DepartedEmployee(BaseModel):
+    """
+    Empleado que causó baja durante la semana.
+    last_working_day: último día que trabajó. A partir del día siguiente se
+    excluye del pool del solver y la celda aparece vacía en el resultado.
+    """
+    name: str
+    last_working_day: str  # Último día trabajado, p.ej. "Dom"
+
+
+class PartialSolverRequest(BaseModel):
+    """
+    Request completo para la generación parcial.
+    El frontend envía el db_id del horario base junto con la configuración
+    de qué días bloquear, quién se fue y cómo tratar los libres.
+    """
+    base_history_db_id: int                   # id en horarios_generados
+    config: Config
+    target_week_start: Optional[str] = None   # Fecha del viernes de la semana
+    special_days: Dict[str, str] = Field(default_factory=dict)
+    locked_days: List[str] = Field(default_factory=list)   # Días pasados, p.ej. ["Vie","Sáb","Dom"]
+    departed_employees: List[DepartedEmployee] = Field(default_factory=list)
+    off_classifications: List[PartialOffClassification] = Field(default_factory=list)
+
+
+@router.post("/solve-partial")
+def solve_partial_schedule(request: PartialSolverRequest):
+    """
+    Genera un horario parcial sobre una semana ya existente en el historial.
+
+    Flujo:
+      1. Carga el horario base desde SQLite por db_id.
+      2. Excluye empleados despedidos del pool del solver.
+      3. Marca días pasados como 'closed' → coverage (0,0) → todos OFF.
+      4. Inyecta OFFs fijos en fixed_shifts; OFFs flexibles quedan libres.
+      5. Llama a ShiftScheduler para los días activos y empleados activos.
+      6. Fusiona: días pasados del base + resultado del solver (días activos).
+         El empleado despedido conserva sus días trabajados del base;
+         sus días activos quedan vacíos (sin key en el dict).
+      7. Cachea el resultado en _last_partial_preview y lo retorna.
+    """
+    global _last_partial_preview
+
+    # ── 1. Cargar horario base ────────────────────────────────────────────────
+    conn = plan_db.get_conn()
+    row = conn.execute(
+        "SELECT id, nombre, horario, tareas, metadata "
+        "FROM horarios_generados WHERE id=? AND IFNULL(deleted,0)=0",
+        (request.base_history_db_id,),
+    ).fetchone()
+    conn.close()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Horario base no encontrado o está en la papelera")
+
+    try:
+        base_schedule: Dict[str, Dict[str, str]] = json.loads(row["horario"] or "{}")
+    except (json.JSONDecodeError, TypeError):
+        raise HTTPException(status_code=422, detail="El horario base tiene JSON inválido")
+
+    base_name: str = row["nombre"] or "Semana"
+    try:
+        base_meta: dict = json.loads(row["metadata"] or "{}")
+    except (json.JSONDecodeError, TypeError):
+        base_meta = {}
+
+    # ── 2. Calcular días activos ──────────────────────────────────────────────
+    active_days = [d for d in _WEEK_DAYS_ORDER if d not in request.locked_days]
+
+    # ── 3. Construir índice de empleados despedidos ───────────────────────────
+    # last_working_day_idx[name] = índice en _WEEK_DAYS_ORDER del último día trabajado
+    departed_last_day: Dict[str, str] = {
+        e.name: e.last_working_day for e in request.departed_employees
+    }
+    departed_names = set(departed_last_day.keys())
+
+    # ── 4. Construir índice de clasificación de OFFs ──────────────────────────
+    # off_fixed_set: {(employee, day)} de libres que deben respetarse
+    off_fixed_set = {
+        (clf.employee, clf.day)
+        for clf in request.off_classifications
+        if clf.fixed
+    }
+
+    # ── 5. Cargar empleados desde DB, excluyendo despedidos ───────────────────
+    try:
+        unified_emps = _plan_db.get_empleados(solo_activos=True)
+    except Exception:
+        unified_emps = []
+
+    use_tpl = _plan_db.get_use_pref_plantilla()
+    employees_data = []
+
+    for e in unified_emps:
+        name = e.get("nombre", "")
+        if name in departed_names:
+            continue  # Excluir completamente del pool del solver
+
+        rp = _plan_db.resolve_prefs_for_solver(e, use_pref_plantilla=use_tpl)
+        emp_fixed = dict(rp.get("fixed_shifts", {}))  # copia — no mutar el original
+
+        # Inyectar OFFs fijos como fixed_shifts
+        for (clf_emp, clf_day) in off_fixed_set:
+            if clf_emp == name:
+                emp_fixed[clf_day] = "OFF"
+        # OFFs flexibles → NO se agregan → el solver decide libremente
+
+        employees_data.append({
+            "name": name,
+            "gender": e.get("genero", "M"),
+            "can_do_night": bool(e.get("puede_nocturno", 1)),
+            "allow_no_rest": rp["allow_no_rest"],
+            "forced_libres": rp["forced_libres"],
+            "forced_quebrado": rp["forced_quebrado"],
+            "is_jefe_pista": bool(e.get("es_jefe_pista", 0)),
+            "is_practicante": bool(e.get("es_practicante", 0)),
+            "strict_preferences": rp["strict_preferences"],
+            "fixed_shifts": emp_fixed,
+        })
+
+    # ── 6. Construir special_days: días pasados → "closed" ────────────────────
+    merged_special = dict(request.special_days)
+    for day in request.locked_days:
+        merged_special[day] = "closed"
+
+    config_data = request.config.dict()
+    config_data["special_days"] = _normalize_special_days(merged_special)
+
+    # ── 7. Preparar historial para el solver ──────────────────────────────────
+    # Excluir el horario base de sí mismo para evitar auto-referencia circular
+    db = _load_db()
+    history_list = [
+        h for h in db.get("history_log", [])
+        if h.get("db_id") != request.base_history_db_id
+    ]
+    history_for_solver, history_context = _prepare_history_for_solver(
+        history_list,
+        target_week_start=request.target_week_start,
+        use_history=config_data.get("use_history", True),
+    )
+
+    # ── 8. Resolver ───────────────────────────────────────────────────────────
+    from scheduler_engine import ShiftScheduler as _ShiftScheduler
+    scheduler = _ShiftScheduler(employees_data, config_data, history_data=history_for_solver)
+    solver_result = scheduler.solve()
+
+    # Propagar errores del solver al cliente (INFEASIBLE, etc.)
+    if not isinstance(solver_result, dict) or solver_result.get("status") != "Success":
+        return solver_result
+
+    solver_schedule: Dict[str, Dict[str, str]] = solver_result.get("schedule", {})
+
+    # ── 9. Merge: base (días pasados) + solver (días activos) ─────────────────
+    # Preserva TODOS los empleados que aparecían en el horario base,
+    # incluido el despedido (con sus días trabajados visibles en la UI).
+    all_employees_in_base = list(base_schedule.keys())
+    merged_schedule: Dict[str, Dict[str, str]] = {}
+
+    for emp in all_employees_in_base:
+        merged_schedule[emp] = {}
+        base_emp: Dict[str, str] = base_schedule.get(emp, {})
+        last_day = departed_last_day.get(emp)  # None si el empleado no está despedido
+
+        for day in _WEEK_DAYS_ORDER:
+            if day in request.locked_days:
+                # Día pasado → copiar del horario base tal cual
+                if day in base_emp:
+                    merged_schedule[emp][day] = base_emp[day]
+
+            elif last_day is not None:
+                # Empleado despedido en día activo:
+                # - Si trabajó este día (on or before last_working_day) → copiar del base
+                # - Si salió antes de este día → celda vacía (sin key)
+                last_day_idx = _WEEK_DAYS_ORDER.index(last_day) if last_day in _WEEK_DAYS_ORDER else -1
+                day_idx = _WEEK_DAYS_ORDER.index(day)
+                if day_idx <= last_day_idx and day in base_emp:
+                    merged_schedule[emp][day] = base_emp[day]
+                # Si day_idx > last_day_idx → NO agregar key → celda vacía en la UI
+
+            else:
+                # Empleado activo en día activo → usar resultado del solver
+                solver_emp_days = solver_schedule.get(emp, {})
+                if day in solver_emp_days:
+                    merged_schedule[emp][day] = solver_emp_days[day]
+
+    # Agregar empleados activos que estén en el solver pero no en el base
+    # (caso edge: empleado nuevo ingresado después de que se guardó el base)
+    for emp, days in solver_schedule.items():
+        if emp not in merged_schedule:
+            merged_schedule[emp] = {
+                day: shift for day, shift in days.items()
+                if day in active_days
+            }
+
+    # ── 10. Ensamblar resultado y cachear ─────────────────────────────────────
+    partial_result = {
+        **solver_result,
+        "schedule": merged_schedule,
+        "daily_tasks": solver_result.get("daily_tasks", {}),
+        "metadata": {
+            **(solver_result.get("metadata") or {}),
+            "partial_mode": True,
+            "base_name": base_name,
+            "base_db_id": request.base_history_db_id,
+            "locked_days": request.locked_days,
+            "active_days": active_days,
+            "departed_employees": [e.dict() for e in request.departed_employees],
+            "history_context_label": history_context.get("label", ""),
+            "week_dates": base_meta.get("week_dates"),
+            "special_days": config_data["special_days"],
+        },
+    }
+
+    _last_partial_preview = partial_result
+    return partial_result
+
+
+@router.post("/solve-partial/confirm")
+def confirm_partial_schedule(entry: HistoryEntry):
+    """
+    Guarda el horario parcial previamente generado como nueva entrada en
+    el historial, añadiendo el sufijo ' (parcial)' al nombre si no lo tiene.
+
+    El horario original permanece intacto — el usuario puede borrarlo
+    manualmente desde la UI de historial cuando lo considere oportuno.
+    """
+    # Asegurar sufijo "(parcial)"
+    name = (entry.name or "Semana").strip()
+    if not name.endswith("(parcial)"):
+        name = f"{name} (parcial)"
+    entry.name = name
+
+    # Delegar al endpoint de historial estándar (mismo flujo de guardado)
+    return save_history(entry)
+

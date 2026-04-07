@@ -1646,6 +1646,14 @@ async function generateSchedule() {
             const solutionsCount = result.metadata?.solutions_found ? ` | Óptimos procesados: ${result.metadata.solutions_found}` : "";
             const historyText = result.metadata?.history_context_label ? ` | ${result.metadata.history_context_label}` : "";
             let metaLine = libresText + solutionsCount + historyText;
+            const mr = result.metadata?.min_rest_hours_applied;
+            const mrT = result.metadata?.min_rest_hours_target ?? 12;
+            if (mr != null) {
+                metaLine +=
+                    mr < mrT
+                        ? ` | Descanso mínimo: ${mr}h (obj. ${mrT}h)`
+                        : ` | Descanso mínimo: ${mr}h`;
+            }
             document.getElementById("scheduleMeta").textContent = metaLine;
         } else {
             console.error("Solver Status:", result.status);
@@ -1868,6 +1876,56 @@ function getShiftStartHour(shiftCode) {
 
     const hours = getShiftHoursList(shiftCode);
     return hours.length ? Math.min(...hours) : 24;
+}
+
+/** Fin del turno en escala 5–29 (hora exclusiva), alineado al motor Python. */
+function getShiftEndExclusiveHour(shiftCode) {
+    const hours = getShiftHoursList(shiftCode);
+    if (!hours.length) return null;
+    return Math.max(...hours) + 1;
+}
+
+/** Horas de descanso entre fin(s1) e inicio(s2) al día siguiente. */
+function restHoursBetweenShiftsClient(s1, s2) {
+    const non = ["OFF", "VAC", "PERM"];
+    if (!s1 || !s2 || non.includes(s1) || non.includes(s2)) return null;
+    const end1 = getShiftEndExclusiveHour(s1);
+    const start2 = getShiftStartHour(s2);
+    if (end1 == null || start2 == null) return null;
+    return (start2 + 24) - end1;
+}
+
+/** Vista validación cuando no hay metadata del solver (p. ej. historial antiguo). */
+function buildRestReportClient(schedule, targetHours = 12) {
+    const per = {};
+    const names = Object.keys(schedule || {});
+    names.forEach((e) => {
+        const gaps = [];
+        let minG = null;
+        for (let i = 0; i < DAYS.length - 1; i++) {
+            const d1 = DAYS[i];
+            const d2 = DAYS[i + 1];
+            const a = schedule[e]?.[d1];
+            const b = schedule[e]?.[d2];
+            const h = restHoursBetweenShiftsClient(a, b);
+            if (h == null) continue;
+            gaps.push({
+                from: d1,
+                to: d2,
+                hours: h,
+                meets_target: h >= targetHours,
+                meets_applied: h >= targetHours,
+            });
+            minG = minG === null ? h : Math.min(minG, h);
+        }
+        per[e] = {
+            min_gap_hours: minG,
+            gaps,
+            meets_target: minG === null || minG >= targetHours,
+            meets_applied: minG === null || minG >= targetHours,
+        };
+    });
+    return { per_employee: per, target_hours: targetHours, applied_hours: targetHours, client_only: true };
 }
 
 
@@ -2323,6 +2381,265 @@ async function loadHistory(forceRefresh = false) {
     } catch (e) {
         console.error(e);
         listContainer.innerHTML = '<div class="error-msg">Error al cargar historial</div>';
+    }
+}
+
+let importHorarioExcelHistorialFile = null;
+let importHorarioExcelHistorialDrafts = [];
+
+function closeImportHorarioExcelHistorialModal() {
+    const m = document.getElementById("importHorarioExcelHistorialModal");
+    if (m) m.classList.add("hidden");
+}
+
+function openImportHorarioExcelHistorialModal() {
+    importHorarioExcelHistorialFile = null;
+    importHorarioExcelHistorialDrafts = [];
+    const inp = document.getElementById("importHorarioExcelFileInput");
+    if (inp) inp.value = "";
+    const sl = document.getElementById("importHorarioExcelSheetList");
+    if (sl) sl.innerHTML = "";
+    const pv = document.getElementById("importHorarioExcelPreview");
+    if (pv) pv.innerHTML = "";
+    const st = document.getElementById("importHorarioExcelStatus");
+    if (st) st.textContent = "";
+    const iw = document.getElementById("importHorarioExcelInverseWarnings");
+    if (iw) iw.textContent = "";
+    const btn = document.getElementById("importHorarioExcelConfirmBtn");
+    if (btn) btn.disabled = true;
+    const m = document.getElementById("importHorarioExcelHistorialModal");
+    if (m) m.classList.remove("hidden");
+}
+
+function _importHorarioExcelApiErrorMessage(data, fallback) {
+    const d = data && data.detail;
+    if (typeof d === "string") return d;
+    if (Array.isArray(d)) {
+        return d.map((x) => (x && (x.msg || x.message)) || JSON.stringify(x)).join("; ");
+    }
+    if (d && typeof d === "object") return JSON.stringify(d);
+    return fallback || "Error";
+}
+
+async function onImportHorarioExcelHistorialFileChange(ev) {
+    const f = ev.target.files && ev.target.files[0];
+    const sl = document.getElementById("importHorarioExcelSheetList");
+    const st = document.getElementById("importHorarioExcelStatus");
+    if (!f) return;
+    importHorarioExcelHistorialFile = f;
+    importHorarioExcelHistorialDrafts = [];
+    if (sl) sl.innerHTML = "";
+    const pv = document.getElementById("importHorarioExcelPreview");
+    if (pv) pv.innerHTML = "";
+    const btn = document.getElementById("importHorarioExcelConfirmBtn");
+    if (btn) btn.disabled = true;
+    if (st) st.textContent = "Leyendo pestañas…";
+    const fd = new FormData();
+    fd.append("file", f);
+    fd.append("sheets", "[]");
+    try {
+        const res = await fetch("/api/history/import-horario-excel/preview", { method: "POST", body: fd });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(_importHorarioExcelApiErrorMessage(data, res.statusText));
+        if (st) st.textContent = `Archivo: ${f.name} — elija pestañas y pulse Vista previa.`;
+        (data.sheetnames || []).forEach((name) => {
+            const row = document.createElement("div");
+            row.style.display = "flex";
+            row.style.alignItems = "center";
+            row.style.gap = "8px";
+            row.style.marginBottom = "4px";
+            const cb = document.createElement("input");
+            cb.type = "checkbox";
+            cb.value = name;
+            const safeId = `import-excel-sheet-${String(name).replace(/\W/g, "_")}`;
+            cb.id = safeId;
+            const n = String(name).trim();
+            if (/^(10|11|12|13)$/.test(n)) cb.checked = true;
+            const lb = document.createElement("label");
+            lb.htmlFor = safeId;
+            lb.textContent = name;
+            lb.style.cursor = "pointer";
+            row.appendChild(cb);
+            row.appendChild(lb);
+            sl.appendChild(row);
+        });
+    } catch (e) {
+        console.error(e);
+        if (st) st.textContent = e.message || String(e);
+    }
+}
+
+async function runImportHorarioExcelHistorialPreview() {
+    const st = document.getElementById("importHorarioExcelStatus");
+    const iw = document.getElementById("importHorarioExcelInverseWarnings");
+    const btn = document.getElementById("importHorarioExcelConfirmBtn");
+    if (!importHorarioExcelHistorialFile) {
+        if (st) st.textContent = "Seleccione un archivo Excel.";
+        return;
+    }
+    const checks = [...document.querySelectorAll("#importHorarioExcelSheetList input[type=checkbox]:checked")];
+    const sheets = checks.map((c) => c.value);
+    if (!sheets.length) {
+        if (st) st.textContent = "Marque al menos una hoja.";
+        return;
+    }
+    if (st) st.textContent = "Generando vista previa…";
+    if (iw) iw.textContent = "";
+    btn.disabled = true;
+    const fd = new FormData();
+    fd.append("file", importHorarioExcelHistorialFile);
+    fd.append("sheets", JSON.stringify(sheets));
+    try {
+        const res = await fetch("/api/history/import-horario-excel/preview", { method: "POST", body: fd });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(_importHorarioExcelApiErrorMessage(data, res.statusText));
+        importHorarioExcelHistorialDrafts = data.drafts || [];
+        if (Array.isArray(data.inverse_map_warnings) && data.inverse_map_warnings.length) {
+            iw.textContent =
+                "Avisos catálogo turnos (colisiones texto→código): " +
+                data.inverse_map_warnings.slice(0, 6).join("; ");
+        }
+        renderImportHorarioExcelHistorialPreview(importHorarioExcelHistorialDrafts);
+        const anyOk = importHorarioExcelHistorialDrafts.some(
+            (d) =>
+                (!d.errors || !d.errors.length) &&
+                d.week_dates &&
+                Object.keys(d.week_dates).length >= 7
+        );
+        btn.disabled = !anyOk;
+        if (st) {
+            st.textContent = anyOk
+                ? "Revise la vista previa y pulse Aceptar (solo se guardan las hojas sin errores)."
+                : "Ninguna hoja es importable: corrija el Excel o elija otras pestañas.";
+        }
+    } catch (e) {
+        console.error(e);
+        if (st) st.textContent = e.message || String(e);
+    }
+}
+
+function renderImportHorarioExcelHistorialPreview(drafts) {
+    const pv = document.getElementById("importHorarioExcelPreview");
+    if (!pv) return;
+    pv.innerHTML = "";
+    drafts.forEach((d, i) => {
+        const card = document.createElement("div");
+        card.className = "import-excel-draft-card";
+        card.dataset.draftIndex = String(i);
+        card.style.marginBottom = "1.25rem";
+        card.style.padding = "12px";
+        card.style.border = "1px solid var(--border, #e2e8f0)";
+        card.style.borderRadius = "10px";
+
+        const h = document.createElement("h4");
+        h.style.margin = "0 0 8px";
+        h.textContent = `Hoja: ${d.sheet || ""}`;
+        card.appendChild(h);
+
+        const errBox = document.createElement("div");
+        if (d.errors && d.errors.length) {
+            errBox.style.color = "var(--danger, #dc2626)";
+            errBox.style.fontSize = "0.85rem";
+            errBox.style.marginBottom = "8px";
+            errBox.textContent = "Errores: " + d.errors.join(" · ");
+        }
+        card.appendChild(errBox);
+
+        const warnBox = document.createElement("div");
+        if (d.warnings && d.warnings.length) {
+            warnBox.style.color = "var(--warning, #d97706)";
+            warnBox.style.fontSize = "0.85rem";
+            warnBox.style.marginBottom = "8px";
+            warnBox.textContent = "Avisos: " + d.warnings.slice(0, 14).join(" · ");
+        }
+        card.appendChild(warnBox);
+
+        const nameL = document.createElement("label");
+        nameL.textContent = "Nombre en historial";
+        nameL.style.display = "block";
+        nameL.style.fontSize = "0.85rem";
+        nameL.style.marginBottom = "4px";
+        const nameInp = document.createElement("input");
+        nameInp.type = "text";
+        nameInp.className = "import-draft-name form-input";
+        nameInp.style.width = "100%";
+        nameInp.style.marginBottom = "10px";
+        nameInp.value = (d.name_sugerido || "").trim();
+        nameInp.placeholder = "Ej. Semana 10";
+        card.appendChild(nameL);
+        card.appendChild(nameInp);
+
+        const wrap = document.createElement("div");
+        wrap.className = "history-table-wrapper";
+        wrap.style.overflowX = "auto";
+        const table = document.createElement("table");
+        table.className = "clean-table";
+        table.id = `import-hist-prev-${i}`;
+        table.innerHTML = `
+            <thead>
+                <tr>
+                    <th>Empleado</th>
+                    <th>Vie</th>
+                    <th>Sáb</th>
+                    <th>Dom</th>
+                    <th>Lun</th>
+                    <th>Mar</th>
+                    <th>Mié</th>
+                    <th>Jue</th>
+                    <th class="col-hours">Horas</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        `;
+        wrap.appendChild(table);
+        card.appendChild(wrap);
+        pv.appendChild(card);
+        renderSchedule(d.schedule || {}, `#import-hist-prev-${i}`, {}, {});
+    });
+}
+
+async function confirmImportHorarioExcelHistorial() {
+    const st = document.getElementById("importHorarioExcelStatus");
+    const cards = [...document.querySelectorAll("#importHorarioExcelPreview .import-excel-draft-card")];
+    const items = [];
+    const days = ["Vie", "Sáb", "Dom", "Lun", "Mar", "Mié", "Jue"];
+    for (const card of cards) {
+        const i = Number(card.dataset.draftIndex);
+        const d = importHorarioExcelHistorialDrafts[i];
+        if (!d) continue;
+        if (d.errors && d.errors.length) continue;
+        if (!d.week_dates || days.some((day) => !(day in d.week_dates))) continue;
+        const nameInp = card.querySelector(".import-draft-name");
+        const name = (nameInp && nameInp.value.trim()) || (d.name_sugerido || "").trim();
+        if (!name) {
+            if (st) st.textContent = "Indique un nombre en historial para cada semana válida.";
+            return;
+        }
+        items.push({
+            name,
+            schedule: d.schedule || {},
+            week_dates: d.week_dates,
+            daily_tasks: {},
+        });
+    }
+    if (!items.length) {
+        if (st) st.textContent = "No hay borradores válidos para guardar.";
+        return;
+    }
+    if (st) st.textContent = "Guardando…";
+    try {
+        const res = await fetch("/api/history/import-horario-excel/confirm", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ items }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(_importHorarioExcelApiErrorMessage(data, res.statusText));
+        closeImportHorarioExcelHistorialModal();
+        await loadHistory(true);
+    } catch (e) {
+        console.error(e);
+        if (st) st.textContent = e.message || String(e);
     }
 }
 
@@ -3058,6 +3375,8 @@ async function toggleValidation() {
         if (summaryPanel) summaryPanel.style.display = "none";
         const coveragePanel = document.getElementById("coverageInfoPanel");
         if (coveragePanel) coveragePanel.style.display = "none";
+        const restPanel = document.getElementById("restBetweenShiftsPanel");
+        if (restPanel) restPanel.style.display = "none";
     }
 }
 
@@ -3070,7 +3389,7 @@ function applyValidationUI() {
         });
 
     // Remove old panels
-    ["validationSummaryPanel", "coverageInfoPanel"].forEach(id => {
+    ["validationSummaryPanel", "coverageInfoPanel", "restBetweenShiftsPanel"].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.remove();
     });
@@ -3264,6 +3583,83 @@ function applyValidationUI() {
             ${hmCells}
         </div>`;
 
+    // === Descanso entre turnos (metadata del solver o cálculo local) ===
+    const restSrc =
+        currentMetadata?.rest_between_shifts ||
+        buildRestReportClient(currentGeneratedSchedule, currentMetadata?.min_rest_hours_target ?? 12);
+    const targetRest = currentMetadata?.min_rest_hours_target ?? restSrc.target_hours ?? 12;
+    const appliedRest =
+        currentMetadata?.min_rest_hours_applied != null
+            ? currentMetadata.min_rest_hours_applied
+            : restSrc.applied_hours != null
+              ? restSrc.applied_hours
+              : targetRest;
+    const perRest = restSrc.per_employee || {};
+    const restNames = Object.keys(perRest).sort((a, b) => a.localeCompare(b, "es"));
+    const showRelaxedBand = appliedRest < targetRest;
+
+    const restGapClass = (hours) => {
+        if (hours < appliedRest) return "rest-gap-bad";
+        if (hours < targetRest) return "rest-gap-relaxed";
+        return "rest-gap-ok";
+    };
+
+    let restBanner = "";
+    if (appliedRest < targetRest) {
+        restBanner = `<div class="val-rest-banner val-rest-banner-relaxed"><i class="fa-solid fa-moon"></i> El generador aplicó <strong>${appliedRest}h</strong> de descanso mínimo entre turnos laborables (objetivo <strong>${targetRest}h</strong>).</div>`;
+    } else {
+        restBanner = `<div class="val-rest-banner val-rest-banner-ok"><i class="fa-solid fa-bed"></i> Descanso mínimo aplicado: <strong>${appliedRest}h</strong> (objetivo <strong>${targetRest}h</strong>).</div>`;
+    }
+    if (restSrc.client_only) {
+        restBanner += `<div class="val-rest-note"><i class="fa-solid fa-circle-info"></i> Estimación en el navegador (entrada sin metadata del solver); mismas reglas de horas que el motor.</div>`;
+    }
+
+    const restCards = restNames.map((name) => {
+        const row = perRest[name] || {};
+        if (row.skipped) {
+            return `<div class="rest-card rest-card-skipped"><div class="rest-card-top"><span class="rest-name">${escapeHtmlAttr(name)}</span><span class="rest-pill rest-pill-skip">Sin regla</span></div><div class="rest-card-body">Exento de descanso mínimo entre turnos.</div></div>`;
+        }
+        const minG = row.min_gap_hours;
+        const meetsApplied =
+            typeof row.meets_applied === "boolean"
+                ? row.meets_applied
+                : minG == null || minG >= appliedRest;
+        const meetsTarget =
+            typeof row.meets_target === "boolean" ? row.meets_target : minG == null || minG >= targetRest;
+        const minLabel = minG == null ? "—" : `${minG}h`;
+        const minPill =
+            minG == null
+                ? "rest-pill-neutral"
+                : !meetsApplied
+                  ? "rest-pill-bad"
+                  : !meetsTarget
+                    ? "rest-pill-warn"
+                    : "rest-pill-ok";
+        const gaps = (row.gaps || [])
+            .map(
+                (g) =>
+                    `<span class="rest-gap ${restGapClass(g.hours)}" title="${escapeHtmlAttr(g.from)} → ${escapeHtmlAttr(g.to)}: ${g.hours}h">${escapeHtmlAttr(g.from)}→${escapeHtmlAttr(g.to)}: <strong>${g.hours}h</strong></span>`
+            )
+            .join("");
+        const gapsHtml = gaps || `<span class="rest-no-gaps">Sin pares de turnos consecutivos en la semana.</span>`;
+        return `<div class="rest-card"><div class="rest-card-top"><span class="rest-name">${escapeHtmlAttr(name)}</span><span class="rest-pill ${minPill}">Mín: ${minLabel}</span></div><div class="rest-gaps-row">${gapsHtml}</div></div>`;
+    }).join("");
+
+    const restEl = document.createElement("div");
+    restEl.id = "restBetweenShiftsPanel";
+    restEl.className = "val-rest-wrap";
+    restEl.innerHTML = `
+        <div class="val-heatmap-header">
+            <span><i class="fa-solid fa-hourglass-half"></i> Descanso entre turnos consecutivos</span>
+            <div class="rest-legend">
+                <span class="rest-leg rest-leg-ok">≥ ${targetRest}h (objetivo)</span>
+                ${showRelaxedBand ? `<span class="rest-leg rest-leg-relaxed">${appliedRest}h–${targetRest - 1}h (relajado)</span>` : ""}
+                <span class="rest-leg rest-leg-bad">&lt; ${appliedRest}h (incumple mínimo aplicado)</span>
+            </div>
+        </div>
+        ${restBanner}
+        <div class="rest-cards-grid">${restCards}</div>`;
+
     // === BUILD DAY CARDS ===
     const cardsHTML = DAYS.map(day => {
         const { errors, warnings, colIndex, capStatus, capHours, capHoursUsed, capHoursAllowed } = dayResults[day];
@@ -3352,6 +3748,7 @@ function applyValidationUI() {
     const body = overlay.querySelector("#valOverlayBody");
     body.appendChild(summaryEl);
     body.appendChild(hmEl);
+    body.appendChild(restEl);
 
     overlay.classList.remove("val-overlay-hidden");
     overlay.classList.add("val-overlay-visible");
@@ -3469,7 +3866,15 @@ window.validateHistory = async function (index, event) {
 
         const oldSchedule = currentGeneratedSchedule;
         const oldRules = validationRules;
+        const oldMeta = currentMetadata;
         currentGeneratedSchedule = entry.schedule;
+        currentMetadata = oldMeta && typeof oldMeta === "object" ? { ...oldMeta } : {};
+        delete currentMetadata.rest_between_shifts;
+        delete currentMetadata.min_rest_hours_applied;
+        delete currentMetadata.min_rest_hours_target;
+        if (entry.rest_between_shifts) currentMetadata.rest_between_shifts = entry.rest_between_shifts;
+        if (entry.min_rest_hours_applied != null) currentMetadata.min_rest_hours_applied = entry.min_rest_hours_applied;
+        if (entry.min_rest_hours_target != null) currentMetadata.min_rest_hours_target = entry.min_rest_hours_target;
 
         validationRules = await fetchValidationRules(entry.special_days || {});
 
@@ -3478,6 +3883,7 @@ window.validateHistory = async function (index, event) {
 
         currentGeneratedSchedule = oldSchedule;
         validationRules = oldRules || baseValidationRules;
+        currentMetadata = oldMeta;
     } catch (err) {
         console.error(err);
         alert("Error al validar historial");
@@ -4090,3 +4496,789 @@ document.addEventListener("keydown", function(e) {
         }
     }
 });
+
+// =============================================================================
+// MÓDULO: GENERADOR DE HORARIO PARCIAL
+// Permite regenerar días específicos de una semana existente en el historial
+// ante bajas o ausencias imprevistas, respetando la cobertura y las reglas
+// del motor (ShiftScheduler) sin modificar scheduler_engine.py.
+// =============================================================================
+
+const PartialGenerator = {
+    /** Entrada del historial seleccionada como base ({ db_id, name, schedule, week_dates, ... }) */
+    baseEntry: null,
+
+    /**
+     * Días pasados (bloqueados). Clave = nombre de día ("Vie", "Lun", etc.)
+     * Estado: true = bloqueado (día pasado), false = activo (a regenerar).
+     * El objeto preserva el orden canónico de DAYS.
+     */
+    dayLocked: {},
+
+    /** [{name: str, last_working_day: str}] — empleados dados de baja */
+    departed: [],
+
+    /**
+     * [{employee: str, day: str, fixed: bool}]
+     * Clasificación de OFFs detectados en los días activos del horario base.
+     */
+    offClassifications: [],
+
+    /** Último resultado del solver (<partial_result>) — usado para el guardado */
+    lastResult: null,
+
+    /** Caché interna de resultados de búsqueda actuales — evita JSON en onclick inline */
+    _searchCache: [],
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // PASO 1 — Búsqueda de historial
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Busca en el historial por nombre y muestra un dropdown de resultados.
+     * Se llama desde oninput / onfocus del input de búsqueda.
+     */
+    async searchHistory(query) {
+        const resultsEl = document.getElementById("partialSearchResults");
+        if (!resultsEl) return;
+
+        try {
+            const history = await fetch("/api/history").then(r => r.json());
+            this._searchCache = history
+                .filter(h => (h.name || "").toLowerCase().includes((query || "").toLowerCase()))
+                .slice(0, 12);
+
+            if (this._searchCache.length === 0) {
+                resultsEl.innerHTML = '<p style="padding:0.75rem 1rem; font-size:0.82rem; color:var(--text-muted); margin:0;">Sin resultados.</p>';
+                resultsEl.style.display = "block";
+                return;
+            }
+
+            resultsEl.innerHTML = this._searchCache.map((h, idx) => {
+                const weekDates = h.week_dates || {};
+                const range = (weekDates["Vie"] && weekDates["Jue"])
+                    ? `Vie ${weekDates["Vie"]} – Jue ${weekDates["Jue"]}`
+                    : (h.timestamp ? h.timestamp.slice(0, 10) : "");
+                const isPartial = (h.name || "").includes("(parcial)");
+                // IMPORTANTE: usamos el índice en la caché en lugar de serializar el
+                // objeto completo dentro del atributo onclick — evita problemas con
+                // caracteres especiales y comillas en los valores del JSON.
+                return `
+                    <div
+                        class="partial-search-item"
+                        onclick="PartialGenerator._selectFromCache(${idx})"
+                        style="
+                            padding: 0.65rem 1rem;
+                            cursor: pointer;
+                            border-bottom: 1px solid var(--border-color);
+                            transition: background 0.15s;
+                        "
+                        onmouseenter="this.style.background='var(--surface-2)'; this.style.borderLeft='3px solid #f97316'; this.style.paddingLeft='calc(1rem - 3px)';"
+                        onmouseleave="this.style.background=''; this.style.borderLeft=''; this.style.paddingLeft='1rem';"
+                    >
+                        <div style="display:flex; align-items:center; gap:0.5rem;">
+                            <i class="fa-solid fa-calendar-week" style="color:#f97316; font-size:0.8rem;"></i>
+                            <span style="font-weight:600; font-size:0.88rem; color:var(--text-main);">${h.name || "(sin nombre)"}</span>
+                            ${isPartial ? '<span style="background:rgba(249,115,22,0.12);color:#f97316;font-size:0.67rem;padding:1px 5px;border-radius:4px;border:1px solid rgba(249,115,22,0.25);">PARCIAL</span>' : ""}
+                        </div>
+                        <div style="font-size:0.72rem; color:var(--text-muted); margin-top:2px;">${range}</div>
+                    </div>
+                `;
+            }).join("");
+
+            resultsEl.style.display = "block";
+        } catch (e) {
+            console.error("[PartialGenerator] searchHistory error:", e);
+            resultsEl.innerHTML = '<p style="padding:0.75rem 1rem; font-size:0.82rem; color:#ef4444; margin:0;">Error al cargar el historial.</p>';
+            resultsEl.style.display = "block";
+        }
+    },
+
+    /**
+     * Selecciona una entrada de la búsqueda por índice en _searchCache.
+     * Llamado desde los onclick inline del dropdown.
+     */
+    _selectFromCache(idx) {
+        const entry = this._searchCache[idx];
+        if (!entry) {
+            console.error("[PartialGenerator] _selectFromCache: idx", idx, "no encontrado en caché");
+            return;
+        }
+        this.selectBase(entry);
+    },
+
+    /**
+     * Selecciona un horario base.
+     * Acepta el objeto entry directamente (desde _selectFromCache).
+     */
+    selectBase(entry) {
+        if (!entry || typeof entry !== "object") {
+            console.error("[PartialGenerator] selectBase: entry inválido", entry);
+            return;
+        }
+        this.baseEntry = entry;
+
+        // Cerrar dropdown y limpiar input
+        const resultsEl = document.getElementById("partialSearchResults");
+        if (resultsEl) resultsEl.style.display = "none";
+        const input = document.getElementById("partialSearchInput");
+        if (input) input.value = this.baseEntry.name || "";
+
+        // Mostrar chip del seleccionado
+        const selectedEl = document.getElementById("partialSelectedBase");
+        const nameEl = document.getElementById("partialBaseName");
+        const rangeEl = document.getElementById("partialBaseRange");
+        if (selectedEl) selectedEl.style.display = "flex";
+        if (nameEl) nameEl.textContent = this.baseEntry.name || "(sin nombre)";
+        const wd = this.baseEntry.week_dates || {};
+        if (rangeEl) rangeEl.textContent = (wd["Vie"] && wd["Jue"])
+            ? `Vie ${wd["Vie"]} – Jue ${wd["Jue"]}`
+            : "Sin fechas";
+
+        // Auto-detectar días pasados
+        this._detectLockedDays();
+
+        // Resetear bajas y clasificaciones, luego re-render
+        this.departed = [];
+        this._renderDepartedList();
+        this._buildOffClassifications();
+        this._renderOffTable();
+        this._updateStatusBadge();
+    },
+
+    /** Limpia la selección del horario base y resetea todo. */
+    clearBase() {
+        this.baseEntry = null;
+        this.dayLocked = {};
+        this.departed = [];
+        this.offClassifications = [];
+        this.lastResult = null;
+
+        const input = document.getElementById("partialSearchInput");
+        if (input) input.value = "";
+        const selectedEl = document.getElementById("partialSelectedBase");
+        if (selectedEl) selectedEl.style.display = "none";
+        const resultsEl = document.getElementById("partialSearchResults");
+        if (resultsEl) resultsEl.style.display = "none";
+
+        document.getElementById("partialDaySelector").innerHTML =
+            '<p class="helper-text-sm" style="color:var(--text-muted);">Seleccioná un horario base primero.</p>';
+        document.getElementById("partialOffTable").innerHTML =
+            '<p class="helper-text-sm" style="color:var(--text-muted);">Los libres aparecerán al seleccionar el horario base y configurar los días activos.</p>';
+        document.getElementById("partialPreviewZone").style.display = "none";
+        this._updateStatusBadge();
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // PASO 2 — Detección y selección de días bloqueados
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Auto-detecta los días pasados comparando week_dates[day] contra hoy.
+     * Construye this.dayLocked y llama a _renderDaySelector().
+     */
+    _detectLockedDays() {
+        const weekDates = (this.baseEntry || {}).week_dates || {};
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        this.dayLocked = {};
+        DAYS.forEach(day => {
+            const dateStr = weekDates[day];
+            if (!dateStr) {
+                // Sin fecha: marcar como activo por defecto
+                this.dayLocked[day] = false;
+                return;
+            }
+            // week_dates puede venir como "YYYY-MM-DD" o "DD/MM/YYYY"
+            let dayDate;
+            if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+                dayDate = new Date(dateStr + "T00:00:00");
+            } else {
+                const parts = dateStr.split("/");
+                if (parts.length === 3) {
+                    dayDate = new Date(`${parts[2]}-${parts[1].padStart(2,"0")}-${parts[0].padStart(2,"0")}T00:00:00`);
+                } else {
+                    this.dayLocked[day] = false;
+                    return;
+                }
+            }
+            this.dayLocked[day] = dayDate < today;
+        });
+
+        this._renderDaySelector();
+    },
+
+    /** Renderiza los chips de días con toggle bloqueado/activo. */
+    _renderDaySelector() {
+        const container = document.getElementById("partialDaySelector");
+        if (!container) return;
+
+        const weekDates = (this.baseEntry || {}).week_dates || {};
+
+        container.innerHTML = DAYS.map(day => {
+            const locked = this.dayLocked[day];
+            const dateStr = weekDates[day] || "";
+            // Formatear fecha corta DD/MM
+            let shortDate = "";
+            if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+                const parts = dateStr.split("-");
+                shortDate = `${parts[2]}/${parts[1]}`;
+            } else if (/^\d{2}\/\d{2}\/\d{4}$/.test(dateStr)) {
+                shortDate = dateStr.slice(0, 5);
+            }
+
+            const bg = locked
+                ? "rgba(100,116,139,0.12)"
+                : "rgba(16,185,129,0.1)";
+            const border = locked
+                ? "1px solid rgba(100,116,139,0.25)"
+                : "1px solid rgba(16,185,129,0.3)";
+            const color = locked ? "var(--text-muted)" : "#10b981";
+            const icon = locked ? "fa-lock" : "fa-unlock";
+            const label = locked ? "Pasado" : "Activo";
+
+            return `
+                <div
+                    onclick="PartialGenerator.toggleDayLock('${day}')"
+                    title="${locked ? 'Click para marcar como activo (regenerar)' : 'Click para marcar como pasado (bloquear)'}"
+                    style="
+                        padding: 0.55rem 0.85rem;
+                        border-radius: 10px;
+                        background: ${bg};
+                        border: ${border};
+                        cursor: pointer;
+                        display: flex;
+                        flex-direction: column;
+                        align-items: center;
+                        gap: 0.2rem;
+                        min-width: 68px;
+                        transition: all 0.2s;
+                    "
+                >
+                    <span style="font-weight:700; font-size:0.9rem; color:${color};">${day}</span>
+                    ${shortDate ? `<span style="font-size:0.68rem; color:var(--text-muted);">${shortDate}</span>` : ""}
+                    <span style="font-size:0.65rem; color:${color}; display:flex; align-items:center; gap:2px;">
+                        <i class="fa-solid ${icon}" style="font-size:0.6rem;"></i> ${label}
+                    </span>
+                </div>
+            `;
+        }).join("");
+    },
+
+    /** Alterna el estado bloqueado/activo de un día. */
+    toggleDayLock(day) {
+        this.dayLocked[day] = !this.dayLocked[day];
+        this._renderDaySelector();
+        // Recalcular OFFs porque cambió el rango activo
+        this._buildOffClassifications();
+        this._renderOffTable();
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // PASO 3 — Gestión de empleados dados de baja
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /** Agrega una fila de baja vacía para que el usuario complete. */
+    addDeparted() {
+        // Obtener lista de empleados del horario base
+        const empNames = this.baseEntry
+            ? Object.keys(this.baseEntry.schedule || {})
+            : employees.map(e => e.name);
+
+        // Evitar duplicados: eliminar los ya seleccionados
+        const usedNames = new Set(this.departed.map(d => d.name));
+        const available = empNames.filter(n => !usedNames.has(n));
+
+        if (available.length === 0) {
+            setStatusMessage("Todos los empleados del horario ya están en la lista", "info");
+            return;
+        }
+
+        // Predeterminar al primero disponible y al último día activo disponible
+        const activeDays = DAYS.filter(d => !this.dayLocked[d]);
+        this.departed.push({
+            name: available[0],
+            last_working_day: activeDays.length > 0 ? activeDays[activeDays.length - 1] : DAYS[DAYS.length - 1],
+        });
+
+        this._renderDepartedList();
+        // Reconstruir clasificaciones porque los días del despedido ya no cuentan
+        this._buildOffClassifications();
+        this._renderOffTable();
+    },
+
+    /** Actualiza un campo de un elemento de la lista de bajas. */
+    updateDeparted(index, field, value) {
+        if (this.departed[index]) {
+            this.departed[index][field] = value;
+            this._buildOffClassifications();
+            this._renderOffTable();
+        }
+    },
+
+    /** Elimina un elemento de la lista de bajas. */
+    removeDeparted(index) {
+        this.departed.splice(index, 1);
+        this._renderDepartedList();
+        this._buildOffClassifications();
+        this._renderOffTable();
+    },
+
+    /** Renderiza la lista de bajas configuradas. */
+    _renderDepartedList() {
+        const container = document.getElementById("partialDepartedList");
+        const emptyMsg = document.getElementById("partialDepartedEmpty");
+        if (!container) return;
+
+        const empNames = this.baseEntry
+            ? Object.keys(this.baseEntry.schedule || {})
+            : employees.map(e => e.name);
+
+        if (this.departed.length === 0) {
+            if (emptyMsg) emptyMsg.style.display = "";
+            // Limpiar las filas si las hay
+            container.querySelectorAll(".partial-departed-row").forEach(el => el.remove());
+            return;
+        }
+        if (emptyMsg) emptyMsg.style.display = "none";
+
+        // Reconstruir filas
+        container.querySelectorAll(".partial-departed-row").forEach(el => el.remove());
+        this.departed.forEach((dep, idx) => {
+            const row = document.createElement("div");
+            row.className = "partial-departed-row";
+            row.style.cssText = "display:flex; align-items:center; gap:0.5rem; padding:0.6rem 0.75rem; background:rgba(239,68,68,0.06); border:1px solid rgba(239,68,68,0.2); border-radius:10px;";
+
+            const empOptions = empNames.map(n =>
+                `<option value="${n}" ${n === dep.name ? "selected" : ""}>${n}</option>`
+            ).join("");
+            const dayOptions = DAYS.map(d =>
+                `<option value="${d}" ${d === dep.last_working_day ? "selected" : ""}>${d}</option>`
+            ).join("");
+
+            row.innerHTML = `
+                <i class="fa-solid fa-user-slash" style="color:#ef4444; font-size:0.85rem; flex-shrink:0;"></i>
+                <select
+                    onchange="PartialGenerator.updateDeparted(${idx},'name',this.value)"
+                    style="flex:1; padding:0.4rem 0.6rem; border-radius:8px; border:1px solid var(--border-color); background:var(--surface-2); color:var(--text-main); font-size:0.85rem;"
+                >${empOptions}</select>
+                <span style="font-size:0.78rem; color:var(--text-muted); flex-shrink:0; white-space:nowrap;">Último día:</span>
+                <select
+                    onchange="PartialGenerator.updateDeparted(${idx},'last_working_day',this.value)"
+                    style="padding:0.4rem 0.6rem; border-radius:8px; border:1px solid var(--border-color); background:var(--surface-2); color:var(--text-main); font-size:0.85rem;"
+                >${dayOptions}</select>
+                <button
+                    onclick="PartialGenerator.removeDeparted(${idx})"
+                    style="background:none; border:none; color:#ef4444; cursor:pointer; padding:0.3rem; font-size:0.85rem;"
+                    title="Quitar"
+                ><i class="fa-solid fa-xmark"></i></button>
+            `;
+            container.appendChild(row);
+        });
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // PASO 4 — Clasificación de OFFs
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Extrae todos los OFFs (OFF, VAC, PERM) del horario base en los días activos,
+     * excluyendo los días de los empleados despedidos.
+     * Los inicializa como flexibles (fixed: false).
+     */
+    _buildOffClassifications() {
+        if (!this.baseEntry) {
+            this.offClassifications = [];
+            return;
+        }
+
+        const schedule = this.baseEntry.schedule || {};
+        const activeDays = DAYS.filter(d => !this.dayLocked[d]);
+        const departedNames = new Set(this.departed.map(d => d.name));
+
+        // Preservar clasificaciones existentes para no resetear decisiones del usuario
+        const existingMap = new Map(
+            this.offClassifications.map(c => [`${c.employee}|${c.day}`, c.fixed])
+        );
+
+        this.offClassifications = [];
+        for (const [emp, days] of Object.entries(schedule)) {
+            if (departedNames.has(emp)) continue; // El despedido no aplica
+            for (const day of activeDays) {
+                const shift = days[day];
+                if (shift === "OFF" || shift === "VAC" || shift === "PERM") {
+                    const key = `${emp}|${day}`;
+                    this.offClassifications.push({
+                        employee: emp,
+                        day,
+                        fixed: existingMap.has(key) ? existingMap.get(key) : false,
+                    });
+                }
+            }
+        }
+    },
+
+    /** Alterna la clasificación fixed/flexible de una entrada de OFF. */
+    toggleOff(index) {
+        if (this.offClassifications[index]) {
+            this.offClassifications[index].fixed = !this.offClassifications[index].fixed;
+            this._renderOffTable();
+        }
+    },
+
+    /** Renderiza la tabla de clasificación de OFFs. */
+    _renderOffTable() {
+        const container = document.getElementById("partialOffTable");
+        if (!container) return;
+
+        if (this.offClassifications.length === 0) {
+            container.innerHTML = '<p class="helper-text-sm" style="color:var(--text-muted); margin:0;">Sin libres en los días activos del horario base.</p>';
+            return;
+        }
+
+        const rows = this.offClassifications.map((clf, idx) => {
+            const isFixed = clf.fixed;
+            const shiftLabel = (this.baseEntry?.schedule?.[clf.employee]?.[clf.day]) || "OFF";
+            return `
+                <tr>
+                    <td style="padding:0.5rem 0.75rem; font-weight:500; color:var(--text-main); font-size:0.85rem;">${clf.employee}</td>
+                    <td style="padding:0.5rem 0.75rem; font-size:0.85rem; color:var(--text-muted);">${clf.day}</td>
+                    <td style="padding:0.5rem 0.75rem;">
+                        <span style="background:rgba(100,116,139,0.1); color:var(--text-muted); font-size:0.75rem; padding:2px 8px; border-radius:6px; font-weight:600;">${shiftLabel}</span>
+                    </td>
+                    <td style="padding:0.5rem 0.75rem;">
+                        <div style="display:flex; gap:0.4rem;">
+                            <button
+                                onclick="PartialGenerator.toggleOff(${idx})"
+                                style="
+                                    padding: 0.3rem 0.65rem;
+                                    font-size: 0.75rem;
+                                    border-radius: 7px;
+                                    border: 1px solid ${isFixed ? "rgba(239,68,68,0.4)" : "var(--border-color)"};
+                                    background: ${isFixed ? "rgba(239,68,68,0.08)" : "transparent"};
+                                    color: ${isFixed ? "#ef4444" : "var(--text-muted)"};
+                                    cursor: pointer;
+                                    font-weight: 600;
+                                    display: flex;
+                                    align-items: center;
+                                    gap: 0.3rem;
+                                "
+                                title="${isFixed ? "Clic para marcar como flexible" : "Clic para fijar este libre"}"
+                            >
+                                <i class="fa-solid ${isFixed ? "fa-lock" : "fa-unlock"}" style="font-size:0.65rem;"></i>
+                                ${isFixed ? "Fijo" : "Flexible"}
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+            `;
+        }).join("");
+
+        container.innerHTML = `
+            <table style="width:100%; border-collapse:collapse;">
+                <thead>
+                    <tr style="border-bottom:1px solid var(--border-color);">
+                        <th style="padding:0.4rem 0.75rem; text-align:left; font-size:0.78rem; color:var(--text-muted); font-weight:600;">Colaborador</th>
+                        <th style="padding:0.4rem 0.75rem; text-align:left; font-size:0.78rem; color:var(--text-muted); font-weight:600;">Día</th>
+                        <th style="padding:0.4rem 0.75rem; text-align:left; font-size:0.78rem; color:var(--text-muted); font-weight:600;">Tipo</th>
+                        <th style="padding:0.4rem 0.75rem; text-align:left; font-size:0.78rem; color:var(--text-muted); font-weight:600;">Clasificación</th>
+                    </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+            </table>
+        `;
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // GENERACIÓN
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /** Arma el payload y llama a POST /api/solve-partial. */
+    async generate() {
+        if (!this.baseEntry) {
+            setStatusMessage("Seleccioná un horario base primero", "error");
+            return;
+        }
+
+        const lockedDays = DAYS.filter(d => this.dayLocked[d]);
+        const activeDays = DAYS.filter(d => !this.dayLocked[d]);
+
+        if (activeDays.length === 0) {
+            setStatusMessage("No hay días activos — desbloqueá al menos uno", "error");
+            return;
+        }
+
+        // Obtener week_start (Viernes de esa semana en ISO)
+        const weekDates = this.baseEntry.week_dates || {};
+        let targetWeekStart = null;
+        const vieDate = weekDates["Vie"];
+        if (vieDate) {
+            if (/^\d{4}-\d{2}-\d{2}$/.test(vieDate)) {
+                targetWeekStart = vieDate;
+            } else if (/^\d{2}\/\d{2}\/\d{4}$/.test(vieDate)) {
+                const parts = vieDate.split("/");
+                targetWeekStart = `${parts[2]}-${parts[1].padStart(2,"0")}-${parts[0].padStart(2,"0")}`;
+            }
+        }
+
+        const payload = {
+            base_history_db_id: this.baseEntry.db_id,
+            config: getCurrentConfig(),
+            target_week_start: targetWeekStart,
+            special_days: {},
+            locked_days: lockedDays,
+            departed_employees: this.departed,
+            off_classifications: this.offClassifications,
+        };
+
+        const btn = document.getElementById("btnGeneratePartial");
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Generando...'; }
+
+        try {
+            const result = await fetch("/api/solve-partial", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload),
+            }).then(r => r.json());
+
+            if (result.status !== "Success") {
+                const detail = result.status || result.detail || "Error desconocido";
+                setStatusMessage(`Error: ${detail}`, "error", 5000);
+                return;
+            }
+
+            this.lastResult = result;
+            this._renderPreview(result);
+            setStatusMessage("Horario parcial generado ✓", "success");
+
+        } catch (e) {
+            console.error("[PartialGenerator] generate error:", e);
+            setStatusMessage("Error al conectar con el servidor", "error");
+        } finally {
+            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> <span>Generar Horario Parcial</span>'; }
+        }
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // PREVIEW
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Renderiza la tabla de preview con tres tipos de celdas:
+     *  - 🔒 Locked (día pasado): gris, candado
+     *  - ✂️ Vacant (empleado despedido, día activo sin asignación): rayado diagonal
+     *  - ✅ Regenerado (día activo, empleado activo): verde suave
+     */
+    _renderPreview(result) {
+        const previewZone = document.getElementById("partialPreviewZone");
+        const tbody = document.getElementById("partialScheduleTbody");
+        if (!previewZone || !tbody) return;
+
+        const schedule = result.schedule || {};
+        const meta = result.metadata || {};
+        const lockedDays = new Set(meta.locked_days || []);
+        const departedNames = new Set((meta.departed_employees || []).map(d => d.name));
+
+        // Actualizar cabeceras con fechas
+        const weekDates = meta.week_dates || {};
+        DAYS.forEach(day => {
+            const th = document.getElementById(`partial-th-${day}`);
+            if (!th) return;
+            const dateStr = weekDates[day] || "";
+            let shortDate = "";
+            if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+                const p = dateStr.split("-"); shortDate = `${p[2]}/${p[1]}`;
+            } else if (/^\d{2}\/\d{2}\/\d{4}$/.test(dateStr)) {
+                shortDate = dateStr.slice(0, 5);
+            }
+            th.innerHTML = `${day}${shortDate ? `<br><small style="font-weight:400;color:var(--text-muted);font-size:0.68rem;">${shortDate}</small>` : ""}`;
+            // Colorear cabecera según estado
+            if (lockedDays.has(day)) {
+                th.style.background = "rgba(100,116,139,0.08)";
+                th.style.color = "var(--text-muted)";
+            } else {
+                th.style.background = "rgba(16,185,129,0.06)";
+                th.style.color = "#10b981";
+            }
+        });
+
+        // Construir filas
+        const empNames = Object.keys(schedule);
+        tbody.innerHTML = empNames.map(emp => {
+            const isDeparted = departedNames.has(emp);
+            const empSchedule = schedule[emp] || {};
+
+            const cells = DAYS.map(day => {
+                const shift = empSchedule[day]; // undefined = celda vacía
+                const isLocked = lockedDays.has(day);
+
+                if (isLocked) {
+                    // Día pasado: gris con candado
+                    const displayShift = shift || "—";
+                    return `
+                        <td style="
+                            padding: 0.5rem 0.4rem;
+                            text-align: center;
+                            background: rgba(100,116,139,0.07);
+                            color: var(--text-muted);
+                            font-size: 0.78rem;
+                        ">
+                            <span style="display:flex; align-items:center; justify-content:center; gap:3px;">
+                                <i class="fa-solid fa-lock" style="font-size:0.55rem; opacity:0.5;"></i>
+                                ${displayShift}
+                            </span>
+                        </td>
+                    `;
+                }
+
+                if (isDeparted && shift === undefined) {
+                    // Empleado despedido en día activo: celda vacía con rayado diagonal
+                    return `
+                        <td style="
+                            padding: 0.5rem 0.4rem;
+                            text-align: center;
+                            background: repeating-linear-gradient(
+                                45deg,
+                                rgba(239,68,68,0.04) 0px, rgba(239,68,68,0.04) 3px,
+                                transparent 3px, transparent 9px
+                            );
+                            border: 1px solid rgba(239,68,68,0.15);
+                        ">
+                            <span style="font-size:0.7rem; color: rgba(239,68,68,0.4);">—</span>
+                        </td>
+                    `;
+                }
+
+                // Empleado activo en día activo: mostrar turno regenerado
+                const displayShift = shift || "—";
+                const isOff = shift === "OFF" || shift === "VAC" || shift === "PERM";
+                return `
+                    <td style="
+                        padding: 0.5rem 0.4rem;
+                        text-align: center;
+                        background: rgba(16,185,129,0.05);
+                        font-size: 0.8rem;
+                        font-weight: ${isOff ? "400" : "600"};
+                        color: ${isOff ? "var(--text-muted)" : "var(--text-main)"};
+                    ">
+                        ${displayShift}
+                    </td>
+                `;
+            }).join("");
+
+            const empRowStyle = isDeparted
+                ? "background: rgba(239,68,68,0.03);"
+                : "";
+
+            return `
+                <tr style="${empRowStyle}">
+                    <td style="padding:0.5rem 0.75rem; font-weight:${isDeparted ? "400" : "600"}; color:${isDeparted ? "var(--text-muted)" : "var(--text-main)"}; font-size:0.85rem; white-space:nowrap;">
+                        ${isDeparted ? '<i class="fa-solid fa-user-slash" style="font-size:0.7rem; color:#ef4444; margin-right:4px;"></i>' : ""}
+                        ${emp}
+                    </td>
+                    ${cells}
+                </tr>
+            `;
+        }).join("");
+
+        // Mostrar contexto del historial
+        const ctxLabel = document.getElementById("partialHistoryContextLabel");
+        if (ctxLabel) ctxLabel.textContent = meta.history_context_label || "";
+
+        previewZone.style.display = "block";
+        previewZone.scrollIntoView({ behavior: "smooth", block: "start" });
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // GUARDADO
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /** Guarda el resultado parcial como nueva entrada en el historial con sufijo "(parcial)". */
+    async save() {
+        if (!this.lastResult) {
+            setStatusMessage("Primero generá el horario parcial", "error");
+            return;
+        }
+
+        const baseName = (this.lastResult.metadata?.base_name || this.baseEntry?.name || "Semana").trim();
+        const name = baseName.endsWith("(parcial)") ? baseName : `${baseName} (parcial)`;
+
+        const entry = {
+            name,
+            schedule: this.lastResult.schedule || {},
+            daily_tasks: this.lastResult.daily_tasks || {},
+            week_dates: this.lastResult.metadata?.week_dates || {},
+            special_days: this.lastResult.metadata?.special_days || {},
+            timestamp: new Date().toISOString(),
+        };
+
+        try {
+            const res = await fetch("/api/history", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(entry),
+            });
+
+            if (res.ok) {
+                setStatusMessage(`"${name}" guardado en el historial ✓`, "success");
+            } else {
+                setStatusMessage("Error al guardar en el historial", "error");
+            }
+        } catch (e) {
+            console.error("[PartialGenerator] save error:", e);
+            setStatusMessage("Error al conectar con el servidor", "error");
+        }
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // UTILIDADES
+    // ─────────────────────────────────────────────────────────────────────────
+
+    _updateStatusBadge() {
+        const badge = document.getElementById("partialStatusBadge");
+        if (!badge) return;
+
+        if (!this.baseEntry) {
+            badge.textContent = "Sin configurar";
+            badge.style.color = "#f97316";
+            return;
+        }
+
+        const activeDays = DAYS.filter(d => !this.dayLocked[d]);
+        badge.textContent = `${this.baseEntry.name} — ${activeDays.length} días activos`;
+        badge.style.color = "#10b981";
+    },
+};
+
+// ─── Funciones globales (llamadas desde HTML inline) ──────────────────────────
+
+function partialSearchHistory(query) {
+    PartialGenerator.searchHistory(query).catch(console.error);
+}
+
+function partialClearBase() {
+    PartialGenerator.clearBase();
+}
+
+function partialAddDeparted() {
+    PartialGenerator.addDeparted();
+}
+
+async function generatePartialSchedule() {
+    await PartialGenerator.generate();
+}
+
+async function savePartialSchedule() {
+    await PartialGenerator.save();
+}
+
+// Cerrar el dropdown de búsqueda al hacer click fuera
+document.addEventListener("click", function(e) {
+    const input = document.getElementById("partialSearchInput");
+    const results = document.getElementById("partialSearchResults");
+    if (results && input && !input.contains(e.target) && !results.contains(e.target)) {
+        results.style.display = "none";
+    }
+});
+
