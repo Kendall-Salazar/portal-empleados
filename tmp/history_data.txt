@@ -1,0 +1,19 @@
+Total rows found: 3
+ID: 4486
+Nombre: Semana 15
+Special Days: {'Vie': 'closed'}
+  Natanael: {'Vie': 'OFF', 'Sáb': 'T8_13-20', 'Dom': 'D4_13-22', 'Lun': 'T8_13-20', 'Mar': 'T17_16-23', 'Mié': 'T8_13-20', 'Jue': 'OFF'}
+  Steven: {'Vie': 'OFF', 'Sáb': 'D2_14-22', 'Dom': 'T8_13-20', 'Lun': 'T1_05-13', 'Mar': 'OFF', 'Mié': 'T1_05-13', 'Jue': 'N_22-05'}
+----------------------------------------
+ID: 4487
+Nombre: Semana 15
+Special Days: {'Vie': 'closed'}
+  Natanael: {'Vie': 'OFF', 'Sáb': 'T17_16-23', 'Dom': 'D4_13-22', 'Lun': 'T17_16-23', 'Mar': 'T17_16-23', 'Mié': 'T17_16-23', 'Jue': 'T17_16-23'}
+  Steven: {'Vie': 'OFF', 'Sáb': 'D2_14-22', 'Dom': 'T8_13-20', 'Lun': 'T1_05-13', 'Mar': 'T1_05-13', 'Mié': 'T1_05-13', 'Jue': 'N_22-05'}
+----------------------------------------
+ID: 4488
+Nombre: Semana 15
+Special Days: {'Vie': 'closed'}
+  Natanael: {'Vie': 'OFF', 'Sáb': 'T10_15-22', 'Dom': 'T10_15-22', 'Lun': 'T10_15-22', 'Mar': 'T10_15-22', 'Mié': 'T10_15-22', 'Jue': 'T10_15-22'}
+  Steven: {'Vie': 'OFF', 'Sáb': 'T2_06-14', 'Dom': 'T1_05-13', 'Lun': 'T1_05-13', 'Mar': 'T1_05-13', 'Mié': 'T1_05-13', 'Jue': 'N_22-05'}
+----------------------------------------

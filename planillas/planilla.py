@@ -147,7 +147,8 @@ def leer_catalogo(wb):
         if not nom:
             continue
         tipo = str(ws.cell(r, 2).value or "").lower()
-        if "tarjeta" in tipo:
+        # Coherente con tipo_map en main: "Transferencia Bancaria" no contiene "tarjeta"
+        if "tarjeta" in tipo or "transferencia" in tipo:
             res["tarjeta"].append(nom)
         elif "fijo" in tipo:
             res["fijo"].append(nom)
@@ -186,13 +187,19 @@ def _write_section(
     seguro_modo="porcentual",
     holiday_dates=None,
     viernes_date=None,
+    horario_preview=None,
 ):
     """
     Escribe una sección (tarjeta / efectivo).
-    Bloque por empleado: 4 filas (Diurnas, Mixtas, Nocturnas, Extra) + 1 fila oculta Feriado.
+    Bloque por empleado: 3 filas base + 0–3 filas de extras (según horario_preview o las tres si no hay preview)
+    + fila ★ Feriado solo si la semana tiene feriado en config.
+    El pago de extras en el bruto se controla con la celda global $AA$1 (1=sí, 0=no).
     holiday_dates: list of ISO date strings ["YYYY-MM-DD", ...] for this week.
+    horario_preview: opcional {nombre_empleado: {Vie: turno, ...}} para omitir filas de extra sin uso.
     Devuelve (next_free_row, total_row, anchor_rows_list).
     """
+    import planilla_layout as pllay  # noqa: PLC0415 — evita import circular al cargar planilla
+
     COL_LAST = 20  # T
     # Check if any holiday falls within THIS specific week (viernes_date → viernes+6)
     has_holidays = False
@@ -202,6 +209,12 @@ def _write_section(
         week_end = viernes_date + _td(days=6)
         for h in holiday_dates:
             hd = h.get("date", "")
+            if hd is None:
+                continue
+            if hasattr(hd, "isoformat"):
+                hd = hd.isoformat()[:10]
+            else:
+                hd = str(hd).strip()[:10]
             if hd:
                 try:
                     from datetime import datetime as _dt
@@ -273,11 +286,25 @@ def _write_section(
             from datetime import timedelta as _td
             dia_date = viernes_date + _td(days=i)
             iso = dia_date.isoformat()
+            matched = None
             for h in holiday_dates:
-                if h.get("date") == iso:
-                    c.fill = _fill("D97706")  # ámbar oscuro para header
-                    c.value = f'="★ {dia}"&CHAR(10)&TEXT($C$2+{i},"DD/MM")'
+                hd = h.get("date", "")
+                if hd is not None and hasattr(hd, "isoformat"):
+                    hd = hd.isoformat()[:10]
+                else:
+                    hd = str(hd or "").strip()[:10]
+                if hd == iso:
+                    matched = h
                     break
+            if matched:
+                c.fill = _fill("D97706")  # ámbar oscuro para header
+                nm = str(matched.get("name") or "").replace('"', '""').strip()
+                if nm:
+                    c.value = (
+                        f'="★ {dia}"&CHAR(10)&TEXT($C$2+{i},"DD/MM")&CHAR(10)&"{nm}"'
+                    )
+                else:
+                    c.value = f'="★ {dia}"&CHAR(10)&TEXT($C$2+{i},"DD/MM")'
             else:
                 c.fill = _fill(C_OCEAN)
         else:
@@ -286,77 +313,93 @@ def _write_section(
 
     # ── Bloques de empleados ───────────────────────────────────────────────
     anchor_rows = []
-    conceptos = ["Hrs. Diurnas", "Hrs. Mixtas", "Hrs. Nocturnas", "Hrs. Extra"]
-    # Fondo alternado para filas de concepto
-    row_bgs   = [C_INPUT, C_INPUT_ALT, C_INPUT, C_INPUT_ALT]
 
     for emp in emp_list:
         anchor_rows.append(r)
-        block_end = r + 3   # 4 filas (0..3)
-        holiday_row = r + 4  # 5ta fila: Feriado (oculta por defecto)
+        need = pllay.extras_set_for_employee(emp, horario_preview)
+        rows_spec = [
+            ("Hrs. Diurnas", C_INPUT),
+            ("Hrs. Mixtas", C_INPUT_ALT),
+            ("Hrs. Nocturnas", C_INPUT),
+        ]
+        row_by_extra = {}
+        ri_next = r + 3
+        for ek in pllay.EXTRA_KEYS_ORDER:
+            if ek not in need:
+                continue
+            row_by_extra[ek] = ri_next
+            bg = C_INPUT_ALT if (len(rows_spec) % 2 == 1) else C_INPUT
+            rows_spec.append((pllay.EXTRA_LABELS[ek], bg))
+            ri_next += 1
 
-        ws.row_dimensions[r].height     = 20
-        ws.row_dimensions[r+1].height   = 20
-        ws.row_dimensions[r+2].height   = 20
-        ws.row_dimensions[r+3].height   = 20
-        ws.row_dimensions[holiday_row].height = 20
-        if not has_holidays:
-            ws.row_dimensions[holiday_row].hidden = True
+        n_rows = len(rows_spec)
+        block_end = r + n_rows - 1
+        holiday_row = (block_end + 1) if has_holidays else None
+        emp_a_end = holiday_row if holiday_row is not None else block_end
 
-        # Columna A — nombre empleado (mergeado 5 filas: 4 jornadas + feriado)
+        rd, rm, rn = r, r + 1, r + 2
+
+        for idx in range(n_rows):
+            ws.row_dimensions[r + idx].height = 20
+        if holiday_row is not None:
+            ws.row_dimensions[holiday_row].height = 20
+
+        # Columna A — nombre (merge hasta última fila del bloque incl. feriado si aplica)
         ws.merge_cells(start_row=r, start_column=1,
-                       end_row=holiday_row, end_column=1)
+                       end_row=emp_a_end, end_column=1)
         sc(ws, r, 1, emp,
            _font(10, True), _fill(emp_color), al_c,
            _border(left="medium", lc="334155", right="thin", rc="CBD5E1",
                    top="medium", tc="334155", bottom="medium", bc="334155"))
-        for ri in range(r+1, holiday_row+1):
+        for ri in range(r + 1, emp_a_end + 1):
             ws.cell(row=ri, column=1).border = _border(
                 left="medium", lc="334155", right="thin", rc="CBD5E1",
                 top="thin", tc="CBD5E1", bottom="thin", bc="CBD5E1")
 
-        for i, (conc, bg) in enumerate(zip(conceptos, row_bgs)):
-            ri   = r + i
+        for i, (conc, bg) in enumerate(rows_spec):
+            ri = r + i
             font_c = _font(9, False)
             fill_c = _fill(bg)
-
-            # B — etiqueta concepto
             sc(ws, ri, 2, conc, font_c, fill_c, al_l, B_DATA)
-
-            # C-I — celdas de ingreso de horas (editables)
             for ci in range(3, 10):
                 c = ws.cell(row=ri, column=ci)
-                c.value       = None
-                c.font        = _font(10, False, "1E3A5F")
-                c.fill        = _fill(C_WHITE)   # blanco puro → visualmente "ingresar aquí"
-                c.alignment   = al_c
-                c.border      = _border(lc="93C5FD", rc="93C5FD",
-                                        tc="93C5FD", bc="93C5FD")
+                c.value = None
+                c.font = _font(10, False, "1E3A5F")
+                c.fill = _fill(C_WHITE)
+                c.alignment = al_c
+                c.border = _border(lc="93C5FD", rc="93C5FD",
+                                   tc="93C5FD", bc="93C5FD")
                 c.number_format = HOURS_FMT
-
-            # J — suma horizontal
-            ws.cell(row=ri, column=10).value        = f"=C{ri}+D{ri}+E{ri}+F{ri}+G{ri}+H{ri}+I{ri}"
-            ws.cell(row=ri, column=10).font         = _font(10, True, "0F4C81")
-            ws.cell(row=ri, column=10).fill         = _fill(C_J_SUM)
-            ws.cell(row=ri, column=10).alignment    = al_c
-            ws.cell(row=ri, column=10).border       = B_DATA
+            ws.cell(row=ri, column=10).value = (
+                f"=C{ri}+D{ri}+E{ri}+F{ri}+G{ri}+H{ri}+I{ri}"
+            )
+            ws.cell(row=ri, column=10).font = _font(10, True, "0F4C81")
+            ws.cell(row=ri, column=10).fill = _fill(C_J_SUM)
+            ws.cell(row=ri, column=10).alignment = al_c
+            ws.cell(row=ri, column=10).border = B_DATA
             ws.cell(row=ri, column=10).number_format = HOURS_FMT
-
-            # K — separador invisible
             ws.cell(row=ri, column=11).fill = _fill(C_WHITE)
 
         # ── Columnas de resumen / deducciones ─────────
-        # IMPORTANTE: Merge solo 4 filas (r → block_end).
-        # La fila de feriado (holiday_row) tiene celdas INDEPENDIENTES.
-        # Si mergeáramos hasta holiday_row, escribir en la fila de feriado
-        # sobreescribiría la celda top-left del merge (fila r), rompiendo
-        # Bruto, Bonificaciones, Préstamos, Seguro, etc.
+        # Merge r → block_end (sin fila feriado). La fila feriado queda independiente.
 
-        # L — Bruto  (borde izquierdo grueso para separar visualmente)
-        # Formula: diurnas*D3 + mixtas*F3 + nocturnas*H3 + extra*J3 + feriado
+        parts_br = [f"J{r}*$D$3", f"J{r+1}*$F$3", f"J{r+2}*$H$3"]
+        for ek in pllay.EXTRA_KEYS_ORDER:
+            if ek not in row_by_extra:
+                continue
+            rr = row_by_extra[ek]
+            if ek == "ED":
+                parts_br.append(f"IF($AA$1=1,J{rr}*$D$3*1.5,0)")
+            elif ek == "EM":
+                parts_br.append(f"IF($AA$1=1,J{rr}*$F$3*1.5,0)")
+            else:
+                parts_br.append(f"IF($AA$1=1,J{rr}*$H$3*1.5,0)")
+        bruto_core = "=" + "+".join(parts_br)
+        c_value = f"{bruto_core}+L{holiday_row}" if holiday_row is not None else bruto_core
+
         ws.merge_cells(start_row=r, start_column=12, end_row=block_end, end_column=12)
         c = ws.cell(row=r, column=12)
-        c.value         = f"=J{r}*$D$3+J{r+1}*$F$3+J{r+2}*$H$3+J{r+3}*$J$3+L{holiday_row}"
+        c.value = c_value
         c.font          = _font(11, True, "1E3A5F")
         c.fill          = _fill(C_EMP_TARJETA if emp_color == C_EMP_TARJETA else C_EMP_EFECT)
         c.alignment     = al_c
@@ -395,7 +438,7 @@ def _write_section(
             for ri in range(r+1, block_end+1):
                 ws.cell(row=ri, column=col).border = B_DATA
 
-        # R — Seguro CCSS: fijo $O$3 o % sobre (L+M) vía $N$3; 0 si no aplica seguro
+        # R — Seguro obrero (CCSS): fijo $O$3 o % solo sobre bruto L ($N$3); 0 si no aplica
         ws.merge_cells(start_row=r, start_column=18,
                        end_row=block_end, end_column=18)
         c = ws.cell(row=r, column=18)
@@ -409,7 +452,7 @@ def _write_section(
         elif seguro_modo == "fijo":
             c.value = f"=$O$3"
         else:
-            c.value = f"=ROUND((L{r}+M{r})*$N$3,2)"
+            c.value = f"=ROUND(L{r}*$N$3,2)"
         c.font         = _font(10, True, C_SEGURO_FG)
         c.fill         = _fill(C_SEGURO_CELL)
         c.alignment    = al_c
@@ -449,47 +492,42 @@ def _write_section(
                 left="thin", lc="CBD5E1", right="medium", rc="334155",
                 top="thin",  tc="CBD5E1", bottom="thin",  bc="CBD5E1")
 
-        # ★ — FILA FERIADO (oculta si no hay feriados esta semana)
-        # Celdas INDEPENDIENTES — no mergeadas con las filas de arriba
-        # Columna B: label
-        sc(ws, holiday_row, 2, "★ Feriado", _font(9, True, "#F59E0B"),
-           _fill("FFFBEB"), al_l, B_DATA)
-        # Columnas C-I: vacías (se rellenan desde rellenar_horas_en_excel si hay feriado)
-        for ci in range(3, 10):
-            c = ws.cell(row=holiday_row, column=ci)
-            c.value       = None
-            c.font        = _font(10, False, "#F59E0B")
-            c.fill        = _fill("FFFDE7")
-            c.alignment   = al_c
-            c.border      = _border(lc="FCD34D", rc="FCD34D", tc="FCD34D", bc="FCD34D")
-            c.number_format = HOURS_FMT
-        # Columna J: suma de horas feriado (8h × num_feriados)
-        ws.cell(row=holiday_row, column=10).value = f"=C{holiday_row}+D{holiday_row}+E{holiday_row}+F{holiday_row}+G{holiday_row}+H{holiday_row}+I{holiday_row}"
-        ws.cell(row=holiday_row, column=10).font = _font(10, True, "#F59E0B")
-        ws.cell(row=holiday_row, column=10).fill = _fill("FEF3C7")
-        ws.cell(row=holiday_row, column=10).alignment = al_c
-        ws.cell(row=holiday_row, column=10).border = B_DATA
-        ws.cell(row=holiday_row, column=10).number_format = HOURS_FMT
-        # Columna K: separador
-        ws.cell(row=holiday_row, column=11).fill = _fill(C_WHITE)
-        # Columna L: recargo feriado (se calcula en rellenar_horas_en_excel con tarifa dominante)
-        # Celda INDEPENDIENTE — no mergeada
-        c_l = ws.cell(row=holiday_row, column=12)
-        c_l.value = 0  # Placeholder, se sobrescribe al importar horario
-        c_l.font = _font(10, True, "#F59E0B")
-        c_l.fill = _fill("FEF3C7")
-        c_l.alignment = al_c
-        c_l.border = _border(left="medium", lc="334155", right="thin", rc="CBD5E1",
-                              top="thin", tc="CBD5E1", bottom="thin", bc="CBD5E1")
-        c_l.number_format = MONEY
-        # Columnas M-T: celdas vacías en fila feriado (no bonif, deducciones, seguro)
-        # NO escribimos valores aquí para no interferir con los merges de arriba
-        for col in range(13, 21):
-            ws.cell(row=holiday_row, column=col).value = None
-            ws.cell(row=holiday_row, column=col).fill = _fill("FEF3C7")
-            ws.cell(row=holiday_row, column=col).border = B_DATA
+        # ★ — FILA FERIADO: solo si la semana tiene al menos un feriado (config)
+        if holiday_row is not None:
+            sc(ws, holiday_row, 2, "★ Feriado", _font(9, True, "FFF59E0B"),
+               _fill("FFFBEB"), al_l, B_DATA)
+            for ci in range(3, 10):
+                c = ws.cell(row=holiday_row, column=ci)
+                c.value = None
+                c.font = _font(10, False, "FFF59E0B")
+                c.fill = _fill("FFFDE7")
+                c.alignment = al_c
+                c.border = _border(lc="FCD34D", rc="FCD34D", tc="FCD34D", bc="FCD34D")
+                c.number_format = HOURS_FMT
+            ws.cell(row=holiday_row, column=10).value = (
+                f"=C{holiday_row}+D{holiday_row}+E{holiday_row}+F{holiday_row}+"
+                f"G{holiday_row}+H{holiday_row}+I{holiday_row}"
+            )
+            ws.cell(row=holiday_row, column=10).font = _font(10, True, "FFF59E0B")
+            ws.cell(row=holiday_row, column=10).fill = _fill("FEF3C7")
+            ws.cell(row=holiday_row, column=10).alignment = al_c
+            ws.cell(row=holiday_row, column=10).border = B_DATA
+            ws.cell(row=holiday_row, column=10).number_format = HOURS_FMT
+            ws.cell(row=holiday_row, column=11).fill = _fill(C_WHITE)
+            c_l = ws.cell(row=holiday_row, column=12)
+            c_l.value = pllay.feriado_monto_formula(holiday_row, rd, rm, rn, row_by_extra)
+            c_l.font = _font(10, True, "FFF59E0B")
+            c_l.fill = _fill("FEF3C7")
+            c_l.alignment = al_c
+            c_l.border = _border(left="medium", lc="334155", right="thin", rc="CBD5E1",
+                                  top="thin", tc="CBD5E1", bottom="thin", bc="CBD5E1")
+            c_l.number_format = MONEY
+            for col in range(13, 21):
+                ws.cell(row=holiday_row, column=col).value = None
+                ws.cell(row=holiday_row, column=col).fill = _fill("FEF3C7")
+                ws.cell(row=holiday_row, column=col).border = B_DATA
 
-        r = holiday_row + 1
+        r = (holiday_row + 1) if holiday_row is not None else (block_end + 1)
 
     # ── Fila TOTAL DE SECCIÓN ─────────────────────────────────────────────
     total_row = r
@@ -521,7 +559,8 @@ def _write_section(
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  SECCIÓN SALARIO FIJO
-#  Empleados con sueldo mensual fijo — sin grilla de horas, sólo deducciones
+#  Sin grilla de horas: sólo monto del período → bruto semanal, seguro CCSS y neto.
+#  No aplica préstamo, combustible, mercadería ni adelantos (van al final del Excel).
 # ══════════════════════════════════════════════════════════════════════════════
 C_FIJO_HDR  = "6D28D9"   # Morado — encabezado sección fijo
 C_FIJO_EMP  = "EDE9FE"   # Lavanda claro — celda nombre
@@ -529,12 +568,11 @@ C_FIJO_SAL  = "F5F3FF"   # Lavanda muy claro — celda salario
 
 def _write_fijo_section(ws, start_row, fijo_list, wb_catalog, seguro_por_empleado=None, seguro_modo="porcentual"):
     """
-    Renderiza la sección SALARIO FIJO de la hoja semanal.
-    Cada empleado ocupa 1 fila: Nombre | Salario Semanal (calculado) |
-    Préstamo | Combust. | Mercad. | Adelanto | Seguro (CCSS auto) |
-    Tot.Ded. | NETO
+    Sección SALARIO FIJO al final de la hoja semanal.
+    Empleado | monto a pagar (período, BD) | bruto semanal (₡, calculado en Python) |
+    columnas L–T alineadas al resto de la planilla: Bruto, bloque sin deducciones, seguro, neto.
 
-    wb_catalog: el workbook para leer el salario_fijo del Catálogo.
+    wb_catalog: respaldo de monto si falta en BD.
     Devuelve (next_row, total_row, anchor_rows).
     """
     if not fijo_list:
@@ -542,7 +580,9 @@ def _write_fijo_section(ws, start_row, fijo_list, wb_catalog, seguro_por_emplead
 
     COL_LAST = 20
 
-    # Leer salarios fijos del catálogo
+    import database as db
+
+    # Catálogo Excel (fallback de monto)
     salarios = {}
     if wb_catalog and "Catalogo" in wb_catalog.sheetnames:
         ws_cat = wb_catalog["Catalogo"]
@@ -551,6 +591,15 @@ def _write_fijo_section(ws, start_row, fijo_list, wb_catalog, seguro_por_emplead
             sal = ws_cat.cell(r_cat, 3).value
             if nom and isinstance(sal, (int, float)):
                 salarios[nom] = sal
+
+    conn = db.get_conn()
+    rows_sf = conn.execute(
+        "SELECT nombre, salario_fijo, "
+        "COALESCE(NULLIF(TRIM(periodo_salario_fijo), ''), 'mensual') AS periodo "
+        "FROM empleados WHERE tipo_pago='fijo'"
+    ).fetchall()
+    conn.close()
+    fijo_by_name = {str(r["nombre"]).strip(): r for r in rows_sf}
 
     r = start_row
 
@@ -564,37 +613,37 @@ def _write_fijo_section(ws, start_row, fijo_list, wb_catalog, seguro_por_emplead
     # ── Sub-encabezado ──
     ws.row_dimensions[r].height = 16
     ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=11)
-    sc(ws, r, 1, "COLABORADORES CON SALARIO MENSUAL FIJO",
+    sc(ws, r, 1, "Monto del período acordado y bruto semanal; sin otras deducciones — solo seguro CCSS",
        _font(8, True, C_WHITE), _fill(C_FIJO_HDR), al_c)
     ws.merge_cells(start_row=r, start_column=12, end_row=r, end_column=COL_LAST)
-    sc(ws, r, 12, "BONIF. / DEDUCCIONES / RESUMEN",
+    sc(ws, r, 12, "Resumen planilla (misma estructura que transferencia / efectivo)",
        _font(8, True, C_WHITE), _fill(C_SLATE), al_c)
     r += 1
 
     # ── Cabeceras de columna ──
-    ws.row_dimensions[r].height = 24
+    ws.row_dimensions[r].height = 26
+    hdr_row = r
     hdrs_fijo = [
-        (1,  "Empleado",       C_HDR_DARK),
-        (2,  "Salario Mensual",C_FIJO_HDR),
-        (3,  "Salario Semana", C_FIJO_HDR),
-        (11, "",               C_WHITE),
-        (12, "Bruto",          C_BRUTO_HDR),
-        (13, "Bonific.",        C_BONIF_HDR),
-        (14, "Préstamo",       C_DED_HDR),
-        (15, "Combust.",       C_DED_HDR),
-        (16, "Mercad.",        C_DED_HDR),
-        (17, "Adelanto",       C_DED_HDR),
-        (18, "Seguro",         C_SEGURO_HDR),
-        (19, "Tot. Ded.",      C_DED_HDR),
-        (20, "NETO",           C_NETO_HDR),
+        (1,  "Empleado",        C_HDR_DARK),
+        (2,  "Monto a pagar",   C_FIJO_HDR),
+        (3,  "Bruto semanal",   C_FIJO_HDR),
+        (12, "Bruto",           C_BRUTO_HDR),
+        (18, "Seguro",          C_SEGURO_HDR),
+        (19, "Tot. ded.",       C_DED_HDR),
+        (20, "NETO",            C_NETO_HDR),
     ]
     for col, txt, bg in hdrs_fijo:
-        sc(ws, r, col, txt or None,
+        sc(ws, hdr_row, col, txt,
            _font(9, True, C_WHITE), _fill(bg), al_c,
            B_THICK_LEFT if col == 12 else B_DATA)
-    # Columnas 4-10 vacías (sin grilla de horas)
-    for col in range(4, 11):
-        ws.cell(row=r, column=col).fill = _fill(C_FIJO_HDR if col < 11 else C_WHITE)
+    ws.merge_cells(start_row=hdr_row, start_column=4, end_row=hdr_row, end_column=11)
+    sc(ws, hdr_row, 4, "", _font(9, True, C_WHITE), _fill(C_FIJO_HDR), al_c, B_DATA)
+    ws.merge_cells(start_row=hdr_row, start_column=13, end_row=hdr_row, end_column=17)
+    sc(
+        ws, hdr_row, 13,
+        "Bonif. y otras deducciones\n(no aplica)",
+        _font(8, True, C_WHITE), _fill(C_DED_HDR), al_c, B_DATA,
+    )
     r += 1
 
     anchor_rows = []
@@ -602,31 +651,42 @@ def _write_fijo_section(ws, start_row, fijo_list, wb_catalog, seguro_por_emplead
         anchor_rows.append(r)
         ws.row_dimensions[r].height = 28
 
-        sal_mensual = salarios.get(emp, 0) or 0
+        rowdb = fijo_by_name.get(str(emp).strip()) or fijo_by_name.get(emp)
+        if rowdb and rowdb["salario_fijo"] is not None:
+            try:
+                sal_periodo = float(rowdb["salario_fijo"])
+            except (TypeError, ValueError):
+                sal_periodo = float(salarios.get(emp, 0) or 0)
+            pk = str(rowdb["periodo"] or "mensual").strip() or "mensual"
+        else:
+            sal_periodo = float(salarios.get(emp, 0) or 0)
+            pk = "mensual"
+
+        bruto_sem = db.salario_fijo_a_bruto_semanal(sal_periodo, pk)
 
         # A — Nombre
         sc(ws, r, 1, emp, _font(10, True), _fill(C_FIJO_EMP), al_l,
            _border(left="medium", lc="6D28D9", right="thin", rc="CBD5E1",
                    top="medium", tc="6D28D9", bottom="medium", bc="6D28D9"))
 
-        # B — Salario mensual (dato fijo, editable si se quiere cambiar)
-        sc(ws, r, 2, sal_mensual, _font(10, False, "4C1D95"), _fill(C_FIJO_SAL),
+        # B — Monto a pagar del período (editable; sincronizar con RR.HH. si cambia el período)
+        sc(ws, r, 2, sal_periodo, _font(10, False, "4C1D95"), _fill(C_FIJO_SAL),
            al_c, B_DATA, MONEY)
 
-        # C — Salario semanal = mensual / 4.33
-        ws.cell(row=r, column=3).value        = f"=ROUND(B{r}/4.33,2)"
+        # C — Bruto semanal (valor al generar la hoja; rég. semanal en BD)
+        ws.cell(row=r, column=3).value        = bruto_sem
         ws.cell(row=r, column=3).font         = _font(10, True, "4C1D95")
         ws.cell(row=r, column=3).fill         = _fill(C_FIJO_SAL)
         ws.cell(row=r, column=3).alignment    = al_c
         ws.cell(row=r, column=3).border       = B_DATA
         ws.cell(row=r, column=3).number_format = MONEY
 
-        # D-J — vacíos (no hay grilla de horas para salario fijo)
+        # D-K — hueco alineado con grilla de horas (relleno homogéneo)
         for col in range(4, 12):
-            ws.cell(row=r, column=col).fill   = _fill(C_FIJO_SAL if col < 11 else C_WHITE)
-            ws.cell(row=r, column=col).border = B_DATA if col < 11 else _border()
+            ws.cell(row=r, column=col).fill   = _fill(C_FIJO_SAL)
+            ws.cell(row=r, column=col).border = B_DATA
 
-        # L — Bruto = salario semanal (columna C)
+        # L — Bruto en columnario de planilla (= bruto semanal)
         c = ws.cell(row=r, column=12)
         c.value        = f"=C{r}"
         c.font         = _font(11, True, "1E3A5F")
@@ -638,41 +698,17 @@ def _write_fijo_section(ws, start_row, fijo_list, wb_catalog, seguro_por_emplead
                                  bottom="medium", bc="334155")
         c.number_format = MONEY
 
-        # M — Bonificaciones (ingresable)
-        c_bonif = ws.cell(row=r, column=13)
-        c_bonif.value        = None
-        c_bonif.font         = _font(10, True, C_BONIF_FG)
-        c_bonif.fill         = _fill(C_BONIF_CELL)
-        c_bonif.alignment    = al_c
-        c_bonif.border       = B_DATA
-        c_bonif.number_format = MONEY
+        # M-Q — bloque sin deducciones (0 ₡ para totales y resúmenes; estilo neutro)
+        ws.merge_cells(start_row=r, start_column=13, end_row=r, end_column=17)
+        c_blk = ws.cell(row=r, column=13)
+        c_blk.value        = 0
+        c_blk.font         = _font(10, False, "64748B")
+        c_blk.fill         = _fill("E2E8F0")
+        c_blk.alignment    = al_c
+        c_blk.border       = B_DATA
+        c_blk.number_format = MONEY
 
-        # N-Q — Deducciones ingresables (Préstamo, Combust., Mercad., Adelanto)
-        # Obtener préstamo si existe
-        import database as db
-        conn = db.get_conn()
-        prestamo_row = conn.execute("""
-            SELECT p.pago_semanal, p.saldo
-            FROM prestamos p
-            JOIN empleados e ON p.empleado_id = e.id
-            WHERE e.nombre = ? AND p.estado = 'activo'
-        """, (emp,)).fetchone()
-        conn.close()
-
-        prest_val = (
-            min(prestamo_row["pago_semanal"], prestamo_row["saldo"])
-            if prestamo_row else None
-        )
-
-        for col in range(14, 18):
-            c2 = ws.cell(row=r, column=col)
-            c2.value        = prest_val if col == 14 else None
-            c2.fill         = _fill(C_DED_CELL)
-            c2.alignment    = al_c
-            c2.border       = B_DATA
-            c2.number_format = MONEY
-
-        # R — Seguro CCSS auto (0 si no aplica)
+        # R — Seguro: % solo sobre bruto L; fijo $O$3; 0 si no aplica
         aps = (
             seguro_por_empleado.get(str(emp).strip(), True)
             if seguro_por_empleado
@@ -684,25 +720,25 @@ def _write_fijo_section(ws, start_row, fijo_list, wb_catalog, seguro_por_emplead
         elif seguro_modo == "fijo":
             c3.value = f"=$O$3"
         else:
-            c3.value = f"=ROUND((L{r}+M{r})*$N$3,2)"
+            c3.value = f"=ROUND(L{r}*$N$3,2)"
         c3.font         = _font(10, True, C_SEGURO_FG)
         c3.fill         = _fill(C_SEGURO_CELL)
         c3.alignment    = al_c
         c3.border       = B_DATA
         c3.number_format = MONEY
 
-        # S — Total deducciones
+        # S — Total deducciones = solo seguro en esta sección
         c4 = ws.cell(row=r, column=19)
-        c4.value        = f"=SUM(N{r}:R{r})"
+        c4.value        = f"=R{r}"
         c4.font         = _font(10, True, C_DED_FG)
         c4.fill         = _fill(C_DED_CELL)
         c4.alignment    = al_c
         c4.border       = B_DATA
         c4.number_format = MONEY
 
-        # T — NETO  (Bruto + Bonificaciones - Tot.Ded.)
+        # T — NETO (sin bonif.; bloque M-Q es texto — no suma a L)
         c5 = ws.cell(row=r, column=20)
-        c5.value        = f"=L{r}+M{r}-S{r}"
+        c5.value        = f"=L{r}-S{r}"
         c5.font         = _font(12, True, C_NETO_FG)
         c5.fill         = _fill(C_NETO_CELL)
         c5.alignment    = al_c
@@ -721,24 +757,60 @@ def _write_fijo_section(ws, start_row, fijo_list, wb_catalog, seguro_por_emplead
     sc(ws, r, 1, "TOTAL SALARIO FIJO",
        _font(10, True, C_WHITE), _fill(C_FIJO_HDR), al_r)
 
-    for col in range(12, 21):
-        refs = "+".join(f"{get_column_letter(col)}{a}" for a in anchor_rows) if anchor_rows else "0"
+    def _sum_col(col_idx):
+        if not anchor_rows:
+            return "=0"
+        cl = get_column_letter(col_idx)
+        return "=" + "+".join(f"{cl}{a}" for a in anchor_rows)
+
+    ws.cell(row=r, column=12).value = _sum_col(12)
+    ws.cell(row=r, column=12).font = _font(10, True, C_WHITE)
+    ws.cell(row=r, column=12).fill = _fill(C_FIJO_HDR)
+    ws.cell(row=r, column=12).alignment = al_c
+    ws.cell(row=r, column=12).border = B_TOTAL
+    ws.cell(row=r, column=12).number_format = MONEY
+
+    ws.merge_cells(start_row=r, start_column=13, end_row=r, end_column=17)
+    c13t = ws.cell(row=r, column=13)
+    c13t.value = 0
+    c13t.font = _font(9, True, C_WHITE)
+    c13t.fill = _fill(C_FIJO_HDR)
+    c13t.alignment = al_c
+    c13t.border = B_TOTAL
+    c13t.number_format = MONEY
+
+    for col in (18, 19):
         c = ws.cell(row=r, column=col)
-        c.value       = f"={refs}"
-        c.font        = _font(10, True, C_WHITE)
-        c.fill        = _fill(C_FIJO_HDR)
-        c.alignment   = al_c
-        c.border      = B_TOTAL
+        c.value = _sum_col(col)
+        c.font = _font(10, True, C_WHITE)
+        c.fill = _fill(C_FIJO_HDR)
+        c.alignment = al_c
+        c.border = B_TOTAL
         c.number_format = MONEY
 
-    ws.cell(row=r, column=20).value = f"=L{r}+M{r}-S{r}"
+    c20 = ws.cell(row=r, column=20)
+    c20.value = f"=L{r}-S{r}"
+    c20.font = _font(10, True, C_WHITE)
+    c20.fill = _fill(C_FIJO_HDR)
+    c20.alignment = al_c
+    c20.border = B_TOTAL
+    c20.number_format = MONEY
 
     r += 1
     return r, total_row, anchor_rows
 
 
 
-def crear_hoja_semanal(wb, num, viernes_date, empleados, seguro=0, tarifas=None, holiday_dates=None):
+def crear_hoja_semanal(
+    wb,
+    num,
+    viernes_date,
+    empleados,
+    seguro=0,
+    tarifas=None,
+    holiday_dates=None,
+    horario_preview=None,
+):
     if isinstance(viernes_date, str):
         viernes_date = datetime.strptime(viernes_date, "%Y-%m-%d").date()
 
@@ -766,9 +838,18 @@ def crear_hoja_semanal(wb, num, viernes_date, empleados, seguro=0, tarifas=None,
         "F": 10, "G": 10, "H": 10, "I": 10, "J": 11,
         "K": 1,  "L": 15, "M": 12, "N": 12, "O": 11,
         "P": 11, "Q": 11, "R": 13, "S": 13, "T": 14,
+        "AA": 2,
     }
     for col, w in col_widths.items():
         ws.column_dimensions[col].width = w
+    ws.column_dimensions["AA"].hidden = True
+    _pex = tarifas.get("pagar_horas_extra")
+    if _pex is None:
+        _pex = 1
+    try:
+        ws["AA1"] = 1 if int(_pex) != 0 else 0
+    except (TypeError, ValueError):
+        ws["AA1"] = 1
 
     # ── Fila 1: Título ───────────────────────────────────────────────────
     ws.row_dimensions[1].height = 40
@@ -798,15 +879,14 @@ def crear_hoja_semanal(wb, num, viernes_date, empleados, seguro=0, tarifas=None,
         (3, "Diurna:",   4,  TARIFA_DIURNA),
         (5, "Mixta:",    6,  TARIFA_MIXTA),
         (7, "Nocturna:", 8,  TARIFA_NOCTURNA),
-        (9, "Extra:",   10,  "=$D$3*1.5"),
     ]
     for lc, lbl, vc, val in tarifa_items:
         sc(ws, 3, lc, lbl, _font(8, False, C_TARIFA_LBL), _fill(C_TARIFA_BG), al_r)
         sc(ws, 3, vc, val, _font(10, True, C_TARIFA_VAL), _fill(C_WHITE), al_c)
 
-    # N3 = tasa % sobre (L+M); O3 = monto fijo semanal (solo uno aplica según tarifas)
+    # N3 = tasa % aporte obrero (solo sobre bruto L); O3 = monto fijo semanal (solo uno aplica)
     if seguro_modo == "porcentual":
-        sc(ws, 3, 13, "Seg. % (bruto+bonif):", _font(8, False, C_TARIFA_LBL), _fill(C_TARIFA_BG), al_r)
+        sc(ws, 3, 13, "Seguro obrero (% CCSS):", _font(8, False, C_TARIFA_LBL), _fill(C_TARIFA_BG), al_r)
         sc(ws, 3, 14, sval, _font(10, True, C_TARIFA_VAL), _fill(C_WHITE), al_c, num_format="0.00%")
         sc(ws, 3, 15, 0, _font(10, True, C_TARIFA_VAL), _fill(C_WHITE), al_c, num_format=MONEY)
     else:
@@ -825,7 +905,17 @@ def crear_hoja_semanal(wb, num, viernes_date, empleados, seguro=0, tarifas=None,
 
     r = 5
     r, tarjeta_total, _ = _write_section(
-        ws, r, "TRANSFERENCIA BANCARIA", C_TARJETA, C_EMP_TARJETA, tarjeta_emps, seguro_map, seguro_modo, holiday_dates, viernes_date
+        ws,
+        r,
+        "TRANSFERENCIA BANCARIA",
+        C_TARJETA,
+        C_EMP_TARJETA,
+        tarjeta_emps,
+        seguro_map,
+        seguro_modo,
+        holiday_dates,
+        viernes_date,
+        horario_preview=horario_preview,
     )
 
     # separador visual entre secciones
@@ -834,7 +924,17 @@ def crear_hoja_semanal(wb, num, viernes_date, empleados, seguro=0, tarifas=None,
     r += 1
 
     r, efectivo_total, _ = _write_section(
-        ws, r, "PAGO EN EFECTIVO", C_EFECTIVO, C_EMP_EFECT, efectivo_emps, seguro_map, seguro_modo, holiday_dates, viernes_date
+        ws,
+        r,
+        "PAGO EN EFECTIVO",
+        C_EFECTIVO,
+        C_EMP_EFECT,
+        efectivo_emps,
+        seguro_map,
+        seguro_modo,
+        holiday_dates,
+        viernes_date,
+        horario_preview=horario_preview,
     )
 
     # ── Sección Salario Fijo (sólo si hay empleados fijos) ────────────────
@@ -902,6 +1002,8 @@ def crear_resumen_semanal(wb, nombre_hoja_sem, sem_num, viernes_date):
     if isinstance(viernes_date, str):
         viernes_date = datetime.strptime(viernes_date, "%Y-%m-%d").date()
 
+    import planilla_layout as pllay  # noqa: PLC0415
+
     sheet_name = f"Res. Sem. {sem_num}"
     if sheet_name in wb.sheetnames:
         wb.remove(wb[sheet_name])
@@ -968,25 +1070,53 @@ def crear_resumen_semanal(wb, nombre_hoja_sem, sem_num, viernes_date):
         sn = nombre_hoja_sem
         for hr in range(1, hs.max_row + 1):
             v = hs.cell(row=hr, column=1).value
-            if isinstance(v, str) and sec_label in v and "PAGO" in v:
+            # Encabezado de sección: texto en A incluye el nombre de la sección
+            # (p. ej. "TRANSFERENCIA BANCARIA" no contiene la palabra "PAGO").
+            if isinstance(v, str) and sec_label in v:
                 in_section = True
                 continue
             if in_section and isinstance(v, str) and v.startswith("TOTAL") and "GRAN" not in v:
                 break
             if in_section and v and hs.cell(row=hr, column=2).value == "Hrs. Diurnas":
                 emp_name = v
-                rd, rm, rn, re = hr, hr+1, hr+2, hr+3
+                scn = pllay.scan_jornada_block_rows(hs, hr)
+                rd, rm, rn = scn["rd"], scn["rm"], scn["rn"]
+                parts_m = []
+                for key, tar in (("ed", "$D$3"), ("em", "$F$3"), ("en", "$H$3")):
+                    rw = scn.get(key)
+                    if rw:
+                        parts_m.append(f"'{sn}'!J{rw}*'{sn}'!{tar}*1.5")
+                if parts_m:
+                    col5_inner = "+".join(parts_m)
+                    col5_expr = f"IF('{sn}'!$AA$1=1,{col5_inner},0)"
+                else:
+                    col5_expr = "0"
+                parts_h = []
+                for key in ("ed", "em", "en"):
+                    rw = scn.get(key)
+                    if rw:
+                        parts_h.append(f"'{sn}'!J{rw}")
+                col6_expr = "+".join(parts_h) if parts_h else "0"
+                sum_parts = [
+                    f"'{sn}'!J{rd}",
+                    f"'{sn}'!J{rm}",
+                    f"'{sn}'!J{rn}",
+                ]
+                for key in ("ed", "em", "en"):
+                    if scn.get(key):
+                        sum_parts.append(f"'{sn}'!J{scn[key]}")
+                if scn.get("fer"):
+                    sum_parts.append(f"'{sn}'!J{scn['fer']}")
+                sum_j_inner = ",".join(sum_parts)
                 alt = (len(emp_rows) % 2 == 0)
                 bg  = "F7F9FC" if alt else C_WHITE
                 sc(ws, r, 1, emp_name, _font(10), _fill(bg), al_l, B_DATA)
                 ws.cell(row=r, column=2).value = _summary_ref_or_blank(f"'{sn}'!J{rd}")
                 ws.cell(row=r, column=3).value = _summary_ref_or_blank(f"'{sn}'!J{rm}")
                 ws.cell(row=r, column=4).value = _summary_ref_or_blank(f"'{sn}'!J{rn}")
-                ws.cell(row=r, column=5).value = _summary_expr_or_blank(
-                    f"'{sn}'!J{re}*'{sn}'!$J$3")
-                ws.cell(row=r, column=6).value = _summary_ref_or_blank(f"'{sn}'!J{re}")
-                ws.cell(row=r, column=7).value = _summary_expr_or_blank(
-                    f"SUM('{sn}'!J{rd},'{sn}'!J{rm},'{sn}'!J{rn},'{sn}'!J{re})")
+                ws.cell(row=r, column=5).value = _summary_expr_or_blank(col5_expr)
+                ws.cell(row=r, column=6).value = _summary_expr_or_blank(col6_expr)
+                ws.cell(row=r, column=7).value = _summary_expr_or_blank(f"SUM({sum_j_inner})")
                 ws.cell(row=r, column=8).value = _summary_ref_or_blank(f"'{sn}'!L{rd}")
                 ws.cell(row=r, column=9).value = _summary_ref_or_blank(f"'{sn}'!M{rd}")
                 ws.cell(row=r, column=10).value = _summary_expr_or_blank(
@@ -1034,74 +1164,98 @@ def crear_resumen_semanal(wb, nombre_hoja_sem, sem_num, viernes_date):
     r5, tot_efectivo = _write_sem_section(r5, "PAGO EN EFECTIVO", C_EFECTIVO)
 
     # ── Sección Salario Fijo en el Resumen Semanal ──
+    # Localizar filas de datos: (1) título "…SALARIO FIJO" en A, primera data en +3;
+    # (2) respaldo por cabecera de grilla col B "Monto a pagar" (merge del título puede
+    #     dejar A vacío en algunas lecturas). Cada empleado fijo tiene L = "=C{fila}".
     tot_fijo = None
-    if hs:
-        for hr in range(1, hs.max_row + 1):
-            v = hs.cell(row=hr, column=1).value
-            if isinstance(v, str) and "SALARIO FIJO" in v and not v.startswith("TOTAL"):
-                r5 += 1
-                ws.row_dimensions[r5].height = 22
-                ws.merge_cells(start_row=r5, start_column=1, end_row=r5, end_column=12)
-                sc(ws, r5, 1, "  SALARIO FIJO",
-                   _font(11, True, C_WHITE), _fill(C_FIJO_HDR), al_l)
-                r5 += 1
-                emp_fijo_rows = []
-                sn = nombre_hoja_sem
-                fr2 = hr + 3
-                while fr2 <= hs.max_row:
-                    v2 = hs.cell(row=fr2, column=1).value
-                    if isinstance(v2, str) and v2.startswith("TOTAL SALARIO FIJO"):
-                        break
-                    if v2 and isinstance(v2, str) and not v2.startswith("TOTAL"):
-                        alt = (len(emp_fijo_rows) % 2 == 0)
-                        bg  = "F5F3FF" if alt else "EDE9FE"
-                        sc(ws, r5, 1, v2, _font(10), _fill(bg), al_l, B_DATA)
-                        for ci in range(2, 8):
-                            ws.cell(row=r5, column=ci).value       = None
-                            ws.cell(row=r5, column=ci).fill        = _fill(bg)
-                            ws.cell(row=r5, column=ci).alignment   = al_c
-                            ws.cell(row=r5, column=ci).border      = B_DATA
-                            if ci in hour_cols:
-                                ws.cell(row=r5, column=ci).number_format = SUMMARY_HOURS_FMT
-                            if ci in money_cols:
-                                ws.cell(row=r5, column=ci).number_format = SUMMARY_MONEY_FMT
-                        ws.cell(row=r5, column=8).value  = _summary_ref_or_blank(f"'{sn}'!L{fr2}")
-                        ws.cell(row=r5, column=9).value  = _summary_ref_or_blank(f"'{sn}'!M{fr2}")
-                        ws.cell(row=r5, column=10).value = _summary_expr_or_blank(
-                            f"'{sn}'!S{fr2}-'{sn}'!R{fr2}")
-                        ws.cell(row=r5, column=11).value = _summary_ref_or_blank(f"'{sn}'!R{fr2}")
-                        ws.cell(row=r5, column=12).value = _summary_ref_or_blank(f"'{sn}'!T{fr2}")
-                        for ci in range(8, 13):
-                            ws.cell(row=r5, column=ci).fill      = _fill(bg)
-                            ws.cell(row=r5, column=ci).alignment = al_c
-                            ws.cell(row=r5, column=ci).border    = B_THICK_LEFT if ci == 8 else B_DATA
-                            ws.cell(row=r5, column=ci).number_format = SUMMARY_MONEY_FMT
-                        emp_fijo_rows.append(r5)
-                        r5 += 1
-                    fr2 += 1
 
-                if emp_fijo_rows:
-                    tot_fijo = r5
-                    ws.row_dimensions[r5].height = 22
-                    ws.merge_cells(start_row=r5, start_column=1, end_row=r5, end_column=1)
-                    sc(ws, r5, 1, "TOTAL SALARIO FIJO",
-                       _font(10, True, C_WHITE), _fill(C_FIJO_HDR), al_r, B_TOTAL)
-                    frf, lrf = emp_fijo_rows[0], emp_fijo_rows[-1]
-                    for ci in range(2, 13):
-                        cl = get_column_letter(ci)
-                        ws.cell(row=r5, column=ci).value       = _summary_expr_or_blank(
-                            f"SUM({cl}{frf}:{cl}{lrf})")
-                        ws.cell(row=r5, column=ci).font        = _font(10, True, C_WHITE)
-                        ws.cell(row=r5, column=ci).fill        = _fill(C_FIJO_HDR)
-                        ws.cell(row=r5, column=ci).alignment   = al_c
-                        ws.cell(row=r5, column=ci).border      = (
-                            B_TOTAL_THICK_LEFT if ci == 8 else B_TOTAL)
-                        if ci in hour_cols:
-                            ws.cell(row=r5, column=ci).number_format = SUMMARY_HOURS_FMT
-                        if ci in money_cols:
-                            ws.cell(row=r5, column=ci).number_format = SUMMARY_MONEY_FMT
-                    r5 += 1
-                break
+    def _primera_fila_datos_salario_fijo(hoja):
+        for rr in range(1, hoja.max_row + 1):
+            v = hoja.cell(row=rr, column=1).value
+            if isinstance(v, str):
+                vs = v.strip().upper()
+                if "SALARIO" in vs and "FIJO" in vs and not vs.startswith("TOTAL"):
+                    return rr + 3
+        for rr in range(1, hoja.max_row + 1):
+            if str(hoja.cell(row=rr, column=2).value or "").strip() == "Monto a pagar":
+                return rr + 1
+        return None
+
+    if hs:
+        start_fr = _primera_fila_datos_salario_fijo(hs)
+        fijo_filas_hoja = []
+        if start_fr is not None:
+            fr_scan = start_fr
+            while fr_scan <= hs.max_row:
+                v2 = hs.cell(row=fr_scan, column=1).value
+                t2 = str(v2 or "").strip()
+                if t2.upper().startswith("TOTAL SALARIO FIJO"):
+                    break
+                lval = hs.cell(row=fr_scan, column=12).value
+                lnorm = str(lval or "").replace(" ", "").upper()
+                es_fila_fijo = isinstance(lval, str) and f"=C{fr_scan}".upper() in lnorm
+                if v2 and es_fila_fijo:
+                    fijo_filas_hoja.append(fr_scan)
+                fr_scan += 1
+
+        if fijo_filas_hoja:
+            emp_fijo_rows = []
+            r5 += 1
+            ws.row_dimensions[r5].height = 22
+            ws.merge_cells(start_row=r5, start_column=1, end_row=r5, end_column=12)
+            sc(ws, r5, 1, "  SALARIO FIJO",
+               _font(11, True, C_WHITE), _fill(C_FIJO_HDR), al_l)
+            r5 += 1
+            sn = nombre_hoja_sem
+            for fr2 in fijo_filas_hoja:
+                v2 = hs.cell(row=fr2, column=1).value
+                alt = (len(emp_fijo_rows) % 2 == 0)
+                bg = "F5F3FF" if alt else "EDE9FE"
+                sc(ws, r5, 1, v2, _font(10), _fill(bg), al_l, B_DATA)
+                for ci in range(2, 8):
+                    ws.cell(row=r5, column=ci).value = None
+                    ws.cell(row=r5, column=ci).fill = _fill(bg)
+                    ws.cell(row=r5, column=ci).alignment = al_c
+                    ws.cell(row=r5, column=ci).border = B_DATA
+                    if ci in hour_cols:
+                        ws.cell(row=r5, column=ci).number_format = SUMMARY_HOURS_FMT
+                    if ci in money_cols:
+                        ws.cell(row=r5, column=ci).number_format = SUMMARY_MONEY_FMT
+                ws.cell(row=r5, column=8).value = _summary_ref_or_blank(f"'{sn}'!L{fr2}")
+                ws.cell(row=r5, column=9).value = _summary_ref_or_blank(f"'{sn}'!M{fr2}")
+                ws.cell(row=r5, column=10).value = _summary_expr_or_blank(
+                    f"'{sn}'!S{fr2}-'{sn}'!R{fr2}")
+                ws.cell(row=r5, column=11).value = _summary_ref_or_blank(f"'{sn}'!R{fr2}")
+                ws.cell(row=r5, column=12).value = _summary_ref_or_blank(f"'{sn}'!T{fr2}")
+                for ci in range(8, 13):
+                    ws.cell(row=r5, column=ci).fill = _fill(bg)
+                    ws.cell(row=r5, column=ci).alignment = al_c
+                    ws.cell(row=r5, column=ci).border = (
+                        B_THICK_LEFT if ci == 8 else B_DATA)
+                    ws.cell(row=r5, column=ci).number_format = SUMMARY_MONEY_FMT
+                emp_fijo_rows.append(r5)
+                r5 += 1
+
+            tot_fijo = r5
+            ws.row_dimensions[r5].height = 22
+            ws.merge_cells(start_row=r5, start_column=1, end_row=r5, end_column=1)
+            sc(ws, r5, 1, "TOTAL SALARIO FIJO",
+               _font(10, True, C_WHITE), _fill(C_FIJO_HDR), al_r, B_TOTAL)
+            frf, lrf = emp_fijo_rows[0], emp_fijo_rows[-1]
+            for ci in range(2, 13):
+                cl = get_column_letter(ci)
+                ws.cell(row=r5, column=ci).value = _summary_expr_or_blank(
+                    f"SUM({cl}{frf}:{cl}{lrf})")
+                ws.cell(row=r5, column=ci).font = _font(10, True, C_WHITE)
+                ws.cell(row=r5, column=ci).fill = _fill(C_FIJO_HDR)
+                ws.cell(row=r5, column=ci).alignment = al_c
+                ws.cell(row=r5, column=ci).border = (
+                    B_TOTAL_THICK_LEFT if ci == 8 else B_TOTAL)
+                if ci in hour_cols:
+                    ws.cell(row=r5, column=ci).number_format = SUMMARY_HOURS_FMT
+                if ci in money_cols:
+                    ws.cell(row=r5, column=ci).number_format = SUMMARY_MONEY_FMT
+            r5 += 1
 
     r5 += 1
     # Gran total semanal

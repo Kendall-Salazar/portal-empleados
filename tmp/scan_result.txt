@@ -1,0 +1,21 @@
+Hojas: ['ASEO 49', 'ASEO 50', 'Hoja1', '01.', 'PISTA', '02', '03', '04', '05', '06', '07', '8', '9', '10', '11', '12', '13', '14', '15']
+
+HOJA [ASEO 49] => sin empleados. Errores: ['No se encontró fila con Colaborador en A y los 7 días (Vie…Jue) en columnas distintas']
+HOJA [ASEO 50] => sin empleados. Errores: ['No se encontró fila con Colaborador en A y los 7 días (Vie…Jue) en columnas distintas']
+HOJA [Hoja1] => sin empleados. Errores: ['No se encontró fila con Colaborador en A y los 7 días (Vie…Jue) en columnas distintas']
+HOJA [01.] => sin empleados. Errores: ['No se encontró fila con Colaborador en A y los 7 días (Vie…Jue) en columnas distintas']
+HOJA [PISTA] => sin empleados. Errores: ['No se encontró fila con Colaborador en A y los 7 días (Vie…Jue) en columnas distintas']
+HOJA [02] => sin empleados. Errores: ['No se encontró fila con Colaborador en A y los 7 días (Vie…Jue) en columnas distintas']
+HOJA [03] => sin empleados. Errores: ['No se encontró fila con Colaborador en A y los 7 días (Vie…Jue) en columnas distintas']
+HOJA [04] => sin empleados. Errores: ['No se encontró fila con Colaborador en A y los 7 días (Vie…Jue) en columnas distintas']
+HOJA [05] => sin empleados. Errores: ['No se encontró fila con Colaborador en A y los 7 días (Vie…Jue) en columnas distintas']
+HOJA [06] => sin empleados. Errores: ['No se encontró fila con Colaborador en A y los 7 días (Vie…Jue) en columnas distintas']
+HOJA [07] => sin empleados. Errores: ['No se encontró fila con Colaborador en A y los 7 días (Vie…Jue) en columnas distintas']
+HOJA [8] => sin empleados. Errores: ['No se encontró fila con Colaborador en A y los 7 días (Vie…Jue) en columnas distintas']
+HOJA [9] => sin empleados. Errores: ['No se encontró fila con Colaborador en A y los 7 días (Vie…Jue) en columnas distintas']
+HOJA [10] => 10 empleados, sin tareas. warns:
+HOJA [11] => 11 empleados, sin tareas. warns:['Sin código para texto: NO TRABAJO']
+HOJA [12] => 11 empleados, sin tareas. warns:
+HOJA [13] => 11 empleados, sin tareas. warns:
+HOJA [14] => 10 empleados, sin tareas. warns:['Sin código para texto: PERMISO (CUBRE ILEANA)']
+HOJA [15] => 10 empleados, sin tareas. warns:['Sin código para texto: CERRADO', 'Sin código para texto: 12:00 MN - 5:00 AM']

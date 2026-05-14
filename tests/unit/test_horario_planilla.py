@@ -56,8 +56,8 @@ class TestFeriadoCelda:
         assert hd.feriado_celda_horas("OFF", False) == hd.HORAS_FERIADO_SIN_LABOR
         assert hd.feriado_celda_horas("PERM", False) == hd.HORAS_FERIADO_SIN_LABOR
 
-    def test_work_with_hours_zero_feriado(self):
-        assert hd.feriado_celda_horas("WORK", True) == 0
+    def test_work_with_hours_still_gets_recargo_feriado(self):
+        assert hd.feriado_celda_horas("WORK", True) == hd.HORAS_FERIADO_SIN_LABOR
 
     def test_work_without_hours_like_holiday_pay(self):
         assert hd.feriado_celda_horas("WORK", False) == hd.HORAS_FERIADO_SIN_LABOR
@@ -71,3 +71,17 @@ class TestTarifaTipoTotales:
     def test_dominant_diurna(self):
         t, off = hd.tarifa_tipo_desde_totales_semana(20, 5, 5)
         assert t == "diurna" and off is False
+
+
+class TestSplitJornadaOrdinariaExtra:
+    def test_diurna_ten_hours(self):
+        od, om, on, ed, em, en = hd.split_jornada_ordinaria_extra(10, 0, 0)
+        assert (od, om, on, ed, em, en) == (8.0, 0.0, 0.0, 2.0, 0.0, 0.0)
+
+    def test_mixta_eight_hours(self):
+        od, om, on, ed, em, en = hd.split_jornada_ordinaria_extra(0, 0, 8)
+        assert om == 7.0 and em == 1.0 and od == on == ed == en == 0.0
+
+    def test_nocturna_eight_hours(self):
+        od, om, on, ed, em, en = hd.split_jornada_ordinaria_extra(0, 8, 0)
+        assert on == 6.0 and en == 2.0

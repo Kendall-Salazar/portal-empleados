@@ -30,11 +30,47 @@ _HORARIO_INT_FIELDS = (
     "allow_no_rest",
     "forced_libres",
     "forced_quebrado",
+    "forced_quebrado_partial",
     "es_jefe_pista",
     "es_practicante",
     "strict_preferences",
     "activo",
 )
+
+
+PERIODOS_SALARIO_FIJO_VALIDOS = frozenset({"semanal", "quincenal", "mensual"})
+
+
+def normalizar_periodo_salario_fijo(periodo: Optional[str]) -> str:
+    """Período de pago para salario fijo: semanal, quincenal o mensual."""
+    if not periodo:
+        return "mensual"
+    p = str(periodo).strip().lower()
+    return p if p in PERIODOS_SALARIO_FIJO_VALIDOS else "mensual"
+
+
+def salario_fijo_a_bruto_semanal(salario_fijo, periodo: Optional[str] = None) -> float:
+    """
+    Convierte el monto de salario fijo del período elegido a bruto por semana
+    (planilla semanal / recap en Excel).
+    - semanal: el monto ya es por semana
+    - quincenal: pago cada 15 días → prorrateo a 7 días
+    - mensual: monto mensual ÷ 4.33
+    """
+    if salario_fijo is None:
+        return 0.0
+    try:
+        sf = float(salario_fijo)
+    except (TypeError, ValueError):
+        return 0.0
+    if sf <= 0:
+        return 0.0
+    p = normalizar_periodo_salario_fijo(periodo)
+    if p == "semanal":
+        return round(sf, 2)
+    if p == "quincenal":
+        return round(sf * (7.0 / 15.0), 2)
+    return round(sf / 4.33, 2)
 
 
 def _coerce_sql_int(v, default=0):
@@ -135,6 +171,7 @@ def init_db():
             allow_no_rest INTEGER DEFAULT 0,
             forced_libres INTEGER DEFAULT 0,
             forced_quebrado INTEGER DEFAULT 0,
+            forced_quebrado_partial INTEGER DEFAULT 0,
             es_jefe_pista INTEGER DEFAULT 0,
             es_practicante INTEGER DEFAULT 0,
             strict_preferences INTEGER DEFAULT 0,
@@ -152,6 +189,8 @@ def init_db():
             refuerzo_type TEXT DEFAULT 'personalizado',
             refuerzo_start TEXT DEFAULT '07:00',
             refuerzo_end TEXT DEFAULT '12:00',
+            refuerzo_days_mode TEXT DEFAULT 'auto',
+            refuerzo_manual_days TEXT DEFAULT '[]',
             allow_collision_quebrado INTEGER DEFAULT 0,
             collision_peak_priority TEXT DEFAULT 'pm',
             sunday_cycle_index INTEGER DEFAULT 0,
@@ -240,6 +279,11 @@ def init_db():
     # Migration: add cedula column if it doesn't exist
     _ensure_column("empleados", "cedula", "TEXT")
     
+    # Migration: add incluir_en_horario column (1=incluye en scheduler, 0=solo planilla)
+    _ensure_column("empleados", "incluir_en_horario", "INTEGER DEFAULT 1")
+    # Salario fijo: período de pago (semanal | quincenal | mensual); el monto es el del período
+    _ensure_column("empleados", "periodo_salario_fijo", "TEXT DEFAULT 'mensual'")
+
     # Migration: add strict_preferences column if it doesn't exist
     _ensure_column("horario_empleados", "strict_preferences", "INTEGER DEFAULT 0")
 
@@ -255,9 +299,13 @@ def init_db():
 
     _ensure_column("tarifas", "seguro_modo", "TEXT DEFAULT 'porcentual'")
     _ensure_column("tarifas", "seguro_valor", "REAL DEFAULT 0.1067")
+    _ensure_column("tarifas", "pagar_horas_extra", "INTEGER DEFAULT 1")
 
     # Migration: add es_practicante column
     _ensure_column("horario_empleados", "es_practicante", "INTEGER DEFAULT 0")
+
+    # Migration: add forced_quebrado_partial column
+    _ensure_column("horario_empleados", "forced_quebrado_partial", "INTEGER DEFAULT 0")
 
     # Migration: scheduler config flags
     _scheduler_config_migrations = [
@@ -268,6 +316,8 @@ def init_db():
         ("horario_config", "holidays", "TEXT DEFAULT '[]'"),
         ("horario_config", "use_pref_plantilla", "INTEGER DEFAULT 0"),
         ("horario_config", "jefe_base_shift", "TEXT DEFAULT 'J_06-16'"),
+        ("horario_config", "refuerzo_days_mode", "TEXT DEFAULT 'auto'"),
+        ("horario_config", "refuerzo_manual_days", "TEXT DEFAULT '[]'"),
     ]
     for table, col, col_type in _scheduler_config_migrations:
         _ensure_column(table, col, col_type)
@@ -275,6 +325,16 @@ def init_db():
     # Migration: soft delete for history entries (papelera de reciclaje)
     _ensure_column("horarios_generados", "deleted", "INTEGER DEFAULT 0")
     _ensure_column("horarios_generados", "deleted_at", "TEXT")
+    _ensure_column("vacaciones", "solo_pago", "INTEGER DEFAULT 0")
+
+    # Migration: detalle de vacaciones (tipo + año del período)
+    # tipo: 'periodo' (default) | 'ajuste_historico' (días gozados antes de
+    # iniciar el sistema) | 'descuento_permiso' (creado al descontar permisos)
+    _ensure_column("vacaciones", "tipo", "TEXT DEFAULT 'periodo'")
+    _ensure_column("vacaciones", "anio_periodo", "INTEGER")
+    # Migration: registro detallado de permisos (rango de fechas + horas)
+    _ensure_column("permisos", "fecha_fin", "TEXT")
+    _ensure_column("permisos", "horas", "REAL DEFAULT 0")
 
     # Create vacaciones table + documentos RRHH registry
     conn = get_conn()
@@ -298,7 +358,8 @@ def init_db():
             dias INTEGER NOT NULL,
             fecha_reingreso TEXT,
             fecha_registro TEXT NOT NULL,
-            notas TEXT
+            notas TEXT,
+            solo_pago INTEGER DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS permisos (
@@ -348,14 +409,18 @@ def get_empleados(solo_activos=True):
     conn = get_conn()
     where = "WHERE e.activo=1" if solo_activos else ""
     rows = conn.execute(f"""
-        SELECT e.id, e.nombre, e.tipo_pago, e.salario_fijo, e.cedula,
+        SELECT e.id, e.nombre, e.tipo_pago, e.salario_fijo,
+               COALESCE(NULLIF(TRIM(e.periodo_salario_fijo), ''), 'mensual') AS periodo_salario_fijo,
+               e.cedula,
                e.correo, e.telefono, e.fecha_inicio, e.activo,
                COALESCE(e.aplica_seguro, 1) as aplica_seguro,
+               COALESCE(e.incluir_en_horario, 1) as incluir_en_horario,
                COALESCE(h.genero, 'M') as genero,
                COALESCE(h.puede_nocturno, 1) as puede_nocturno,
                COALESCE(h.allow_no_rest, 0) as allow_no_rest,
                COALESCE(h.forced_libres, 0) as forced_libres,
                COALESCE(h.forced_quebrado, 0) as forced_quebrado,
+               COALESCE(h.forced_quebrado_partial, 0) as forced_quebrado_partial,
                COALESCE(h.es_jefe_pista, 0) as es_jefe_pista,
                COALESCE(h.es_practicante, 0) as es_practicante,
                 COALESCE(h.strict_preferences, 0) as strict_preferences,
@@ -368,13 +433,18 @@ def get_empleados(solo_activos=True):
         ORDER BY e.nombre
     """).fetchall()
     conn.close()
-    _flag_defaults = {"puede_nocturno": 1, "activo": 1}
+    _flag_defaults = {"puede_nocturno": 1, "activo": 1, "incluir_en_horario": 1}
     out = []
     for r in rows:
         d = dict(r)
         for k in _HORARIO_INT_FIELDS:
             if k in d:
                 d[k] = _coerce_sql_int(d.get(k), _flag_defaults.get(k, 0))
+        # Estandarizar incluir_en_horario
+        if "incluir_en_horario" not in d:
+            d["incluir_en_horario"] = 1
+        else:
+            d["incluir_en_horario"] = _coerce_sql_int(d.get("incluir_en_horario"), 1)
         out.append(d)
     return out
 
@@ -384,14 +454,16 @@ def add_empleado(nombre, tipo_pago, salario_fijo=None, cedula=None,
                  aplica_seguro=1, genero='M', puede_nocturno=1,
                  forced_libres=0, forced_quebrado=0, allow_no_rest=0,
                  es_jefe_pista=0, es_practicante=0, strict_preferences=0,
-                 turnos_fijos='{}', pref_plantilla_id=None):
+                 turnos_fijos='{}', pref_plantilla_id=None, incluir_en_horario=1,
+                 periodo_salario_fijo=None):
     """Inserta en ambas tablas: empleados + horario_empleados."""
     conn = get_conn()
+    periodo_val = normalizar_periodo_salario_fijo(periodo_salario_fijo) if tipo_pago == "fijo" else None
     try:
         conn.execute(
-            "INSERT INTO empleados (nombre, tipo_pago, salario_fijo, cedula, correo, telefono, fecha_inicio, aplica_seguro) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (nombre.strip(), tipo_pago, salario_fijo, cedula, correo, telefono, fecha_inicio, aplica_seguro)
+            "INSERT INTO empleados (nombre, tipo_pago, salario_fijo, periodo_salario_fijo, cedula, correo, telefono, fecha_inicio, aplica_seguro, incluir_en_horario) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (nombre.strip(), tipo_pago, salario_fijo, periodo_val, cedula, correo, telefono, fecha_inicio, aplica_seguro, incluir_en_horario)
         )
         # Also insert into horario_empleados if not exists
         existing = conn.execute("SELECT id FROM horario_empleados WHERE nombre=?", (nombre.strip(),)).fetchone()
@@ -473,9 +545,12 @@ _UNSET = object()
 
 
 def update_empleado(emp_id, nombre=None, tipo_pago=None, salario_fijo=None,
+                    periodo_salario_fijo=_UNSET,
                     cedula=None, correo=None, telefono=None, fecha_inicio=None,
-                    aplica_seguro=None, genero=None, puede_nocturno=None,
-                    forced_libres=None, forced_quebrado=None, allow_no_rest=None,
+                    aplica_seguro=None, incluir_en_horario=None,
+                    genero=None, puede_nocturno=None,
+                    forced_libres=None, forced_quebrado=None, forced_quebrado_partial=None,
+                    allow_no_rest=None,
                     es_jefe_pista=None, es_practicante=None, strict_preferences=None,
                     turnos_fijos=None, pref_plantilla_id=_UNSET):
     """Actualiza campos en ambas tablas (empleados + horario_empleados)."""
@@ -489,8 +564,27 @@ def update_empleado(emp_id, nombre=None, tipo_pago=None, salario_fijo=None,
         conn.execute("UPDATE empleados SET nombre=? WHERE id=?", (nombre.strip(), emp_id))
     if tipo_pago:
         conn.execute("UPDATE empleados SET tipo_pago=? WHERE id=?", (tipo_pago, emp_id))
+        if tipo_pago != "fijo":
+            conn.execute(
+                "UPDATE empleados SET salario_fijo=NULL, periodo_salario_fijo=NULL WHERE id=?",
+                (emp_id,),
+            )
     if salario_fijo is not None:
-        conn.execute("UPDATE empleados SET salario_fijo=? WHERE id=?", (salario_fijo, emp_id))
+        row_sf = conn.execute("SELECT tipo_pago FROM empleados WHERE id=?", (emp_id,)).fetchone()
+        if row_sf and row_sf["tipo_pago"] == "fijo":
+            conn.execute("UPDATE empleados SET salario_fijo=? WHERE id=?", (salario_fijo, emp_id))
+    if periodo_salario_fijo is not _UNSET:
+        row_p = conn.execute("SELECT tipo_pago FROM empleados WHERE id=?", (emp_id,)).fetchone()
+        if row_p and row_p["tipo_pago"] == "fijo":
+            if periodo_salario_fijo is None or (
+                isinstance(periodo_salario_fijo, str) and not str(periodo_salario_fijo).strip()
+            ):
+                conn.execute("UPDATE empleados SET periodo_salario_fijo=NULL WHERE id=?", (emp_id,))
+            else:
+                conn.execute(
+                    "UPDATE empleados SET periodo_salario_fijo=? WHERE id=?",
+                    (normalizar_periodo_salario_fijo(periodo_salario_fijo), emp_id),
+                )
     if cedula is not None:
         conn.execute("UPDATE empleados SET cedula=? WHERE id=?", (cedula, emp_id))
     if correo is not None:
@@ -501,6 +595,8 @@ def update_empleado(emp_id, nombre=None, tipo_pago=None, salario_fijo=None,
         conn.execute("UPDATE empleados SET fecha_inicio=? WHERE id=?", (fecha_inicio, emp_id))
     if aplica_seguro is not None:
         conn.execute("UPDATE empleados SET aplica_seguro=? WHERE id=?", (aplica_seguro, emp_id))
+    if incluir_en_horario is not None:
+        conn.execute("UPDATE empleados SET incluir_en_horario=? WHERE id=?", (incluir_en_horario, emp_id))
 
     # --- Update horario_empleados table ---
     if old_name:
@@ -515,6 +611,8 @@ def update_empleado(emp_id, nombre=None, tipo_pago=None, salario_fijo=None,
             conn.execute("UPDATE horario_empleados SET forced_libres=? WHERE nombre=?", (forced_libres, old_name))
         if forced_quebrado is not None:
             conn.execute("UPDATE horario_empleados SET forced_quebrado=? WHERE nombre=?", (forced_quebrado, old_name))
+        if forced_quebrado_partial is not None:
+            conn.execute("UPDATE horario_empleados SET forced_quebrado_partial=? WHERE nombre=?", (forced_quebrado_partial, old_name))
         if allow_no_rest is not None:
             conn.execute("UPDATE horario_empleados SET allow_no_rest=? WHERE nombre=?", (allow_no_rest, old_name))
         if es_jefe_pista is not None:
@@ -743,6 +841,7 @@ def resolve_prefs_for_solver(
                 "allow_no_rest": bool(_coerce_sql_int(tpl.get("allow_no_rest"), 0)),
                 "forced_libres": bool(_coerce_sql_int(tpl.get("forced_libres"), 0)),
                 "forced_quebrado": bool(_coerce_sql_int(tpl.get("forced_quebrado"), 0)),
+                "forced_quebrado_partial": bool(_coerce_sql_int(emp_row.get("forced_quebrado_partial"), 0)),
             }
 
     try:
@@ -757,6 +856,7 @@ def resolve_prefs_for_solver(
         "allow_no_rest": bool(_coerce_sql_int(emp_row.get("allow_no_rest"), 0)),
         "forced_libres": bool(_coerce_sql_int(emp_row.get("forced_libres"), 0)),
         "forced_quebrado": bool(_coerce_sql_int(emp_row.get("forced_quebrado"), 0)),
+        "forced_quebrado_partial": bool(_coerce_sql_int(emp_row.get("forced_quebrado_partial"), 0)),
     }
 
 
@@ -808,7 +908,8 @@ def _hr_absence_hints_for_week(
         resolved = resolved_shifts.get(dk)
         vac = conn.execute(
             """SELECT id FROM vacaciones
-               WHERE empleado_id=? AND fecha_inicio <= ? AND fecha_fin >= ?""",
+               WHERE empleado_id=? AND fecha_inicio <= ? AND fecha_fin >= ? 
+               AND COALESCE(solo_pago, 0) = 0""",
             (empleado_id, ds, ds),
         ).fetchone()
         if vac and resolved != "VAC":
@@ -850,6 +951,10 @@ def get_generator_employee_params(week_start: Optional[str] = None) -> Dict[str,
     try:
         use_tpl = get_use_pref_plantilla()
         for e in emps:
+            # Excluir personas marcadas como "no incluir en horarios": no tiene
+            # sentido editar sus preferencias del generador si el solver no las usa.
+            if int(_coerce_sql_int(e.get("incluir_en_horario"), 1)) != 1:
+                continue
             emp_id = int(e["id"])
             rp = resolve_prefs_for_solver(e, use_pref_plantilla=use_tpl)
             shifts = dict(rp["fixed_shifts"] or {})
@@ -876,6 +981,7 @@ def get_generator_employee_params(week_start: Optional[str] = None) -> Dict[str,
                 "flags": {
                     "forced_libres": bool(rp["forced_libres"]),
                     "forced_quebrado": bool(rp["forced_quebrado"]),
+                    "forced_quebrado_partial": bool(rp["forced_quebrado_partial"]),
                     "allow_no_rest": bool(rp["allow_no_rest"]),
                     "strict_preferences": bool(rp["strict_preferences"]),
                     "is_jefe_pista": bool(_coerce_sql_int(e.get("es_jefe_pista"), 0)),
@@ -944,6 +1050,8 @@ def apply_generator_employee_params_batch(
                 kwargs["forced_libres"] = 1 if flags["forced_libres"] else 0
             if flags.get("forced_quebrado") is not None:
                 kwargs["forced_quebrado"] = 1 if flags["forced_quebrado"] else 0
+            if flags.get("forced_quebrado_partial") is not None:
+                kwargs["forced_quebrado_partial"] = 1 if flags["forced_quebrado_partial"] else 0
             if flags.get("allow_no_rest") is not None:
                 kwargs["allow_no_rest"] = 1 if flags["allow_no_rest"] else 0
             if flags.get("strict_preferences") is not None:
@@ -1013,14 +1121,42 @@ def get_todas_vacaciones():
     return [dict(r) for r in rows]
 
 
-def add_vacacion(empleado_id, fecha_inicio, fecha_fin, dias, fecha_reingreso=None, notas=None):
-    """Registra un período de vacaciones."""
+def _infer_anio_periodo(fecha_inicio, anio_periodo):
+    """Si no viene anio_periodo, inferirlo del año de fecha_inicio."""
+    if anio_periodo:
+        try:
+            return int(anio_periodo)
+        except (TypeError, ValueError):
+            pass
+    if fecha_inicio:
+        try:
+            return datetime.strptime(fecha_inicio, "%Y-%m-%d").year
+        except (TypeError, ValueError):
+            pass
+    return datetime.now().year
+
+
+def add_vacacion(empleado_id, fecha_inicio, fecha_fin, dias,
+                 fecha_reingreso=None, notas=None, solo_pago=False,
+                 tipo="periodo", anio_periodo=None):
+    """Registra un período de vacaciones.
+
+    Tipos válidos:
+    - 'periodo' (default): vacación tomada normalmente; cuenta para el saldo.
+    - 'ajuste_historico': días gozados ANTES de empezar a usar el sistema;
+      cuentan para el saldo (los descuentan) pero se separan visualmente.
+    - 'descuento_permiso': creado por flujo de descontar permisos.
+    """
+    tipo = tipo or "periodo"
+    if tipo not in ("periodo", "ajuste_historico", "descuento_permiso"):
+        tipo = "periodo"
+    anio = _infer_anio_periodo(fecha_inicio, anio_periodo)
     conn = get_conn()
     conn.execute(
-        "INSERT INTO vacaciones (empleado_id, fecha_inicio, fecha_fin, dias, fecha_reingreso, fecha_registro, notas) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO vacaciones (empleado_id, fecha_inicio, fecha_fin, dias, fecha_reingreso, fecha_registro, notas, solo_pago, tipo, anio_periodo) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (empleado_id, fecha_inicio, fecha_fin, dias, fecha_reingreso,
-         datetime.now().isoformat(), notas)
+         datetime.now().isoformat(), notas, 1 if solo_pago else 0, tipo, anio)
     )
     conn.commit()
     conn.close()
@@ -1034,13 +1170,24 @@ def delete_vacacion(vac_id):
     conn.close()
 
 
-def update_vacacion(vac_id, fecha_inicio, fecha_fin, dias, fecha_reingreso=None, notas=None):
+def update_vacacion(vac_id, fecha_inicio, fecha_fin, dias,
+                    fecha_reingreso=None, notas=None, solo_pago=False,
+                    tipo=None, anio_periodo=None):
     """Actualiza un registro de vacación existente."""
     conn = get_conn()
-    conn.execute(
-        "UPDATE vacaciones SET fecha_inicio=?, fecha_fin=?, dias=?, fecha_reingreso=?, notas=? WHERE id=?",
-        (fecha_inicio, fecha_fin, dias, fecha_reingreso, notas, vac_id)
-    )
+    set_parts = ["fecha_inicio=?", "fecha_fin=?", "dias=?", "fecha_reingreso=?", "notas=?", "solo_pago=?"]
+    params = [fecha_inicio, fecha_fin, dias, fecha_reingreso, notas, 1 if solo_pago else 0]
+    if tipo is not None:
+        if tipo not in ("periodo", "ajuste_historico", "descuento_permiso"):
+            tipo = "periodo"
+        set_parts.append("tipo=?")
+        params.append(tipo)
+    if anio_periodo is not None or fecha_inicio:
+        anio = _infer_anio_periodo(fecha_inicio, anio_periodo)
+        set_parts.append("anio_periodo=?")
+        params.append(anio)
+    params.append(vac_id)
+    conn.execute(f"UPDATE vacaciones SET {', '.join(set_parts)} WHERE id=?", params)
     conn.commit()
     conn.close()
 
@@ -1079,20 +1226,83 @@ def calcular_dias_vacaciones(fecha_inicio_str):
 
 
 def total_dias_vacaciones_tomados(empleado_id):
-    """Suma los días de vacaciones ya tomados por el empleado."""
+    """Suma los días de vacaciones que descuentan saldo (excluye 'sólo pago')."""
     conn = get_conn()
     row = conn.execute(
-        "SELECT COALESCE(SUM(dias), 0) as total FROM vacaciones WHERE empleado_id=?",
+        "SELECT COALESCE(SUM(dias), 0) as total FROM vacaciones "
+        "WHERE empleado_id=? AND COALESCE(solo_pago, 0) = 0",
         (empleado_id,)
     ).fetchone()
     conn.close()
     return row["total"] if row else 0
 
 
+def desglose_vacaciones_empleado(empleado_id):
+    """Devuelve el desglose detallado de vacaciones por tipo + por año.
+
+    Estructura:
+      {
+        'tomados_total': float,           # tipo='periodo' y solo_pago=0
+        'ajuste_historico': float,        # tipo='ajuste_historico'
+        'descontados_permisos': float,    # tipo='descuento_permiso'
+        'solo_pago_total': float,         # solo_pago=1 (no descuenta saldo)
+        'tomados_anio_actual': float,     # tipo='periodo' del año en curso
+        'descuento_saldo_total': float,   # suma de lo que SI descuenta saldo
+      }
+    """
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT COALESCE(tipo, 'periodo') as tipo, "
+        "       COALESCE(solo_pago, 0) as solo_pago, "
+        "       COALESCE(anio_periodo, "
+        "         CAST(strftime('%Y', COALESCE(fecha_inicio, fecha_registro)) AS INTEGER)) as anio, "
+        "       COALESCE(dias, 0) as dias "
+        "FROM vacaciones WHERE empleado_id=?",
+        (empleado_id,)
+    ).fetchall()
+    conn.close()
+
+    anio_actual = datetime.now().year
+    out = {
+        "tomados_total": 0.0,
+        "ajuste_historico": 0.0,
+        "descontados_permisos": 0.0,
+        "solo_pago_total": 0.0,
+        "tomados_anio_actual": 0.0,
+        "descuento_saldo_total": 0.0,
+    }
+    for r in rows:
+        tipo = r["tipo"] or "periodo"
+        solo_pago = int(r["solo_pago"] or 0) == 1
+        dias = float(r["dias"] or 0)
+        anio = int(r["anio"]) if r["anio"] is not None else anio_actual
+
+        if solo_pago:
+            out["solo_pago_total"] += dias
+            continue  # no descuenta saldo
+
+        out["descuento_saldo_total"] += dias
+
+        if tipo == "ajuste_historico":
+            out["ajuste_historico"] += dias
+        elif tipo == "descuento_permiso":
+            out["descontados_permisos"] += dias
+        else:
+            out["tomados_total"] += dias
+            if anio == anio_actual:
+                out["tomados_anio_actual"] += dias
+    return out
+
+
 # ── PERMISOS ─────────────────────────────────────────────────────────────────
 
-def add_permiso(empleado_id, fecha, motivo=None, notas=None):
-    """Registra un permiso para un empleado en una fecha específica."""
+def add_permiso(empleado_id, fecha, motivo=None, notas=None, fecha_fin=None, horas=0):
+    """Registra un permiso para un empleado.
+
+    fecha: fecha inicio (YYYY-MM-DD)
+    fecha_fin: opcional, fecha fin si es un rango (YYYY-MM-DD)
+    horas: opcional, cantidad de horas si NO es día completo (0 = día completo)
+    """
     from datetime import date as _date
     try:
         dt = datetime.strptime(fecha, "%Y-%m-%d")
@@ -1102,22 +1312,49 @@ def add_permiso(empleado_id, fecha, motivo=None, notas=None):
             4: "Vie", 5: "Sáb", 6: "Dom"
         }
         dia_semana = dias_semana_map.get(dt.weekday(), "")
-    except ValueError:
+    except (ValueError, TypeError):
         print(f"add_permiso: fecha inválida '{fecha}', usando año actual sin día de semana")
         anio = _date.today().year
         dia_semana = ""
 
+    horas_val = float(horas or 0)
+
     conn = get_conn()
     conn.execute(
         """INSERT INTO permisos 
-           (empleado_id, fecha, dia_semana, motivo, notas, anio, descontado_de_vacaciones, fecha_registro)
-           VALUES (?, ?, ?, ?, ?, ?, 0, ?)""",
-        (empleado_id, fecha, dia_semana, motivo, notas, anio, datetime.now().isoformat())
+           (empleado_id, fecha, fecha_fin, horas, dia_semana, motivo, notas, anio, descontado_de_vacaciones, fecha_registro)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)""",
+        (empleado_id, fecha, fecha_fin or None, horas_val, dia_semana, motivo, notas, anio, datetime.now().isoformat())
     )
     conn.commit()
     permiso_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
     conn.close()
     return permiso_id
+
+
+def update_permiso(permiso_id, fecha, motivo=None, notas=None, fecha_fin=None, horas=0):
+    """Actualiza un permiso existente."""
+    try:
+        dt = datetime.strptime(fecha, "%Y-%m-%d")
+        anio = dt.year
+        dias_semana_map = {
+            0: "Lun", 1: "Mar", 2: "Mié", 3: "Jue",
+            4: "Vie", 5: "Sáb", 6: "Dom"
+        }
+        dia_semana = dias_semana_map.get(dt.weekday(), "")
+    except (ValueError, TypeError):
+        anio = datetime.now().year
+        dia_semana = ""
+    horas_val = float(horas or 0)
+    conn = get_conn()
+    conn.execute(
+        """UPDATE permisos
+           SET fecha=?, fecha_fin=?, horas=?, dia_semana=?, motivo=?, notas=?, anio=?
+           WHERE id=?""",
+        (fecha, fecha_fin or None, horas_val, dia_semana, motivo, notas, anio, permiso_id)
+    )
+    conn.commit()
+    conn.close()
 
 
 def get_permisos_empleado(empleado_id, anio=None):
@@ -1300,7 +1537,8 @@ def sync_vac_perm_to_fixed_shifts(empleado_nombre, fecha_inicio_semana, fecha_fi
             # Verificar si hay vacación activa este día
             vac = conn.execute(
                 """SELECT id FROM vacaciones 
-                   WHERE empleado_id=? AND fecha_inicio <= ? AND fecha_fin >= ?""",
+                   WHERE empleado_id=? AND fecha_inicio <= ? AND fecha_fin >= ?
+                   AND COALESCE(solo_pago, 0) = 0""",
                 (emp_id, fecha_str, fecha_str)
             ).fetchone()
             
@@ -1494,25 +1732,28 @@ def get_tarifas():
             "seguro": 10498.0,
             "seguro_modo": "porcentual",
             "seguro_valor": 0.1067,
+            "pagar_horas_extra": 1,
         }
     d = dict(row)
     if d.get("seguro_modo") is None:
         d["seguro_modo"] = "porcentual"
     if d.get("seguro_valor") is None:
         d["seguro_valor"] = 0.1067
+    if d.get("pagar_horas_extra") is None:
+        d["pagar_horas_extra"] = 1
     return d
 
 
-def set_tarifas(diurna, nocturna, mixta, seguro_modo, seguro_valor):
+def set_tarifas(diurna, nocturna, mixta, seguro_modo, seguro_valor, pagar_horas_extra=1):
     conn = get_conn()
     conn.execute(
         """
         UPDATE tarifas SET
             tarifa_diurna=?, tarifa_nocturna=?, tarifa_mixta=?,
-            seguro_modo=?, seguro_valor=?
+            seguro_modo=?, seguro_valor=?, pagar_horas_extra=?
         WHERE id=1
         """,
-        (diurna, nocturna, mixta, seguro_modo, seguro_valor),
+        (diurna, nocturna, mixta, seguro_modo, seguro_valor, _coerce_sql_int(pagar_horas_extra, 1)),
     )
     conn.commit()
     conn.close()

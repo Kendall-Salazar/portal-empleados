@@ -20,7 +20,7 @@ import pathlib
 from datetime import datetime, timedelta
 from docx import Document
 from docx.shared import Inches, Pt, Cm, RGBColor, Emu
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
 from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.enum.section import WD_ORIENT
 from docx.oxml.ns import qn
@@ -151,8 +151,11 @@ def _add_thin_line(doc):
 
 # ─── Corporate Header & Footer (unified for ALL documents) ───────────────────
 
-def _setup_document(doc: Document, logo_path: str, rrhh_code: str = "", reference_code: str = ""):
+def _setup_document(doc: Document, logo_path: str, rrhh_code: str = "", reference_code: str = "", 
+                   empresa_nombre: str = None, empresa_cedula: str = None):
     """Sets up page margins, default font, header and footer for the document."""
+    ename = empresa_nombre or EMPRESA_NOMBRE
+    eced = empresa_cedula or EMPRESA_CEDULA
     section = doc.sections[0]
     section.top_margin = Cm(2.5)
     section.bottom_margin = Cm(2.5)
@@ -184,7 +187,7 @@ def _setup_document(doc: Document, logo_path: str, rrhh_code: str = "", referenc
     if os.path.exists(logo_path):
         p_logo.add_run().add_picture(logo_path, width=Inches(1.6))
     else:
-        r = p_logo.add_run(EMPRESA_NOMBRE)
+        r = p_logo.add_run(ename)
         r.font.size = Pt(12)
         r.font.bold = True
         r.font.color.rgb = BLUE_DARK
@@ -205,7 +208,7 @@ def _setup_document(doc: Document, logo_path: str, rrhh_code: str = "", referenc
     # Company name
     p_name = info_cell.add_paragraph()
     p_name.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    r_name = p_name.add_run(EMPRESA_NOMBRE)
+    r_name = p_name.add_run(ename)
     r_name.font.size = Pt(11)
     r_name.font.bold = True
     r_name.font.color.rgb = BLUE_DARK
@@ -213,7 +216,7 @@ def _setup_document(doc: Document, logo_path: str, rrhh_code: str = "", referenc
     # Cedula
     p_ced = info_cell.add_paragraph()
     p_ced.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    r_ced = p_ced.add_run(EMPRESA_CEDULA)
+    r_ced = p_ced.add_run(eced)
     r_ced.font.size = Pt(8)
     r_ced.font.color.rgb = GRAY_TEXT
     
@@ -415,8 +418,9 @@ def _add_clause(doc: Document, number: str, text: str):
     rt.font.size = Pt(9)
 
 
-def _add_signature_block(doc: Document, emp_nombre: str, emp_cedula: str = ""):
+def _add_signature_block(doc: Document, emp_nombre: str, emp_cedula: str = "", empresa_nombre: str = None):
     """Adds a cleaner 4-row signature block with signatures, names, and identifiers."""
+    ename = empresa_nombre or EMPRESA_NOMBRE
     # 4 rows: signatures | labels | names | cedula/cargo
     table = doc.add_table(rows=4, cols=2)
     table.alignment = WD_TABLE_ALIGNMENT.CENTER
@@ -443,7 +447,7 @@ def _add_signature_block(doc: Document, emp_nombre: str, emp_cedula: str = ""):
     cell_r1 = table.cell(1, 1)
     pr1 = cell_r1.paragraphs[0]
     pr1.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r_title = pr1.add_run(f"Por {EMPRESA_NOMBRE}")
+    r_title = pr1.add_run(f"Por {ename}")
     r_title.font.size = Pt(8)
     r_title.font.bold = True
 
@@ -494,7 +498,7 @@ def _open_folder(path: str):
 def _add_page_break(doc: Document):
     p = doc.add_paragraph()
     run = p.add_run()
-    run.add_break(docx.enum.text.WD_BREAK.PAGE)
+    run.add_break(WD_BREAK.PAGE)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -746,21 +750,32 @@ def generar_amonestacion(emp_nombre: str, emp_cedula: str, tipo: str,
 def generar_vacaciones(emp_nombre: str, emp_cedula: str, tipo: str,
                        fecha_inicio: str, fecha_reingreso: str,
                        logo_path: str, base_dir: str,
-                       rrhh_code: str = "") -> str:
+                       rrhh_code: str = "", solo_pago: bool = False, total_pagar: float = 0.0,
+                       modo_periodo: bool = False, periodo_texto: str = "", dias_periodo: float = 0.0,
+                       tarifa_diurna: float = 0.0, horas_totales: float = 0.0) -> str:
     doc = Document()
+    ename = "ROCO S.A"
     ref_code = get_next_reference("vacaciones")
-    _setup_document(doc, logo_path, rrhh_code, ref_code)
+    _setup_document(doc, logo_path, rrhh_code, ref_code, empresa_nombre=ename)
     _add_reference_in_body(doc, ref_code)
 
     hoy = datetime.now()
-    try:
-        dt_inicio = datetime.strptime(fecha_inicio, "%Y-%m-%d")
-        dt_reingreso = datetime.strptime(fecha_reingreso, "%Y-%m-%d")
-        dias = (dt_reingreso - dt_inicio).days
-    except Exception:
-        dias = 0
-        dt_inicio = hoy
-        dt_reingreso = hoy
+    dt_inicio = hoy
+    dt_reingreso = hoy
+    dias = 0
+    if modo_periodo:
+        try:
+            dias = float(dias_periodo)
+            dias = int(dias) if dias.is_integer() else dias
+        except ValueError:
+            pass
+    else:
+        try:
+            dt_inicio = datetime.strptime(fecha_inicio, "%Y-%m-%d")
+            dt_reingreso = datetime.strptime(fecha_reingreso, "%Y-%m-%d")
+            dias = (dt_reingreso - dt_inicio).days
+        except Exception:
+            dias = 0
 
     tipo_label = "Goce Salarial Total" if tipo == "total" else "Goce Salarial Parcial / Fraccionado"
 
@@ -773,38 +788,54 @@ def generar_vacaciones(emp_nombre: str, emp_cedula: str, tipo: str,
 
     _add_section_header(doc, "II", "DETALLE DEL PERÍODO VACACIONAL")
     doc.add_paragraph("")
-    _add_data_table(doc,
-        ["Concepto", "Descripción"],
-        [
+    if solo_pago:
+        tipo_label += " (Sólo Pago / Trabajando)"
+
+    if modo_periodo:
+        rows_data = [
+            ["Tipo de aplicación", tipo_label],
+            ["Periodo a compensar", periodo_texto],
+            ["Total de días correspondientes", f"{dias} días"],
+        ]
+    else:
+        rows_data = [
             ["Tipo de aplicación", tipo_label],
             ["Fecha de inicio de vacaciones", dt_inicio.strftime("%d/%m/%Y")],
             ["Fecha de reingreso laboral", dt_reingreso.strftime("%d/%m/%Y")],
             ["Total de días naturales", f"{dias} días"],
-        ])
+        ]
+    if solo_pago and total_pagar > 0:
+        rows_data.append(["Desglose de cálculo", f"{horas_totales:g} horas laborales (Jornada diurna de 8 hrs / día)"])
+        rows_data.append(["Tarifa por hora diurna", f"₡ {tarifa_diurna:,.2f}"])
+        rows_data.append(["Monto Total a Pagar", f"₡ {total_pagar:,.2f}"])
+
+    _add_data_table(doc, ["Concepto", "Descripción"], rows_data)
 
     _add_section_header(doc, "III", "CONDICIONES Y OBSERVACIONES")
     _add_clause(doc, "3.1",
         f"El presente documento certifica que el colaborador {emp_nombre} ha coordinado con la "
-        f"administración de {EMPRESA_NOMBRE} el disfrute de su período anual de vacaciones, en cumplimiento "
+        f"administración de {ename} la aplicación de su período anual de vacaciones, en cumplimiento "
         f"de lo establecido por el Código de Trabajo de Costa Rica y las políticas internas de la empresa.")
+    
     _add_clause(doc, "3.2",
-        f"El colaborador cesará temporalmente la prestación de sus servicios a partir del "
-        f"{dt_inicio.strftime('%d/%m/%Y')}, debiendo reincorporarse a su jornada ordinaria el "
-        f"{dt_reingreso.strftime('%d/%m/%Y')} en el horario que le corresponda según su turno asignado.")
-    _add_clause(doc, "3.3",
-        f"Los {dias} día(s) de descanso aquí consignados serán rebajados del saldo total de días de "
-        f"vacaciones acumulados por el colaborador. El tipo de aplicación es: \"{tipo_label}\".")
-    _add_clause(doc, "3.4",
-        f"El colaborador declara estar conforme con las fechas aprobadas y se compromete a reintegrarse "
-        f"puntualmente en la fecha indicada. La inasistencia posterior a la fecha de reingreso sin justificación "
-        f"será procesada conforme a la normativa disciplinaria vigente.")
+        "Al finalizar este periodo, el colaborador cuenta con un saldo de _____ días de vacaciones pendientes.")
+
+    if solo_pago:
+        _add_clause(doc, "3.3",
+            f"El colaborador declara estar conforme con la liquidación de estos días de vacaciones sin perjuicio "
+            f"de continuar prestando sus labores regulares.")
+    else:
+        _add_clause(doc, "3.3",
+            f"El colaborador declara estar conforme con las fechas aprobadas y se compromete a reintegrarse "
+            f"puntualmente en la fecha indicada. La inasistencia posterior a la fecha de reingreso sin justificación "
+            f"será procesada conforme a la normativa disciplinaria vigente.")
 
     _add_section_header(doc, "IV", "DECLARACIÓN DE CONFORMIDAD")
     doc.add_paragraph("")
     p_decl = doc.add_paragraph()
     p_decl.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
     r_decl = p_decl.add_run(
-        f"Ambas partes — el colaborador y la representación legal de {EMPRESA_NOMBRE} — manifiestan su plena "
+        f"Ambas partes — el colaborador y la representación legal de {ename} — manifiestan su plena "
         f"conformidad con las condiciones del presente documento. Se extiende la presente para los efectos legales "
         f"y administrativos correspondientes, y para ser integrada al expediente laboral del colaborador.")
     r_decl.font.size = Pt(9)
@@ -814,7 +845,7 @@ def generar_vacaciones(emp_nombre: str, emp_cedula: str, tipo: str,
     rlf = p_lf.add_run("Lugar y fecha: ________________________________________")
     rlf.font.size = Pt(9)
 
-    _add_signature_block(doc, emp_nombre, emp_cedula)
+    _add_signature_block(doc, emp_nombre, emp_cedula, empresa_nombre=ename)
 
     out_path = _build_output_path(base_dir, "Vacaciones", emp_nombre)
     doc.save(out_path)

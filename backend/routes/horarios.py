@@ -1,7 +1,7 @@
 """API router for scheduling and history endpoints."""
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 import json
 import datetime
 import sys
@@ -111,6 +111,7 @@ class HistoryEntry(BaseModel):
     week_dates: Optional[Dict[str, str]] = None
     special_days: Dict[str, str] = Field(default_factory=dict)
     timestamp: str = ""
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 # Endpoints
@@ -172,9 +173,27 @@ def solve_schedule(request: SolverRequest):
 
 @router.get("/history")
 def get_history():
-    """Get schedule history."""
-    db = _load_db()
-    return db.get("history_log", [])
+    """Get schedule history from SQLite."""
+    conn = plan_db.get_conn()
+    rows = conn.execute(
+        f"SELECT id, nombre, horario, tareas, metadata, timestamp FROM horarios_generados WHERE deleted = 0 ORDER BY {_HISTORY_LIST_ORDER}"
+    ).fetchall()
+    conn.close()
+    
+    result = []
+    for row in rows:
+        meta = json.loads(row["metadata"]) if row["metadata"] else {}
+        result.append({
+            "db_id": row["id"],
+            "name": row["nombre"],
+            "schedule": json.loads(row["horario"]) if row["horario"] else {},
+            "daily_tasks": json.loads(row["tareas"]) if row["tareas"] else {},
+            "metadata": meta,
+            "special_days": meta.get("special_days", {}),
+            "week_dates": meta.get("week_dates"),
+            "timestamp": row["timestamp"] or "",
+        })
+    return result
 
 
 @router.post("/history")
@@ -182,12 +201,15 @@ def save_history(entry: HistoryEntry):
     """Misma semántica que main: siempre INSERT (varios con el mismo nombre), sin purga de activos."""
     horario_json = json.dumps(entry.schedule, ensure_ascii=False)
     tareas_json = json.dumps(entry.daily_tasks or {}, ensure_ascii=False)
-    metadata_json = json.dumps({
+    # Mergear metadata extra del cliente (holiday_days, source, display_aliases, etc.)
+    extra_meta = dict(entry.metadata or {})
+    extra_meta.update({
         "rotation_queue": entry.dict().get("next_sunday_rotation_queue"),
         "rotation_target": entry.dict().get("next_sunday_cycle_index"),
         "special_days": entry.special_days or {},
         "week_dates": entry.week_dates,
-    }, ensure_ascii=False)
+    })
+    metadata_json = json.dumps(extra_meta, ensure_ascii=False)
     ts = entry.timestamp or datetime.datetime.now().isoformat()
 
     conn = plan_db.get_conn()
@@ -402,6 +424,11 @@ def update_history_item(index: int, entry: HistoryEntry):
             existing_meta.pop("special_days", None)
         if entry.week_dates is not None:
             existing_meta["week_dates"] = entry.week_dates
+        
+        # Merge metadata (holiday_days, etc)
+        if entry.metadata:
+            for key, value in entry.metadata.items():
+                existing_meta[key] = value
 
         metadata_json = json.dumps(existing_meta, ensure_ascii=False)
 
@@ -624,6 +651,57 @@ _WEEK_DAYS_ORDER = ["Vie", "Sáb", "Dom", "Lun", "Mar", "Mié", "Jue"]
 _last_partial_preview: Optional[dict] = None
 
 
+def merge_partial_schedules(
+    base_schedule: Dict[str, Dict[str, str]],
+    solver_schedule: Dict[str, Dict[str, str]],
+    locked_days: List[str],
+    departed_last_day: Optional[Dict[str, str]] = None,
+) -> Dict[str, Dict[str, str]]:
+    """
+    Fusiona horario base (días bloqueados) con resultado del solver (días activos).
+    Misma lógica que solve_partial_schedule paso 9 — extraída para tests unitarios.
+
+    departed_last_day: nombre empleado -> último día trabajado ("Vie"|...|"Jue").
+    """
+    departed_last_day = departed_last_day or {}
+    departed_names = set(departed_last_day.keys())
+    active_days = [d for d in _WEEK_DAYS_ORDER if d not in locked_days]
+
+    all_employees_in_base = list(base_schedule.keys())
+    merged_schedule: Dict[str, Dict[str, str]] = {}
+
+    for emp in all_employees_in_base:
+        merged_schedule[emp] = {}
+        base_emp: Dict[str, str] = base_schedule.get(emp, {})
+        last_day = departed_last_day.get(emp)
+
+        for day in _WEEK_DAYS_ORDER:
+            if day in locked_days:
+                if day in base_emp:
+                    merged_schedule[emp][day] = base_emp[day]
+
+            elif last_day is not None:
+                last_day_idx = (
+                    _WEEK_DAYS_ORDER.index(last_day) if last_day in _WEEK_DAYS_ORDER else -1
+                )
+                day_idx = _WEEK_DAYS_ORDER.index(day)
+                if day_idx <= last_day_idx and day in base_emp:
+                    merged_schedule[emp][day] = base_emp[day]
+
+            else:
+                solver_emp_days = solver_schedule.get(emp, {})
+                if day in solver_emp_days:
+                    merged_schedule[emp][day] = solver_emp_days[day]
+
+    for emp, days in solver_schedule.items():
+        if emp not in merged_schedule:
+            merged_schedule[emp] = {
+                day: shift for day, shift in days.items() if day in active_days
+            }
+
+    return merged_schedule
+
+
 class PartialOffClassification(BaseModel):
     """
     Clasificación de un día libre (OFF/VAC/PERM) que el usuario hace
@@ -790,46 +868,12 @@ def solve_partial_schedule(request: PartialSolverRequest):
     solver_schedule: Dict[str, Dict[str, str]] = solver_result.get("schedule", {})
 
     # ── 9. Merge: base (días pasados) + solver (días activos) ─────────────────
-    # Preserva TODOS los empleados que aparecían en el horario base,
-    # incluido el despedido (con sus días trabajados visibles en la UI).
-    all_employees_in_base = list(base_schedule.keys())
-    merged_schedule: Dict[str, Dict[str, str]] = {}
-
-    for emp in all_employees_in_base:
-        merged_schedule[emp] = {}
-        base_emp: Dict[str, str] = base_schedule.get(emp, {})
-        last_day = departed_last_day.get(emp)  # None si el empleado no está despedido
-
-        for day in _WEEK_DAYS_ORDER:
-            if day in request.locked_days:
-                # Día pasado → copiar del horario base tal cual
-                if day in base_emp:
-                    merged_schedule[emp][day] = base_emp[day]
-
-            elif last_day is not None:
-                # Empleado despedido en día activo:
-                # - Si trabajó este día (on or before last_working_day) → copiar del base
-                # - Si salió antes de este día → celda vacía (sin key)
-                last_day_idx = _WEEK_DAYS_ORDER.index(last_day) if last_day in _WEEK_DAYS_ORDER else -1
-                day_idx = _WEEK_DAYS_ORDER.index(day)
-                if day_idx <= last_day_idx and day in base_emp:
-                    merged_schedule[emp][day] = base_emp[day]
-                # Si day_idx > last_day_idx → NO agregar key → celda vacía en la UI
-
-            else:
-                # Empleado activo en día activo → usar resultado del solver
-                solver_emp_days = solver_schedule.get(emp, {})
-                if day in solver_emp_days:
-                    merged_schedule[emp][day] = solver_emp_days[day]
-
-    # Agregar empleados activos que estén en el solver pero no en el base
-    # (caso edge: empleado nuevo ingresado después de que se guardó el base)
-    for emp, days in solver_schedule.items():
-        if emp not in merged_schedule:
-            merged_schedule[emp] = {
-                day: shift for day, shift in days.items()
-                if day in active_days
-            }
+    merged_schedule = merge_partial_schedules(
+        base_schedule,
+        solver_schedule,
+        list(request.locked_days),
+        departed_last_day,
+    )
 
     # ── 10. Ensamblar resultado y cachear ─────────────────────────────────────
     partial_result = {

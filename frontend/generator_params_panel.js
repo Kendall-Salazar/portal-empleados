@@ -2,7 +2,7 @@
  * Panel de Parámetros del Generador — matriz densa + detalle (API /api/generator/employee-params).
  */
 (function () {
-    const FLAG_KEYS = ["forced_libres", "forced_quebrado", "allow_no_rest", "strict_preferences", "is_jefe_pista"];
+    const FLAG_KEYS = ["forced_libres", "forced_quebrado", "forced_quebrado_partial", "allow_no_rest", "strict_preferences", "is_jefe_pista"];
     const DAY_ORDER = ["Vie", "Sáb", "Dom", "Lun", "Mar", "Mié", "Jue"];
 
     let genPanelSnapshot = null;
@@ -18,7 +18,9 @@
 
     function _fridayOf(d) {
         const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-        while (x.getDay() !== 5) x.setDate(x.getDate() - 1);
+        const day = x.getDay();
+        const diff = (5 - day + 7) % 7;
+        x.setDate(x.getDate() + diff);
         return x;
     }
 
@@ -159,7 +161,13 @@
             btn.setAttribute("aria-checked", on ? "true" : "false");
             btn.addEventListener("click", () => {
                 row.flags[fk] = !row.flags[fk];
-                btn.setAttribute("aria-checked", row.flags[fk] ? "true" : "false");
+                // Mutual exclusivity: total and partial quebrado can't coexist
+                if (fk === "forced_quebrado" && row.flags[fk]) {
+                    row.flags["forced_quebrado_partial"] = false;
+                } else if (fk === "forced_quebrado_partial" && row.flags[fk]) {
+                    row.flags["forced_quebrado"] = false;
+                }
+                window._genPanelSyncDomFromState();
             });
             td.appendChild(btn);
             tr.appendChild(td);
@@ -348,6 +356,15 @@
     window.genPanelBatchForcedQuebrado = function (value) {
         for (const id of Object.keys(genPanelRows)) {
             genPanelRows[id].flags.forced_quebrado = !!value;
+            if (value) genPanelRows[id].flags.forced_quebrado_partial = false;
+        }
+        window._genPanelSyncDomFromState();
+    };
+
+    window.genPanelBatchForcedQuebradoPartial = function (value) {
+        for (const id of Object.keys(genPanelRows)) {
+            genPanelRows[id].flags.forced_quebrado_partial = !!value;
+            if (value) genPanelRows[id].flags.forced_quebrado = false;
         }
         window._genPanelSyncDomFromState();
     };

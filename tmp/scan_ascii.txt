@@ -1,0 +1,7 @@
+Hojas: ['ASEO 49', 'ASEO 50', 'Hoja1', '01.', 'PISTA', '02', '03', '04', '05', '06', '07', '8', '9', '10', '11', '12', '13', '14', '15']
+HOJA 10 => 10 empleados, sin tareas detectadas (warns: [])
+HOJA 11 => 11 empleados, sin tareas detectadas (warns: ['Sin c??digo para texto: NO TRABAJO'])
+HOJA 12 => 11 empleados, sin tareas detectadas (warns: [])
+HOJA 13 => 11 empleados, sin tareas detectadas (warns: [])
+HOJA 14 => 10 empleados, sin tareas detectadas (warns: ['Sin c??digo para texto: PERMISO (CUBRE ILEANA)'])
+HOJA 15 => 10 empleados, sin tareas detectadas (warns: ['Sin c??digo para texto: CERRADO', 'Sin c??digo para texto: 12:00 MN - 5:00 AM'])

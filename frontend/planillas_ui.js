@@ -368,7 +368,11 @@ async function loadVacSubEquipo() {
 
             if (emp.fecha_inicio) chips.push(`<span class="ecard-chip"><i class="fa-solid fa-calendar-check"></i>${emp.fecha_inicio}</span>`);
 
-            if (emp.salario_fijo) chips.push(`<span class="ecard-chip ecard-chip-fijo"><i class="fa-solid fa-coins"></i>₡${_money(emp.salario_fijo)}/mes</span>`);
+            if (emp.salario_fijo) {
+                const per = (emp.periodo_salario_fijo || "mensual").toLowerCase();
+                const perLab = per === "semanal" ? "sem" : per === "quincenal" ? "qna" : "mes";
+                chips.push(`<span class="ecard-chip ecard-chip-fijo"><i class="fa-solid fa-coins"></i>₡${_money(emp.salario_fijo)}/${perLab}</span>`);
+            }
 
 
 
@@ -632,10 +636,20 @@ function openUnifiedEmpModal(emp = null) {
 
     document.getElementById('planEmpSalarioFijo').value = isEdit ? (emp.salario_fijo || '') : '';
 
+    const perSel = document.getElementById('planEmpPeriodoSalarioFijo');
+    if (perSel) {
+        const pv = (isEdit && emp.periodo_salario_fijo) ? String(emp.periodo_salario_fijo).toLowerCase() : 'mensual';
+        perSel.value = ['semanal', 'quincenal', 'mensual'].includes(pv) ? pv : 'mensual';
+    }
+    updateSalarioFijoLabels();
+
     document.getElementById('planEmpSeguro').checked = isEdit ? !!emp.aplica_seguro : true;
 
     document.getElementById('planEmpNocturno').checked = isEdit ? !!emp.puede_nocturno : true;
 
+    // Incluir en horario
+    const incluirHorarioCb = document.getElementById('empIncluirEnHorario');
+    if (incluirHorarioCb) incluirHorarioCb.checked = isEdit ? !!(emp.incluir_en_horario !== 0 && emp.incluir_en_horario !== false) : true;
 
 
     // Activo mapping
@@ -686,6 +700,18 @@ function setModalGender(gender, btn) {
 
 
 
+function updateSalarioFijoLabels() {
+    const p = document.getElementById('planEmpPeriodoSalarioFijo')?.value || 'mensual';
+    const lbl = document.getElementById('planEmpSalarioFijoLabel');
+    if (!lbl) return;
+    const map = {
+        semanal: 'Monto (pago semanal)',
+        quincenal: 'Monto (pago quincenal)',
+        mensual: 'Monto (pago mensual)',
+    };
+    lbl.textContent = map[p] || map.mensual;
+}
+
 function toggleSalarioFijoInput() {
 
     const tipo = document.getElementById('planEmpTipoPago').value;
@@ -701,6 +727,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const sel = document.getElementById('planEmpTipoPago');
 
     if (sel) sel.addEventListener('change', toggleSalarioFijoInput);
+
+    const per = document.getElementById('planEmpPeriodoSalarioFijo');
+    if (per) per.addEventListener('change', updateSalarioFijoLabels);
 
 });
 
@@ -726,6 +755,11 @@ async function guardarPlanillaEmp() {
 
         salario_fijo: document.getElementById('planEmpTipoPago').value === 'fijo' ? parseFloat(document.getElementById('planEmpSalarioFijo').value) || null : null,
 
+        periodo_salario_fijo:
+            document.getElementById('planEmpTipoPago').value === 'fijo'
+                ? (document.getElementById('planEmpPeriodoSalarioFijo')?.value || 'mensual')
+                : null,
+
         aplica_seguro: document.getElementById('planEmpSeguro').checked ? 1 : 0,
 
         puede_nocturno: document.getElementById('planEmpNocturno').checked ? 1 : 0,
@@ -733,6 +767,8 @@ async function guardarPlanillaEmp() {
         genero: document.getElementById('planEmpGenero').value,
 
         activo: document.getElementById('empActiveStatus') ? (document.getElementById('empActiveStatus').checked ? 1 : 0) : 1,
+
+        incluir_en_horario: document.getElementById('empIncluirEnHorario') ? (document.getElementById('empIncluirEnHorario').checked ? 1 : 0) : 1,
 
     };
 
@@ -745,6 +781,7 @@ async function guardarPlanillaEmp() {
         data.strict_preferences = 0;
         data.turnos_fijos = '{}';
         data.pref_plantilla_id = null;
+        data.incluir_en_horario = 1;
     }
 
     if (!data.nombre) { alert('El nombre es requerido.'); return; }
@@ -780,6 +817,7 @@ async function guardarPlanillaEmp() {
         closePlanillaEmpModal();
 
         loadVacSubEquipo();
+        if (typeof window.loadEmployees === 'function') { window.loadEmployees(); }
 
     } catch (e) { alert(e.message); }
 
@@ -800,6 +838,7 @@ async function deletePlanillaEmp(id) {
         // Because they are in the inactivos tab to be deleted:
 
         loadVacSubInactivos();
+        if (typeof window.loadEmployees === 'function') { window.loadEmployees(); }
 
     } catch (e) { alert(e.message); }
 
@@ -988,8 +1027,9 @@ async function loadVacSubVacaciones() {
             }
 
             const acum = vacData.acumulados || 0, tom = vacData.tomados || 0, disp = vacData.disponibles || 0;
+            const desglose = vacData.desglose || {};
 
-            vacRows.push({ emp, vacData, antiguedad, acum, tom, disp });
+            vacRows.push({ emp, vacData, antiguedad, acum, tom, disp, desglose });
 
         }
 
@@ -997,7 +1037,7 @@ async function loadVacSubVacaciones() {
 
         let html = '<div class="vac-cards-grid">';
 
-        vacRows.forEach(({ emp, vacData, antiguedad, acum, tom, disp }, _vIdx) => {
+        vacRows.forEach(({ emp, vacData, antiguedad, acum, tom, disp, desglose }, _vIdx) => {
 
             const pctUsed = acum > 0 ? Math.min(100, Math.round((tom / acum) * 100)) : 0;
 
@@ -1007,7 +1047,22 @@ async function loadVacSubVacaciones() {
 
             const eName = emp.nombre.replace(/'/g, "\\'");
 
+            const fmt = (n) => {
+                const v = Number(n) || 0;
+                return Number.isInteger(v) ? String(v) : v.toFixed(1);
+            };
 
+            const tomadosAnio = desglose.tomados_anio_actual || 0;
+            const ajusteHist = desglose.ajuste_historico || 0;
+            const descPerm = desglose.descontados_permisos || 0;
+            const soloPago = desglose.solo_pago_total || 0;
+            const anioActual = new Date().getFullYear();
+
+            const breakdownItems = [];
+            breakdownItems.push(`<div class="vac-emp-breakdown-row"><span class="lbl"><i class="fa-solid fa-plane-departure" style="color:#10b981;"></i> Tomados ${anioActual}</span><span class="val">${fmt(tomadosAnio)}d</span></div>`);
+            if (ajusteHist > 0) breakdownItems.push(`<div class="vac-emp-breakdown-row"><span class="lbl"><i class="fa-solid fa-clock-rotate-left" style="color:#d97706;"></i> Ajuste histórico</span><span class="val">${fmt(ajusteHist)}d</span></div>`);
+            if (descPerm > 0) breakdownItems.push(`<div class="vac-emp-breakdown-row"><span class="lbl"><i class="fa-solid fa-hand" style="color:#6366f1;"></i> Por permisos</span><span class="val">${fmt(descPerm)}d</span></div>`);
+            if (soloPago > 0) breakdownItems.push(`<div class="vac-emp-breakdown-row"><span class="lbl"><i class="fa-solid fa-money-bill-wave" style="color:#db2777;"></i> Sólo pago</span><span class="val">${fmt(soloPago)}d</span></div>`);
 
             html += `
 
@@ -1029,7 +1084,7 @@ async function loadVacSubVacaciones() {
 
                 <div class="vac-emp-hero-num">
 
-                    <span class="vac-emp-hero-val" style="color:${dispColor};">${disp}</span>
+                    <span class="vac-emp-hero-val" style="color:${dispColor};">${fmt(disp)}</span>
 
                     <span class="vac-emp-hero-label">días disponibles</span>
 
@@ -1045,25 +1100,33 @@ async function loadVacSubVacaciones() {
 
                     <div class="vac-emp-bar-legend">
 
-                        <span><span class="vac-emp-dot" style="background:#3b82f6;"></span> Acum: ${acum}</span>
+                        <span><span class="vac-emp-dot" style="background:#3b82f6;"></span> Acum: ${fmt(acum)}</span>
 
-                        <span><span class="vac-emp-dot" style="background:#f59e0b;"></span> Usados: ${tom}</span>
+                        <span><span class="vac-emp-dot" style="background:#f59e0b;"></span> Usados: ${fmt(tom)}</span>
 
                     </div>
 
                 </div>
 
+                <div class="vac-emp-breakdown">${breakdownItems.join('')}</div>
+
                 <div class="vac-emp-actions">
 
-                    <button class="vac-btn vac-btn-primary" onclick="openRegistrarVacacion(${emp.id}, '${eName}')">
+                    <button class="vac-btn vac-btn-primary" onclick="openRegistrarVacacion(${emp.id}, '${eName}')" title="Registrar período de vacaciones tomado o programado">
 
                         <i class="fa-solid fa-plus"></i> Registrar
 
                     </button>
 
+                    <button class="vac-btn vac-btn-ghost" onclick="openRegistrarVacacionAjuste(${emp.id}, '${eName}')" title="Registrar días ya disfrutados antes de usar el sistema">
+
+                        <i class="fa-solid fa-clock-rotate-left"></i> Ajuste
+
+                    </button>
+
                     <button class="vac-btn vac-btn-ghost" onclick="openVacHistorial(${emp.id}, '${eName}')">
 
-                        <i class="fa-solid fa-clock-rotate-left"></i> Historial
+                        <i class="fa-solid fa-list"></i> Historial
 
                     </button>
 
@@ -1465,6 +1528,29 @@ function _fmtMoney(n) {
 
 // Quick link to Constancia de Vacaciones in Utilidades
 
+function _mostrarNotaAbono(nota, fecha) {
+    const existing = document.getElementById('_notaAbonoPop');
+    if (existing) existing.remove();
+    const overlay = document.createElement('div');
+    overlay.id = '_notaAbonoPop';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:9999;display:flex;align-items:center;justify-content:center;';
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+    const fechaLegible = _formatDateEs(fecha);
+    overlay.innerHTML = `
+        <div style="background:var(--bg-panel,#1e1e2e);border:1px solid rgba(139,92,246,0.35);border-radius:14px;padding:1.5rem;max-width:420px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.5);">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:1rem;">
+                <i class="fa-solid fa-note-sticky" style="color:#8b5cf6;font-size:1.1rem;"></i>
+                <strong style="color:var(--text-main,#e2e8f0);font-size:0.95rem;">Nota del abono</strong>
+                <span style="margin-left:auto;font-size:0.72rem;color:var(--text-muted,#8892b0);">${fechaLegible}</span>
+            </div>
+            <div style="background:rgba(139,92,246,0.08);border-radius:8px;padding:0.85rem 1rem;color:var(--text-main,#e2e8f0);font-size:0.88rem;line-height:1.55;white-space:pre-wrap;">${nota || '(sin nota)'}</div>
+            <div style="text-align:right;margin-top:1rem;">
+                <button onclick="document.getElementById('_notaAbonoPop').remove()" style="background:rgba(139,92,246,0.2);border:1px solid rgba(139,92,246,0.4);color:#c4b5fd;border-radius:8px;padding:6px 18px;cursor:pointer;font-size:0.82rem;">Cerrar</button>
+            </div>
+        </div>`;
+    document.body.appendChild(overlay);
+}
+
 function goToVacacionesConstancia(empId) {
 
     // Switch to Utilidades tab and open vacaciones form
@@ -1593,11 +1679,19 @@ async function openVacHistorial(empId, empName) {
 
         html += '<div class="vhist-timeline">';
 
+        const tipoMeta = {
+            'ajuste_historico':   { cls: 'tipo-ajuste',  icon: 'fa-clock-rotate-left',  label: 'Ajuste histórico' },
+            'descuento_permiso':  { cls: 'tipo-permiso', icon: 'fa-hand',               label: 'Por permiso' },
+            'periodo':            { cls: 'tipo-periodo', icon: 'fa-plane-departure',    label: 'Período' },
+        };
+
         for (const r of registros) {
 
             const escapedName = empName.replace(/'/g, "\\'");
 
-            const notasEscaped = (r.notas || '').replace(/"/g, '&quot;').replace(/'/g, "\\'");
+            const tMeta = tipoMeta[r.tipo] || tipoMeta['periodo'];
+            const tipoBadge = `<span class="vhist-type-badge ${tMeta.cls}"><i class="fa-solid ${tMeta.icon}"></i> ${tMeta.label}</span>`;
+            const soloPagoBadge = r.solo_pago ? `<span class="vhist-type-badge tipo-pago"><i class="fa-solid fa-money-bill-wave"></i> Sólo pago</span>` : '';
 
             html += `
 
@@ -1620,6 +1714,8 @@ async function openVacHistorial(empId, empName) {
                             </span>
 
                             <span class="vhist-days-pill">${r.dias} día${r.dias !== 1 ? 's' : ''}</span>
+
+                            ${tipoBadge}${soloPagoBadge}
 
                         </div>
 
@@ -1685,7 +1781,7 @@ async function deleteVacRecord(vacId, empId, empName) {
 
         openVacHistorial(empId, empName);
 
-        loadVacacionesTab();
+        if (typeof loadVacSubVacaciones === 'function') loadVacSubVacaciones();
 
     } catch (e) { alert(e.message); }
 
@@ -1730,6 +1826,7 @@ async function editVacRecord(vacId, empId, empName) {
 
 
         const escapedName = empName.replace(/'/g, "\\'");
+        const currentTipo = rec.tipo || 'periodo';
 
         body.innerHTML = `
 
@@ -1769,6 +1866,26 @@ async function editVacRecord(vacId, empId, empName) {
 
                     </div>
 
+                    <div class="vhist-edit-field">
+
+                        <label>Tipo</label>
+
+                        <select id="editVacTipo-${vacId}">
+                            <option value="periodo" ${currentTipo === 'periodo' ? 'selected' : ''}>Período actual</option>
+                            <option value="ajuste_historico" ${currentTipo === 'ajuste_historico' ? 'selected' : ''}>Ajuste histórico</option>
+                            <option value="descuento_permiso" ${currentTipo === 'descuento_permiso' ? 'selected' : ''}>Descuento por permiso</option>
+                        </select>
+
+                    </div>
+
+                    <div class="vhist-edit-field" style="display:flex; align-items:center; gap:8px; padding-top:1.6rem;">
+
+                        <input type="checkbox" id="editVacSoloPago-${vacId}" ${rec.solo_pago ? 'checked' : ''} style="width:18px;height:18px;">
+
+                        <label for="editVacSoloPago-${vacId}" style="margin:0; cursor:pointer;">Sólo pago</label>
+
+                    </div>
+
                 </div>
 
                 <div class="vhist-edit-field" style="margin-top:0.5rem;">
@@ -1805,6 +1922,9 @@ async function editVacRecord(vacId, empId, empName) {
 
 async function saveVacEdit(vacId, empId, empName) {
 
+    const tipoEl = document.getElementById(`editVacTipo-${vacId}`);
+    const soloPagoEl = document.getElementById(`editVacSoloPago-${vacId}`);
+
     const data = {
 
         empleado_id: empId,
@@ -1815,9 +1935,13 @@ async function saveVacEdit(vacId, empId, empName) {
 
         dias: parseFloat(document.getElementById(`editVacDias-${vacId}`).value) || 0,
 
-        fecha_reingreso: document.getElementById(`editVacReingreso-${vacId}`).value,
+        fecha_reingreso: document.getElementById(`editVacReingreso-${vacId}`).value || null,
 
-        notas: document.getElementById(`editVacNotas-${vacId}`).value
+        notas: document.getElementById(`editVacNotas-${vacId}`).value || null,
+
+        tipo: tipoEl ? tipoEl.value : undefined,
+
+        solo_pago: soloPagoEl ? soloPagoEl.checked : false,
 
     };
 
@@ -1835,7 +1959,7 @@ async function saveVacEdit(vacId, empId, empName) {
 
         openVacHistorial(empId, empName);
 
-        loadVacacionesTab();
+        if (typeof loadVacSubVacaciones === 'function') loadVacSubVacaciones();
 
     } catch (e) { alert(e.message); }
 
@@ -1845,101 +1969,115 @@ async function saveVacEdit(vacId, empId, empName) {
 
 // â”€â”€ Registro de Vacaciones (Modal) â”€â”€
 
-function openRegistrarVacacion(empId, empName) {
-
-    document.getElementById('vacEmpId').value = empId;
-
-    document.getElementById('vacEmpName').textContent = empName;
-
-    document.getElementById('vacFechaInicio').value = '';
-
-    document.getElementById('vacFechaFin').value = '';
-
-    document.getElementById('vacDias').value = '';
-
-    document.getElementById('vacFechaReingreso').value = '';
-
-    document.getElementById('vacNotas').value = '';
-
-    document.getElementById('vacacionModal').classList.remove('hidden');
-
+function _setVacTipoSelected(tipo) {
+    const t = tipo || 'periodo';
+    document.querySelectorAll('.vac-type-option').forEach(opt => {
+        const isActive = opt.dataset.tipo === t;
+        opt.classList.toggle('active', isActive);
+        const radio = opt.querySelector('input[type="radio"]');
+        if (radio) radio.checked = isActive;
+    });
 }
 
+function _bindVacTipoOptions() {
+    document.querySelectorAll('.vac-type-option').forEach(opt => {
+        if (opt.dataset.tipoBound) return;
+        opt.dataset.tipoBound = '1';
+        opt.addEventListener('click', () => _setVacTipoSelected(opt.dataset.tipo));
+    });
+}
 
+function _getVacTipoSelected() {
+    const opt = document.querySelector('.vac-type-option.active');
+    return (opt && opt.dataset.tipo) || 'periodo';
+}
+
+function openRegistrarVacacion(empId, empName) {
+    document.getElementById('vacEmpId').value = empId;
+    document.getElementById('vacEditId').value = '';
+    document.getElementById('vacEmpName').textContent = empName;
+    document.getElementById('vacFechaInicio').value = '';
+    document.getElementById('vacFechaFin').value = '';
+    document.getElementById('vacDias').value = '';
+    document.getElementById('vacFechaReingreso').value = '';
+    document.getElementById('vacNotas').value = '';
+    const errEl = document.getElementById('vacFormError');
+    if (errEl) errEl.style.display = 'none';
+    const vacSoloPago = document.getElementById('vacSoloPago');
+    if (vacSoloPago) vacSoloPago.checked = false;
+    _setVacTipoSelected('periodo');
+    _bindVacTipoOptions();
+    document.getElementById('vacacionModal').classList.remove('hidden');
+}
+
+async function openRegistrarVacacionAjuste(empId, empName) {
+    openRegistrarVacacion(empId, empName);
+    _setVacTipoSelected('ajuste_historico');
+    document.getElementById('vacNotas').value = 'Ajuste histórico — días gozados antes de iniciar el sistema.';
+}
 
 function closeRegistrarVacacion() {
-
     document.getElementById('vacacionModal').classList.add('hidden');
-
 }
-
-
 
 async function guardarVacacion() {
-
     const empId = document.getElementById('vacEmpId').value;
-
+    const editId = document.getElementById('vacEditId').value;
+    const tipo = _getVacTipoSelected();
     const data = {
-
         empleado_id: parseInt(empId),
-
         fecha_inicio: document.getElementById('vacFechaInicio').value,
-
         fecha_fin: document.getElementById('vacFechaFin').value,
-
         dias: parseFloat(document.getElementById('vacDias').value) || 0,
-
-        fecha_reingreso: document.getElementById('vacFechaReingreso').value,
-
-        notas: document.getElementById('vacNotas').value
-
+        fecha_reingreso: document.getElementById('vacFechaReingreso').value || null,
+        notas: document.getElementById('vacNotas').value || null,
+        solo_pago: document.getElementById('vacSoloPago') ? document.getElementById('vacSoloPago').checked : false,
+        tipo,
     };
 
+    const errEl = document.getElementById('vacFormError');
+    const showErr = (msg) => {
+        if (errEl) {
+            errEl.textContent = msg;
+            errEl.style.display = 'block';
+        } else {
+            alert(msg);
+        }
+    };
 
-
-    if (!data.fecha_inicio || !data.fecha_fin || data.dias <= 0) {
-
-        alert('Por favor complete las fechas y asegúrese de que los días sean mayores a 0.');
-
-        return;
-
+    if (!data.fecha_inicio || !data.fecha_fin) {
+        return showErr('Indicá fecha inicio y fecha fin del período.');
     }
-
-
+    if (data.dias <= 0) {
+        return showErr('La cantidad de días debe ser mayor a 0.');
+    }
 
     try {
-
-        const res = await fetch('/api/planillas/vacaciones', {
-
-            method: 'POST',
-
+        const url = editId
+            ? `/api/planillas/vacaciones/${editId}`
+            : '/api/planillas/vacaciones';
+        const method = editId ? 'PUT' : 'POST';
+        const res = await fetch(url, {
+            method,
             headers: { 'Content-Type': 'application/json' },
-
             body: JSON.stringify(data)
-
         });
-
         if (!res.ok) {
-
-            const err = await res.json();
-
+            const err = await res.json().catch(() => ({}));
             throw new Error(err.detail || 'Error al guardar');
-
         }
-
         closeRegistrarVacacion();
-
-        loadVacacionesTab();
-
-        alert('Vacación registrada exitosamente.');
-
+        if (typeof loadVacSubVacaciones === 'function') loadVacSubVacaciones();
+        if (typeof showToast === 'function') {
+            showToast(editId ? 'Vacación actualizada' : 'Vacación registrada', 'success');
+        }
     } catch (e) {
-
-        alert(e.message);
-
+        showErr(e.message);
     }
-
 }
+
+// Expone helper para abrir el modal en modo "ajuste histórico" desde la tarjeta
+window.openRegistrarVacacionAjuste = openRegistrarVacacionAjuste;
 
 
 
@@ -2029,6 +2167,8 @@ async function openPermHistorial(empId, empName, anio) {
 
 
 
+        const escapedHistName = (empName || '').replace(/'/g, "\\'");
+
         permisos.forEach(p => {
 
             const isDescontado = p.descontado_de_vacaciones;
@@ -2040,6 +2180,14 @@ async function openPermHistorial(empId, empName, anio) {
             const estadoLabel = isDescontado ? 'Descontado' : 'Pendiente';
 
             const estadoIcon = isDescontado ? 'fa-check-to-slot' : 'fa-hourglass-start';
+
+            const fechaInicio = _formatDateEs(p.fecha);
+
+            const fechaFinTxt = p.fecha_fin && p.fecha_fin !== p.fecha ? ` → ${_formatDateEs(p.fecha_fin)}` : '';
+
+            const horasBadge = (p.horas && parseFloat(p.horas) > 0)
+                ? `<span class="vhist-days-pill" style="color:#0891b2; background:rgba(8,145,178,0.14);"><i class="fa-solid fa-clock"></i> ${p.horas}h</span>`
+                : `<span class="vhist-days-pill" style="color:var(--text-muted); background:var(--surface-2);"><i class="fa-regular fa-calendar"></i> Día completo</span>`;
 
 
 
@@ -2059,9 +2207,11 @@ async function openPermHistorial(empId, empName, anio) {
 
                                 <i class="fa-regular fa-calendar" style="color:${estadoColor};"></i>
 
-                                ${_formatDateEs(p.fecha)}
+                                ${fechaInicio}${fechaFinTxt}
 
                             </span>
+
+                            ${horasBadge}
 
                             <span class="vhist-days-pill" style="color:${estadoColor}; background:${estadoBg};">
 
@@ -2072,6 +2222,12 @@ async function openPermHistorial(empId, empName, anio) {
                         </div>
 
                         <div class="vhist-card-menu">
+
+                            <button class="vhist-btn-icon" onclick="editPermiso(${p.id}, ${empId}, '${escapedHistName}')" title="Editar permiso">
+
+                                <i class="fa-solid fa-pen-to-square"></i>
+
+                            </button>
 
                             <button class="vhist-btn-icon vhist-btn-danger" onclick="deletePermiso(${p.id}, ${isDescontado})" title="${isDescontado ? 'Eliminar y opcionalmente restaurar vacaciones' : 'Eliminar permiso'}">
 
@@ -2143,18 +2299,39 @@ function openRegistrarPermiso(empId, empName) {
 
     document.getElementById('permEmpId').value = empId;
 
+    document.getElementById('permEditId').value = '';
+
     document.getElementById('permEmpName').textContent = empName;
 
     document.getElementById('permFecha').value = '';
+
+    const fechaFinEl = document.getElementById('permFechaFin');
+    if (fechaFinEl) fechaFinEl.value = '';
+
+    const horasEl = document.getElementById('permHoras');
+    if (horasEl) horasEl.value = '0';
 
     document.getElementById('permMotivo').value = 'Personal';
 
     document.getElementById('permNotas').value = '';
 
+    const errEl = document.getElementById('permFormError');
+    if (errEl) errEl.style.display = 'none';
+
     document.getElementById('permisoModal').classList.remove('hidden');
 
 }
 
+function autoCalcPermDias() {
+    // Si fecha_fin < fecha_inicio, limpia
+    const fi = document.getElementById('permFecha')?.value;
+    const ff = document.getElementById('permFechaFin')?.value;
+    if (fi && ff && new Date(ff) < new Date(fi)) {
+        document.getElementById('permFechaFin').value = '';
+    }
+}
+
+window.autoCalcPermDias = autoCalcPermDias;
 
 
 function closeRegistrarPermiso() {
@@ -2168,12 +2345,19 @@ function closeRegistrarPermiso() {
 async function guardarPermiso() {
 
     const empId = document.getElementById('permEmpId').value;
+    const editId = document.getElementById('permEditId').value;
+    const fechaFinEl = document.getElementById('permFechaFin');
+    const horasEl = document.getElementById('permHoras');
 
     const data = {
 
         empleado_id: parseInt(empId),
 
         fecha: document.getElementById('permFecha').value,
+
+        fecha_fin: (fechaFinEl && fechaFinEl.value) || null,
+
+        horas: horasEl ? (parseFloat(horasEl.value) || 0) : 0,
 
         motivo: document.getElementById('permMotivo').value,
 
@@ -2183,11 +2367,19 @@ async function guardarPermiso() {
 
 
 
+    const errEl = document.getElementById('permFormError');
+    const showErr = (msg) => {
+        if (errEl) {
+            errEl.textContent = msg;
+            errEl.style.display = 'block';
+        } else {
+            alert(msg);
+        }
+    };
+
     if (!data.fecha) {
 
-        alert('Por favor seleccione una fecha para el permiso.');
-
-        return;
+        return showErr('Seleccioná la fecha de inicio del permiso.');
 
     }
 
@@ -2195,9 +2387,12 @@ async function guardarPermiso() {
 
     try {
 
-        const res = await fetch('/api/planillas/permisos', {
+        const url = editId ? `/api/planillas/permisos/${editId}` : '/api/planillas/permisos';
+        const method = editId ? 'PUT' : 'POST';
 
-            method: 'POST',
+        const res = await fetch(url, {
+
+            method,
 
             headers: { 'Content-Type': 'application/json' },
 
@@ -2207,7 +2402,7 @@ async function guardarPermiso() {
 
         if (!res.ok) {
 
-            const err = await res.json();
+            const err = await res.json().catch(() => ({}));
 
             throw new Error(err.detail || 'Error al guardar');
 
@@ -2217,19 +2412,53 @@ async function guardarPermiso() {
 
         loadVacSubPermisos();
 
-        if (typeof showToast === 'function') showToast('Permiso registrado', 'success');
-
-        else alert('Permiso registrado exitosamente.');
+        if (typeof showToast === 'function') showToast(editId ? 'Permiso actualizado' : 'Permiso registrado', 'success');
 
     } catch (e) {
 
-        alert(e.message);
+        showErr(e.message);
 
     }
 
 }
 
 
+
+async function editPermiso(permisoId, empId, empName) {
+    try {
+        // Fetch current permit data — necesitamos buscar en el listado
+        const anio = new Date().getFullYear();
+        const res = await fetch(`/api/planillas/permisos/${empId}?anio=${anio}`);
+        if (!res.ok) throw new Error('No se pudo cargar el permiso');
+        const data = await res.json();
+        const p = (data.permisos || []).find(x => x.id === permisoId);
+        if (!p) {
+            // Buscar en años anteriores si no aparece en el actual
+            const all = await fetch(`/api/planillas/permisos/${empId}`).then(r => r.json()).catch(() => ({}));
+            const found = (all.permisos || []).find(x => x.id === permisoId);
+            if (!found) throw new Error('Permiso no encontrado');
+            return _openPermisoEditPrefill(empId, empName, found);
+        }
+        _openPermisoEditPrefill(empId, empName, p);
+    } catch (e) {
+        alert(e.message || 'Error al editar permiso');
+    }
+}
+
+function _openPermisoEditPrefill(empId, empName, p) {
+    closePermHistorial();
+    openRegistrarPermiso(empId, empName);
+    document.getElementById('permEditId').value = p.id;
+    document.getElementById('permFecha').value = p.fecha || '';
+    const ff = document.getElementById('permFechaFin');
+    if (ff) ff.value = p.fecha_fin || '';
+    const hh = document.getElementById('permHoras');
+    if (hh) hh.value = String(p.horas || 0);
+    document.getElementById('permMotivo').value = p.motivo || '';
+    document.getElementById('permNotas').value = p.notas || '';
+}
+
+window.editPermiso = editPermiso;
 
 async function deletePermiso(permisoId, isDescontado) {
 
@@ -2536,52 +2765,122 @@ async function registrarAbono(prestamoId, montoSugerido, empName, tipo) {
         return alert('El rebajo normal de planilla ahora se sincroniza automaticamente desde el Excel semanal.');
     }
 
-    let monto;
     if (tipo === 'extraordinario') {
-        monto = prompt(`Abono extraordinario para ${empName}.\nIngrese el monto del abono:`);
-        if (monto === null) return;
-        monto = parseFloat(monto);
-        if (isNaN(monto) || monto <= 0) return alert('Monto inválido.');
+        // Abrir modal estilizado en lugar del prompt() nativo
+        openAbonoExtraordinarioModal(prestamoId, empName);
+        return;
     }
 
+    // Otros tipos (raros) — fallback al flujo directo
+    try {
+        const res = await fetch(`/api/planillas/prestamos/${prestamoId}/abono`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ monto: montoSugerido, tipo, notas: null })
+        });
+        if (!res.ok) throw new Error('Error al registrar abono');
+        const result = await res.json();
+        loadVacSubPrestamos();
+        if (typeof showToast === 'function') {
+            showToast(`Abono ₡${_fmtMoney(montoSugerido)} registrado. Saldo: ₡${_fmtMoney(result.nuevo_saldo)}`, 'success');
+        }
+    } catch (e) { alert(e.message); }
+}
 
-    const notas = tipo === 'extraordinario' ? prompt('Nota para el abono extraordinario (opcional):') : null;
+// =============================================================================
+// MODAL ABONO EXTRAORDINARIO
+// =============================================================================
+let _abonoExtSaldoActual = 0;
 
+async function openAbonoExtraordinarioModal(prestamoId, empName) {
+    document.getElementById('abonoExtPrestamoId').value = prestamoId;
+    document.getElementById('abonoExtName').textContent = empName;
+    document.getElementById('abonoExtMonto').value = '';
+    document.getElementById('abonoExtNotas').value = '';
+    const errEl = document.getElementById('abonoExtError');
+    if (errEl) errEl.style.display = 'none';
 
+    // Cargar saldo actual para preview
+    _abonoExtSaldoActual = 0;
+    const previewEl = document.getElementById('abonoExtSaldoPreview');
+    if (previewEl) previewEl.textContent = 'Cargando saldo actual...';
+    try {
+        const res = await fetch(`/api/planillas/prestamos/${prestamoId}/abonos`);
+        if (res.ok) {
+            const data = await res.json();
+            _abonoExtSaldoActual = parseFloat(data?.prestamo?.saldo) || 0;
+            if (previewEl) previewEl.textContent = `Saldo actual: ₡${_fmtMoney(_abonoExtSaldoActual)}`;
+        } else if (previewEl) {
+            previewEl.textContent = '';
+        }
+    } catch (_) {
+        if (previewEl) previewEl.textContent = '';
+    }
+
+    const inp = document.getElementById('abonoExtMonto');
+    inp.oninput = () => {
+        const monto = parseFloat(inp.value);
+        if (!isNaN(monto) && monto > 0 && _abonoExtSaldoActual > 0) {
+            const nuevoSaldo = Math.max(0, _abonoExtSaldoActual - monto);
+            previewEl.textContent = `Saldo actual: ₡${_fmtMoney(_abonoExtSaldoActual)} → Nuevo saldo: ₡${_fmtMoney(nuevoSaldo)}`;
+        } else if (_abonoExtSaldoActual > 0) {
+            previewEl.textContent = `Saldo actual: ₡${_fmtMoney(_abonoExtSaldoActual)}`;
+        }
+    };
+
+    document.getElementById('abonoExtraordinarioModal').classList.remove('hidden');
+    setTimeout(() => inp.focus(), 50);
+}
+
+function closeAbonoExtraordinarioModal() {
+    document.getElementById('abonoExtraordinarioModal').classList.add('hidden');
+}
+
+async function confirmAbonoExtraordinario() {
+    const prestamoId = document.getElementById('abonoExtPrestamoId').value;
+    const monto = parseFloat(document.getElementById('abonoExtMonto').value);
+    const notas = document.getElementById('abonoExtNotas').value.trim() || null;
+    const empName = document.getElementById('abonoExtName').textContent;
+    const errEl = document.getElementById('abonoExtError');
+
+    if (isNaN(monto) || monto <= 0) {
+        if (errEl) {
+            errEl.textContent = 'Ingresá un monto válido mayor a 0.';
+            errEl.style.display = 'block';
+        }
+        return;
+    }
 
     try {
-
         const res = await fetch(`/api/planillas/prestamos/${prestamoId}/abono`, {
-
             method: 'POST',
-
             headers: { 'Content-Type': 'application/json' },
-
-            body: JSON.stringify({ monto, tipo, notas })
-
+            body: JSON.stringify({ monto, tipo: 'extraordinario', notas })
         });
-
-        if (!res.ok) throw new Error('Error al registrar abono');
-
+        if (!res.ok) {
+            const errBody = await res.json().catch(() => ({}));
+            throw new Error(errBody.detail || 'Error al registrar abono');
+        }
         const result = await res.json();
-
+        closeAbonoExtraordinarioModal();
         loadVacSubPrestamos();
-
         if (typeof showToast === 'function') {
-
             showToast(`Abono ₡${_fmtMoney(monto)} registrado. Saldo: ₡${_fmtMoney(result.nuevo_saldo)}`, 'success');
-
         }
-
         if (result.estado === 'liquidado') {
-
-            alert(`¡Préstamo de ${empName} LIQUIDADO! \u{1F389}`);
-
+            setTimeout(() => alert(`¡Préstamo de ${empName} LIQUIDADO! \u{1F389}`), 100);
         }
-
-    } catch (e) { alert(e.message); }
-
+    } catch (e) {
+        if (errEl) {
+            errEl.textContent = e.message || 'Error al registrar abono';
+            errEl.style.display = 'block';
+        }
+    }
 }
+
+window.openAbonoExtraordinarioModal = openAbonoExtraordinarioModal;
+window.closeAbonoExtraordinarioModal = closeAbonoExtraordinarioModal;
+window.confirmAbonoExtraordinario = confirmAbonoExtraordinario;
 
 
 
@@ -2672,7 +2971,6 @@ async function verAbonosPrestamo(prestamoId, empName) {
 
                         <th style="text-align:center; padding:10px 12px;">Tipo</th>
 
-                        <th style="text-align:left; padding:10px 12px;">Notas</th>
 
                     </tr></thead>
 
@@ -2682,7 +2980,7 @@ async function verAbonosPrestamo(prestamoId, empName) {
 
                     <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
 
-                        <td style="padding:8px 12px; color:var(--text-main);">${_formatDateEs(a.fecha)}</td>
+                        <td style="padding:8px 12px;">${(a.notas && a.notas.trim()) ? `<span style="color:#8b5cf6; cursor:pointer; text-decoration:underline dotted; font-weight:600;" title="${(a.notas||'').replace(/"/g,'&quot;')}" onclick="_mostrarNotaAbono('${(a.notas||'').replace(/'/g,"\\'").replace(/\n/g,' ')}','${a.fecha}')">${_formatDateEs(a.fecha)} <i class='fa-solid fa-note-sticky' style='font-size:0.65rem;'></i></span>` : `<span style='color:var(--text-main);'>${_formatDateEs(a.fecha)}</span>`}</td>
 
                         <td style="padding:8px 12px; text-align:right; font-weight:700; color:#10b981;">₡${_fmtMoney(a.monto)}</td>
                         <td style="padding:8px 12px; text-align:center;">
@@ -2693,7 +2991,6 @@ async function verAbonosPrestamo(prestamoId, empName) {
                     '<span style="background:rgba(245,158,11,0.15); color:#f59e0b; padding:2px 8px; border-radius:5px; font-size:0.68rem; font-weight:600;">Extraordinario</span>'
                 }
                         </td>
-                        <td style="padding:8px 12px; color:var(--text-muted); font-size:0.75rem;">${a.notas || a.semana_planilla || '—'}</td>
                     </tr>`).join('')}
 
                     </tbody>
@@ -3418,6 +3715,12 @@ async function abrirConfigTarifas() {
         if (pctEl) pctEl.onchange = _syncSeguroModoUI;
         if (fijoEl) fijoEl.onchange = _syncSeguroModoUI;
 
+        const pex = document.getElementById('cfgPagarHorasExtra');
+        if (pex) {
+            const raw = t.pagar_horas_extra;
+            pex.checked = raw === undefined || raw === null || Number(raw) !== 0;
+        }
+
         document.getElementById('planillaConfigModal').classList.remove('hidden');
 
     } catch (e) { alert("Error al cargar tarifas."); }
@@ -3447,6 +3750,7 @@ async function guardarTarifas() {
         seguro_valor = (isNaN(p) ? 10.67 : p) / 100;
     }
 
+    const pexEl = document.getElementById('cfgPagarHorasExtra');
     const data = {
 
         tarifa_diurna: parseFloat(document.getElementById('cfgTarifaDiurna').value),
@@ -3457,7 +3761,9 @@ async function guardarTarifas() {
 
         seguro_modo,
 
-        seguro_valor
+        seguro_valor,
+
+        pagar_horas_extra: !!(pexEl && pexEl.checked),
 
     };
 
@@ -4310,7 +4616,24 @@ async function loadUtilidadesTab() {
 
                     </div>
 
-                    <div class="input-row">
+                    <div class="input-group" style="margin-top: 0.8rem; display: flex; align-items: center; gap: 10px;">
+
+                        <input type="checkbox" id="utilVacSoloPago" style="width:18px;height:18px;" onchange="document.getElementById('utilVacModeSelector').style.display = this.checked ? 'flex' : 'none'; toggleUtilVacInputs();">
+
+                        <label for="utilVacSoloPago" style="margin: 0; cursor: pointer; color: var(--text-muted); font-size: 0.9rem;">
+
+                            Sólo pagar (el colaborador sigue trabajando)
+
+                        </label>
+
+                    </div>
+
+                    <div id="utilVacModeSelector" style="display:none; margin-top:0.8rem; gap:15px; align-items:center;">
+                        <label style="display:flex; align-items:center; gap:5px;"><input type="radio" name="utilVacModo" value="fechas" checked onchange="toggleUtilVacInputs()"> Fechas específicas</label>
+                        <label style="display:flex; align-items:center; gap:5px;"><input type="radio" name="utilVacModo" value="periodo" onchange="toggleUtilVacInputs()"> Por Periodo (ej. 2025-2026)</label>
+                    </div>
+
+                    <div class="input-row" id="utilVacFechasRow">
 
                         <div class="input-group">
 
@@ -4325,6 +4648,26 @@ async function loadUtilidadesTab() {
                             <label>Fecha de Reingreso</label>
 
                             <input type="date" id="utilVacReingreso" onchange="calcVacDias()">
+
+                        </div>
+
+                    </div>
+
+                    <div class="input-row" id="utilVacPeriodoRow" style="display:none;">
+
+                        <div class="input-group">
+
+                            <label>Periodo (Ej. 2025-2026)</label>
+
+                            <input type="text" id="utilVacPeriodoStr" placeholder="2025-2026">
+
+                        </div>
+
+                        <div class="input-group">
+
+                            <label>Días a Compensar</label>
+
+                            <input type="number" step="0.5" id="utilVacPeriodoDias" placeholder="Ej. 14">
 
                         </div>
 
@@ -5272,7 +5615,30 @@ function calcVacDias() {
 
 
 
+function toggleUtilVacInputs() {
+    const isSoloPago = document.getElementById('utilVacSoloPago') && document.getElementById('utilVacSoloPago').checked;
+    const mode = document.querySelector('input[name="utilVacModo"]:checked');
+    const isPeriodo = isSoloPago && mode && mode.value === 'periodo';
+
+    if (isPeriodo) {
+        document.getElementById('utilVacFechasRow').style.display = 'none';
+        document.getElementById('utilVacPeriodoRow').style.display = 'flex';
+        document.getElementById('utilVacCalc').style.display = 'none';
+    } else {
+        document.getElementById('utilVacFechasRow').style.display = 'flex';
+        document.getElementById('utilVacPeriodoRow').style.display = 'none';
+        calcVacDias();
+    }
+}
+
+
 async function generarVacaciones() {
+
+    const isSoloPago = document.getElementById('utilVacSoloPago') ? document.getElementById('utilVacSoloPago').checked : false;
+    let modoForm = "fechas";
+    if (isSoloPago && document.querySelector('input[name="utilVacModo"]:checked')) {
+        modoForm = document.querySelector('input[name="utilVacModo"]:checked').value;
+    }
 
     const data = {
 
@@ -5280,13 +5646,25 @@ async function generarVacaciones() {
 
         tipo: document.getElementById('utilVacTipo').value,
 
-        fecha_inicio: document.getElementById('utilVacInicio').value,
-
-        fecha_reingreso: document.getElementById('utilVacReingreso').value,
+        solo_pago: isSoloPago,
+        
+        modo_periodo: modoForm === 'periodo',
+        periodo_texto: '',
+        dias_periodo: 0.0,
+        fecha_inicio: '',
+        fecha_reingreso: ''
 
     };
 
-    if (!data.fecha_inicio || !data.fecha_reingreso) return alert('Selecciona ambas fechas.');
+    if (data.modo_periodo) {
+        data.periodo_texto = document.getElementById('utilVacPeriodoStr').value;
+        data.dias_periodo = parseFloat(document.getElementById('utilVacPeriodoDias').value);
+        if (!data.periodo_texto || !data.dias_periodo) return alert('Ingresá el periodo y la cantidad de días.');
+    } else {
+        data.fecha_inicio = document.getElementById('utilVacInicio').value;
+        data.fecha_reingreso = document.getElementById('utilVacReingreso').value;
+        if (!data.fecha_inicio || !data.fecha_reingreso) return alert('Selecciona ambas fechas.');
+    }
 
     try {
 

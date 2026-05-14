@@ -11,7 +11,8 @@ import json
 import os
 import re
 import sqlite3
-from datetime import datetime
+from datetime import date as date_cls
+from datetime import datetime, timedelta
 
 import database as db
 
@@ -240,6 +241,30 @@ def horas_base_dia_planilla(turno_code):
     return clasificar_turno(turno_code)
 
 
+# Topes de jornada ordinaria (horas); el excedente es extraordinario del mismo tipo.
+CAP_ORD_DIURNA = 8.0
+CAP_ORD_MIXTA = 7.0
+CAP_ORD_NOCTURNA = 6.0
+
+
+def split_jornada_ordinaria_extra(h_diurna, h_nocturna, h_mixta):
+    """
+    Parte las horas del día en ordinarias vs extraordinarias por tipo
+    (ley: diurna 8 h, mixta 7 h, nocturna 6 h).
+    Retorna (od, om, on, ed, em, en).
+    """
+    h_d = float(h_diurna or 0)
+    h_n = float(h_nocturna or 0)
+    h_m = float(h_mixta or 0)
+    od = min(h_d, CAP_ORD_DIURNA)
+    ed = max(0.0, h_d - CAP_ORD_DIURNA)
+    om = min(h_m, CAP_ORD_MIXTA)
+    em = max(0.0, h_m - CAP_ORD_MIXTA)
+    on = min(h_n, CAP_ORD_NOCTURNA)
+    en = max(0.0, h_n - CAP_ORD_NOCTURNA)
+    return od, om, on, ed, em, en
+
+
 def aplicar_cap_jefe_pista(h_diurna, h_nocturna, h_mixta, es_jefe):
     """Excedente de 8h por tipo → horas extra. Devuelve (h_d, h_n, h_m, h_extra)."""
     h_extra = 0
@@ -272,18 +297,15 @@ def tarifa_tipo_desde_totales_semana(total_d, total_m, total_n):
     return "nocturna", False
 
 
-def feriado_celda_horas(cat, tiene_horas_en_jornadas_normales):
+def feriado_celda_horas(cat, _tiene_horas_jornada=None):
     """
-    Horas a escribir en fila ★ Feriado para un día que es feriado.
-    VAC o jornada con horas → 0; OFF/PERM → HORAS_FERIADO_SIN_LABOR;
-    WORK sin horas → HORAS_FERIADO_SIN_LABOR.
+    Horas a escribir en fila ★ Feriado para un día que es feriado (columna del día).
+    VAC → 0. Cualquier otro caso (OFF, PERM, WORK con o sin jornada) → recargo
+    estándar HORAS_FERIADO_SIN_LABOR; las horas trabajadas siguen en D/M/N/extras.
+    El segundo argumento se ignora (compat. llamadas antiguas).
     """
     if cat == "VAC":
         return 0
-    if tiene_horas_en_jornadas_normales:
-        return 0
-    if cat in ("OFF", "PERM"):
-        return HORAS_FERIADO_SIN_LABOR
     return HORAS_FERIADO_SIN_LABOR
 
 
@@ -462,9 +484,66 @@ def eliminar_horario(horario_id):
     conn.close()
 
 
+def update_horario_tareas(horario_id, tareas_dict):
+    """Actualiza las tareas de un horario existente."""
+    conn = db.get_conn()
+    tareas_json = json.dumps(tareas_dict or {}, ensure_ascii=False)
+    conn.execute("UPDATE horarios_generados SET tareas=? WHERE id=?", (tareas_json, horario_id))
+    conn.commit()
+    conn.close()
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # RELLENAR EXCEL CON HORAS DEL HORARIO
 # ═════════════════════════════════════════════════════════════════════════════
+
+def _parse_viernes_planilla_cell(val):
+    """Celda del viernes de inicio de período (fila 2 col C): date/datetime/serial/texto."""
+    if val is None:
+        return None
+    if isinstance(val, date_cls) and not isinstance(val, datetime):
+        return val
+    if isinstance(val, datetime):
+        return val.date()
+    if isinstance(val, (int, float)):
+        try:
+            from openpyxl.utils.datetime import from_excel
+
+            return from_excel(val).date()
+        except Exception:
+            return None
+    if isinstance(val, str):
+        s = val.strip()
+        for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d/%m/%y"):
+            try:
+                return datetime.strptime(s[:10] if len(s) > 10 else s, fmt).date()
+            except ValueError:
+                continue
+    return None
+
+
+def _holiday_entry_iso(h):
+    """Normaliza h['date'] a YYYY-MM-DD para comparar con iso de la semana."""
+    if not h:
+        return None
+    d = h.get("date")
+    if d is None:
+        return None
+    if hasattr(d, "isoformat") and callable(getattr(d, "isoformat")) and not isinstance(d, str):
+        return d.isoformat()[:10]
+    s = str(d).strip()
+    if "T" in s:
+        s = s[:10]
+    if len(s) >= 10 and s[4] == "-" and s[7] == "-":
+        return f"{s[:4]}-{s[5:7]}-{s[8:10]}"
+    parts = s.split("/")
+    if len(parts) == 3:
+        dd, mm, yy = parts[0].zfill(2), parts[1].zfill(2), parts[2]
+        if len(yy) == 2:
+            yy = "20" + yy if int(yy) < 70 else "19" + yy
+        return f"{yy}-{mm}-{dd}"
+    return None
+
 
 def rellenar_horas_en_excel(excel_path, nombre_hoja, horario_dict, holidays=None):
     """
@@ -487,33 +566,22 @@ def rellenar_horas_en_excel(excel_path, nombre_hoja, horario_dict, holidays=None
 
     ws = wb[nombre_hoja]
 
-    # Nuevo layout horizontal de 5 filas:
-    # - Días son COLUMNAS: C=3(Viernes), D=4(Sábado), E=5(Domingo),
-    #                      F=6(Lunes), G=7(Martes), H=8(Miércoles), I=9(Jueves)
-    # - Jornadas son FILAS relativas a emp_start:
-    #     +0 = Hrs. Diurnas
-    #     +1 = Hrs. Mixtas
-    #     +2 = Hrs. Nocturnas
-    #     +3 = Hrs. Extra
-    #     +4 = ★ Feriado (oculta por defecto, se desoculta si hay feriados)
+    # Layout: columnas C–I = Vie..Jue. Filas por empleado = bloque variable
+    # (3 ordinarias + 0–3 extras + fila feriado opcional); ver planilla_layout.
     DIAS_COL = {
         "Vie": 3, "Sáb": 4, "Dom": 5,
         "Lun": 6, "Mar": 7, "Mié": 8, "Jue": 9,
     }
-    FILA_DIURNA = 0
-    FILA_MIXTA  = 1
-    FILA_NOCT   = 2
-    FILA_EXTRA  = 3
-    FILA_FERIADO = 4
 
-    # Obtener jefes de pista y datos de planilla
+    import planilla_layout as pllay  # noqa: PLC0415 — evita import circular al cargar módulo
+
     conn = db.get_conn()
-    jefes = [r[0] for r in conn.execute(
-        "SELECT nombre FROM horario_empleados WHERE es_jefe_pista=1").fetchall()]
     empleados_planilla = {
         row["nombre"]: dict(row)
         for row in conn.execute(
-            "SELECT nombre, tipo_pago, salario_fijo FROM empleados"
+            "SELECT nombre, tipo_pago, salario_fijo, "
+            "COALESCE(NULLIF(TRIM(periodo_salario_fijo), ''), 'mensual') AS periodo_salario_fijo "
+            "FROM empleados"
         ).fetchall()
     }
 
@@ -530,38 +598,19 @@ def rellenar_horas_en_excel(excel_path, nombre_hoja, horario_dict, holidays=None
 
     conn.close()
 
-    # ── Detectar feriados de esta semana ──
-    # Leer fechas de los headers de columna (fila 3, columnas C-I)
-    # La fila 3 tiene la fecha en formato DD/MM en las celdas de día
-    # Necesitamos el año de la fila 2 (viernes date)
-    viernes_cell = ws.cell(row=2, column=3).value
+    # ── Detectar feriados de esta semana (viernes en fila 2 col C) ──
+    viernes_date = _parse_viernes_planilla_cell(ws.cell(row=2, column=3).value)
     semana_feriados = []  # list of (dia_es, col_idx, holiday_name)
-    if holidays:
-        # Parsear viernes para obtener año
-        from datetime import datetime as dt
-        viernes_date = None
-        if isinstance(viernes_cell, dt):
-            viernes_date = viernes_cell.date()
-        elif isinstance(viernes_cell, str):
-            for fmt in ("%Y-%m-%d", "%d/%m/%Y"):
-                try:
-                    viernes_date = dt.strptime(viernes_cell, fmt).date()
+    if holidays and viernes_date:
+        for i, dia_es in enumerate(["Vie", "Sáb", "Dom", "Lun", "Mar", "Mié", "Jue"]):
+            dia_date = viernes_date + timedelta(days=i)
+            iso_date = dia_date.isoformat()
+            for h in holidays:
+                if _holiday_entry_iso(h) == iso_date:
+                    col_idx = DIAS_COL.get(dia_es)
+                    if col_idx:
+                        semana_feriados.append((dia_es, col_idx, h.get("name") or ""))
                     break
-                except ValueError:
-                    continue
-        elif hasattr(viernes_cell, 'date'):
-            viernes_date = viernes_cell.date()
-
-        if viernes_date:
-            for i, dia_es in enumerate(["Vie", "Sáb", "Dom", "Lun", "Mar", "Mié", "Jue"]):
-                dia_date = viernes_date + __import__('datetime').timedelta(days=i)
-                iso_date = dia_date.isoformat()  # YYYY-MM-DD
-                for h in holidays:
-                    if h.get("date") == iso_date:
-                        col_idx = DIAS_COL.get(dia_es)
-                        if col_idx:
-                            semana_feriados.append((dia_es, col_idx, h["name"]))
-                        break
 
     # Si hay feriados, desocultar filas de feriado para todos los empleados
     has_holidays_this_week = len(semana_feriados) > 0
@@ -597,6 +646,7 @@ def rellenar_horas_en_excel(excel_path, nombre_hoja, horario_dict, holidays=None
         emp_info = empleados_planilla.get(emp_nombre, {})
         tipo_pago = emp_info.get("tipo_pago")
         salario_fijo = emp_info.get("salario_fijo") or 0
+        periodo_sf = emp_info.get("periodo_salario_fijo") or "mensual"
         emp_row = _buscar_fila_empleado(emp_nombre, tipo_pago)
 
         if emp_row is None:
@@ -612,20 +662,23 @@ def rellenar_horas_en_excel(excel_path, nombre_hoja, horario_dict, holidays=None
                 "diurnas": 0,
                 "mixtas": 0,
                 "nocturnas": 0,
+                "extra_diurnas": 0,
+                "extra_mixtas": 0,
+                "extra_nocturnas": 0,
                 "extra": 0,
                 "horas_feriado_no_labor": 0,
                 "recargo_feriado": 0,
-                "salario_bruto": round(salario_fijo / 4.33, 2) if salario_fijo else 0,
+                "salario_bruto": db.salario_fijo_a_bruto_semanal(salario_fijo, periodo_sf) if salario_fijo else 0,
             }
             continue
 
         emp_schedule = horario_dict.get(emp_nombre) or {}
-        es_jefe = emp_nombre in jefes
 
-        # Limpiar bloque C–I (jornadas + feriado) para evitar datos de importaciones previas
+        scn = pllay.scan_jornada_block_rows(ws, emp_row)
+        last_clear = pllay.jornada_block_last_row(scn)
         for col_clear in range(3, 10):
-            for rel in range(0, 5):
-                c_clear = ws.cell(row=emp_row + rel, column=col_clear)
+            for rr in range(emp_row, last_clear + 1):
+                c_clear = ws.cell(row=rr, column=col_clear)
                 c_clear.value = None
                 c_clear.fill = NO_FILL
                 c_clear.comment = None
@@ -633,7 +686,9 @@ def rellenar_horas_en_excel(excel_path, nombre_hoja, horario_dict, holidays=None
         total_emp_d = 0
         total_emp_m = 0
         total_emp_n = 0
-        total_emp_e = 0
+        total_emp_ed = 0
+        total_emp_em = 0
+        total_emp_en = 0
 
         for dia_sched in DIAS_SEMANA_PLANILLA:
             col = DIAS_COL.get(dia_sched)
@@ -643,70 +698,104 @@ def rellenar_horas_en_excel(excel_path, nombre_hoja, horario_dict, holidays=None
             turno = emp_schedule.get(dia_sched, "OFF")
             cat = turno_categoria_planilla(turno)
             h_diurna, h_nocturna, h_mixta = horas_base_dia_planilla(turno)
-            h_diurna, h_nocturna, h_mixta, h_extra = aplicar_cap_jefe_pista(
-                h_diurna, h_nocturna, h_mixta, es_jefe
+            od, om, on, ed, em, en = split_jornada_ordinaria_extra(
+                h_diurna, h_nocturna, h_mixta
             )
 
-            r_d = emp_row + FILA_DIURNA
-            r_m = emp_row + FILA_MIXTA
-            r_n = emp_row + FILA_NOCT
-            r_e = emp_row + FILA_EXTRA
+            r_d = scn["rd"]
+            r_m = scn["rm"]
+            r_n = scn["rn"]
+            r_ed = scn.get("ed")
+            r_em = scn.get("em")
+            r_en = scn.get("en")
 
-            ws.cell(row=r_d, column=col).value = h_diurna if h_diurna > 0 else None
-            ws.cell(row=r_m, column=col).value = h_mixta if h_mixta > 0 else None
-            ws.cell(row=r_n, column=col).value = h_nocturna if h_nocturna > 0 else None
-            ws.cell(row=r_e, column=col).value = h_extra if h_extra > 0 else None
+            ws.cell(row=r_d, column=col).value = od if od > 0 else None
+            ws.cell(row=r_m, column=col).value = om if om > 0 else None
+            ws.cell(row=r_n, column=col).value = on if on > 0 else None
+            if r_ed:
+                ws.cell(row=r_ed, column=col).value = ed if ed > 0 else None
+            if r_em:
+                ws.cell(row=r_em, column=col).value = em if em > 0 else None
+            if r_en:
+                ws.cell(row=r_en, column=col).value = en if en > 0 else None
 
             if cat == "VAC":
-                for rel_row in (r_d, r_m, r_n, r_e):
+                vac_rows = [r_d, r_m, r_n]
+                if r_ed:
+                    vac_rows.append(r_ed)
+                if r_em:
+                    vac_rows.append(r_em)
+                if r_en:
+                    vac_rows.append(r_en)
+                fer_r = scn.get("fer")
+                if fer_r:
+                    vac_rows.append(fer_r)
+                for rel_row in vac_rows:
                     vc = ws.cell(row=rel_row, column=col)
                     vc.fill = VAC_FILL
                 ws.cell(row=r_d, column=col).comment = Comment("VAC", "planilla")
 
-            total_emp_d += h_diurna
-            total_emp_m += h_mixta
-            total_emp_n += h_nocturna
-            total_emp_e += h_extra
+            total_emp_d += od
+            total_emp_m += om
+            total_emp_n += on
+            total_emp_ed += ed
+            total_emp_em += em
+            total_emp_en += en
 
         total_hrs_feriado = 0
         recargo_feriado = 0.0
 
         if has_holidays_this_week:
-            holiday_row = emp_row + FILA_FERIADO
-            ws.row_dimensions[holiday_row].hidden = False
+            holiday_row = scn.get("fer")
+            if holiday_row is None:
+                for cand in range(emp_row + 3, min(emp_row + 12, ws.max_row + 1)):
+                    if "Feriado" in str(ws.cell(row=cand, column=2).value or ""):
+                        holiday_row = cand
+                        break
+            if holiday_row is not None and "Feriado" in str(
+                ws.cell(row=int(holiday_row), column=2).value or ""
+            ):
+                hr_i = int(holiday_row)
+                ws.row_dimensions[hr_i].hidden = False
 
-            tarifas = {
-                "tarifa_diurna": ws.cell(row=3, column=4).value or 0,
-                "tarifa_mixta": ws.cell(row=3, column=6).value or 0,
-                "tarifa_nocturna": ws.cell(row=3, column=8).value or 0,
-            }
+                # Tarifas desde BD (las celdas D3/F3/H3 pueden ser fórmulas y openpyxl no evalúa)
+                tf = db.get_tarifas()
+                tarifas = {
+                    "tarifa_diurna": float(tf.get("tarifa_diurna") or 0),
+                    "tarifa_mixta": float(tf.get("tarifa_mixta") or 0),
+                    "tarifa_nocturna": float(tf.get("tarifa_nocturna") or 0),
+                }
 
-            tarifa_tipo, es_off = tarifa_tipo_desde_totales_semana(
-                total_emp_d, total_emp_m, total_emp_n
-            )
-            if es_off:
-                tarifa_usar = float(tarifas["tarifa_mixta"] or 0)
-            else:
-                tarifa_usar = float(_valor_tarifa_tipo(tarifa_tipo, tarifas) or 0)
+                tarifa_tipo, es_off = tarifa_tipo_desde_totales_semana(
+                    total_emp_d + total_emp_ed,
+                    total_emp_m + total_emp_em,
+                    total_emp_n + total_emp_en,
+                )
+                if es_off:
+                    tarifa_usar = float(tarifas["tarifa_mixta"] or 0)
+                else:
+                    tarifa_usar = float(_valor_tarifa_tipo(tarifa_tipo, tarifas) or 0)
 
-            for dia_es, col_idx, _hn in semana_feriados:
-                turno_f = emp_schedule.get(dia_es, "OFF")
-                cat_f = turno_categoria_planilla(turno_f)
-                hd, hn, hm = horas_base_dia_planilla(turno_f)
-                hd, hn, hm, _hx = aplicar_cap_jefe_pista(hd, hn, hm, es_jefe)
-                tiene_jornada = (hd + hn + hm) > 0
-                fh = feriado_celda_horas(cat_f, tiene_jornada)
-                ws.cell(row=holiday_row, column=col_idx).value = fh if fh else None
-                total_hrs_feriado += fh
+                for dia_es, col_idx, _hn in semana_feriados:
+                    turno_f = emp_schedule.get(dia_es, "OFF")
+                    cat_f = turno_categoria_planilla(turno_f)
+                    hd, hn, hm = horas_base_dia_planilla(turno_f)
+                    fh = feriado_celda_horas(cat_f)
+                    ws.cell(row=hr_i, column=col_idx).value = fh if fh else None
+                    total_hrs_feriado += fh
 
-            recargo_feriado = round(total_hrs_feriado * tarifa_usar, 2)
-            ws.cell(row=holiday_row, column=12).value = recargo_feriado
+                # Columna L (bruto feriado): fórmula en la planilla (horas × tarifa dominante).
+                # No sobrescribir: el Excel recalcula al cargar horas en C–I de la fila ★.
+                recargo_feriado = round(total_hrs_feriado * tarifa_usar, 2)
 
         recap_horas[emp_nombre] = {
             "diurnas": total_emp_d,
             "mixtas": total_emp_m,
             "nocturnas": total_emp_n,
-            "extra": total_emp_e,
+            "extra_diurnas": total_emp_ed,
+            "extra_mixtas": total_emp_em,
+            "extra_nocturnas": total_emp_en,
+            "extra": total_emp_ed + total_emp_em + total_emp_en,
             "horas_feriado_no_labor": total_hrs_feriado,
             "recargo_feriado": recargo_feriado,
         }

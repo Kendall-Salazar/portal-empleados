@@ -22,6 +22,8 @@ class Config(BaseModel):
     refuerzo_type: str = "personalizado"
     refuerzo_start: str = "07:00"
     refuerzo_end: str = "12:00"
+    refuerzo_days_mode: str = "auto"  # "auto" = solver decide, "manual" = usuario elige
+    refuerzo_manual_days: List[str] = []  # Días específicos cuando refuerzo_days_mode="manual"
     allow_collision_quebrado: bool = False
     collision_peak_priority: str = "pm"
     use_history: bool = True

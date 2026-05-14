@@ -107,11 +107,15 @@ def periodo_y_fecha_pago_desde_hoja(ws):
     return t_per, t_fp
 
 
-def _tiene_hrs_extra(datos):
-    try:
-        return float(datos.get("HrsExtra") or 0) != 0.0
-    except (TypeError, ValueError):
-        return False
+def _hrs_extra_mayor_cero(datos):
+    """True si hay al menos una hora extra registrada (> 0)."""
+    for k in ("HrsExtraDiurnas", "HrsExtraMixtas", "HrsExtraNocturnas", "HrsExtra"):
+        try:
+            if float(datos.get(k) or 0) > 0:
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
 
 
 def _empleado_aplica_seguro(datos):
@@ -365,8 +369,61 @@ def generar_boleta_jpeg(
     y = draw_hora_row(d, y, "Hrs laboradas Diurnas",   datos["HrsDiurnas"],   datos["ValorHoraDiurna"],   datos["MontoDiurna"],   f_norm, f_bold, f_values)
     y = draw_hora_row(d, y, "Hrs laboradas Mixtas",    datos["HrsMixta"],     datos["ValorHoraMixta"],     datos["MontoMixta"],    f_norm, f_bold, f_values)
     y = draw_hora_row(d, y, "Hrs laboradas Nocturnas", datos["HrsNocturnas"], datos["ValorHoraNocturna"], datos["MontoNocturna"],  f_norm, f_bold, f_values)
-    if _tiene_hrs_extra(datos):
-        y = draw_hora_row(d, y, "Hrs Extra", datos["HrsExtra"], datos["ValorHoraExtra"], datos["MontoExtra"], f_norm, f_bold, f_values)
+    if datos.get("tiene_fila_feriado"):
+        hf = float(datos.get("HrsFeriado") or 0)
+        mf = float(datos.get("MontoFeriado") or 0)
+        if hf > 0 or mf > 0:
+            y = draw_hora_row(
+                d, y, "Hrs feriado (no laboradas)",
+                hf,
+                datos.get("ValorHoraFeriado") or 0,
+                mf,
+                f_norm, f_bold, f_values,
+            )
+    if _hrs_extra_mayor_cero(datos):
+        try:
+            hd = float(datos.get("HrsExtraDiurnas") or 0)
+        except (TypeError, ValueError):
+            hd = 0.0
+        try:
+            hm = float(datos.get("HrsExtraMixtas") or 0)
+        except (TypeError, ValueError):
+            hm = 0.0
+        try:
+            hn = float(datos.get("HrsExtraNocturnas") or 0)
+        except (TypeError, ValueError):
+            hn = 0.0
+        if hd <= 0 and hm <= 0 and hn <= 0:
+            try:
+                leg = float(datos.get("HrsExtra") or 0)
+            except (TypeError, ValueError):
+                leg = 0.0
+            if leg > 0:
+                hd = leg
+        if hd > 0:
+            y = draw_hora_row(
+                d, y, "Hrs extraordinarias diurnas",
+                hd,
+                datos.get("ValorHoraExtraDiurna"),
+                datos.get("MontoExtraDiurna"),
+                f_norm, f_bold, f_values,
+            )
+        if hm > 0:
+            y = draw_hora_row(
+                d, y, "Hrs extraordinarias mixtas",
+                hm,
+                datos.get("ValorHoraExtraMixta"),
+                datos.get("MontoExtraMixta"),
+                f_norm, f_bold, f_values,
+            )
+        if hn > 0:
+            y = draw_hora_row(
+                d, y, "Hrs extraordinarias nocturnas",
+                hn,
+                datos.get("ValorHoraExtraNocturna"),
+                datos.get("MontoExtraNocturna"),
+                f_norm, f_bold, f_values,
+            )
     
     bonif = datos.get("Bonificacion", 0)
     if bonif > 0:
@@ -459,7 +516,15 @@ def generar_boleta_jpeg(
 
 # ── Excel data extraction ─────────────────────────────────────────────────────
 
-def extract_employee_data(ws, row_idx, headers):
+def extract_employee_data(ws, row_idx, headers, tarifas_cfg=None):
+    import planilla_layout as pllay  # noqa: PLC0415
+
+    tarifas_cfg = tarifas_cfg or {}
+    try:
+        pagar_extra = int(tarifas_cfg.get("pagar_horas_extra", 1)) != 0
+    except (TypeError, ValueError):
+        pagar_extra = True
+
     def get_val(r, c):
         v = ws.cell(row=r, column=c).value
         if v is None:
@@ -473,67 +538,114 @@ def extract_employee_data(ws, row_idx, headers):
 
     def get_horas(r):
         tot = get_val(r, 10)
-        # Fallback to sum of days C(3) through I(9) if formula un-evaluated
         if tot == 0.0:
             tot = sum(get_val(r, c) for c in range(3, 10))
         return tot
 
-    h_diurnas = get_horas(row_idx)
-    h_mixtas  = get_horas(row_idx + 1)
-    h_noct    = get_horas(row_idx + 2)
-    h_extra   = get_horas(row_idx + 3)
+    scn = pllay.scan_jornada_block_rows(ws, row_idx)
+    h_diurnas = get_horas(scn["rd"])
+    h_mixtas = get_horas(scn["rm"])
+    h_noct = get_horas(scn["rn"])
+    h_ex_d = get_horas(scn["ed"]) if scn.get("ed") else 0.0
+    h_ex_m = get_horas(scn["em"]) if scn.get("em") else 0.0
+    h_ex_n = get_horas(scn["en"]) if scn.get("en") else 0.0
+
+    # Legacy: 3 ordinarias + una fila genérica de extras + feriado (sin EM/EN en B)
+    if (
+        h_ex_d == 0.0
+        and h_ex_m == 0.0
+        and h_ex_n == 0.0
+        and scn.get("fer")
+        and not (scn.get("ed") or scn.get("em") or scn.get("en"))
+    ):
+        r3 = row_idx + 3
+        b3 = str(ws.cell(row=r3, column=2).value or "")
+        if "Extraordinarias" in b3 and r3 < scn["fer"]:
+            hx = get_horas(r3)
+            h_ex_d, h_ex_m, h_ex_n = hx, 0.0, 0.0
+
+    fer_row = scn.get("fer")
 
     t_diurna = float(headers.get("Tarifa Diurna", 0))
-    t_noct   = float(headers.get("Tarifa Noct", 0))
-    t_mixta  = float(headers.get("Tarifa Mixta", 0))
-    t_extra  = float(headers.get("Tarifa Extra", 0))
+    t_noct = float(headers.get("Tarifa Noct", 0))
+    t_mixta = float(headers.get("Tarifa Mixta", 0))
 
     m_diurna = h_diurnas * t_diurna
-    m_noct   = h_noct * t_noct
-    m_mixta  = h_mixtas * t_mixta
-    m_extra  = h_extra * t_extra
+    m_noct = h_noct * t_noct
+    m_mixta = h_mixtas * t_mixta
+
+    f_extra = 1.5 if pagar_extra else 0.0
+    m_ex_d = h_ex_d * t_diurna * f_extra
+    m_ex_m = h_ex_m * t_mixta * f_extra
+    m_ex_n = h_ex_n * t_noct * f_extra
+
+    if fer_row is not None:
+        h_fer = get_horas(fer_row)
+        m_fer = get_val(fer_row, 12)
+    else:
+        h_fer = 0.0
+        m_fer = 0.0
+    val_fer = (m_fer / h_fer) if h_fer else 0.0
 
     bruto = get_val(row_idx, 12)
-    # If un-evaluated formula
     if bruto == 0.0:
-        bruto = m_diurna + m_noct + m_mixta + m_extra
+        bruto = m_diurna + m_noct + m_mixta + m_ex_d + m_ex_m + m_ex_n + m_fer
 
-    bonif   = get_val(row_idx, 13)
-    prest   = get_val(row_idx, 14)
+    bonif = get_val(row_idx, 13)
+    prest = get_val(row_idx, 14)
     combust = get_val(row_idx, 15)
-    mercad  = get_val(row_idx, 16)
+    mercad = get_val(row_idx, 16)
     adelant = get_val(row_idx, 17)
-    seguro  = get_val(row_idx, 18)
-    
+    seguro = get_val(row_idx, 18)
+
     tot_ded = get_val(row_idx, 19)
     if tot_ded == 0.0:
         tot_ded = prest + combust + mercad + adelant + seguro
-        
+
     neto = get_val(row_idx, 20)
     if neto == 0.0:
         neto = (bruto + bonif) - tot_ded
 
+    t_ex_d = t_diurna * 1.5
+    t_ex_m = t_mixta * 1.5
+    t_ex_n = t_noct * 1.5
+    h_extra_legacy = h_ex_d + h_ex_m + h_ex_n
+
     return {
-        "HrsDiurnas":      h_diurnas,
+        "HrsDiurnas": h_diurnas,
         "ValorHoraDiurna": t_diurna,
-        "MontoDiurna":     m_diurna,
-        "HrsNocturnas":    h_noct,
+        "MontoDiurna": m_diurna,
+        "HrsNocturnas": h_noct,
         "ValorHoraNocturna": t_noct,
-        "MontoNocturna":   m_noct,
-        "HrsMixta":        h_mixtas,
-        "ValorHoraMixta":  t_mixta,
-        "MontoMixta":      m_mixta,
-        "HrsExtra":        h_extra,
-        "ValorHoraExtra":  t_extra,
-        "MontoExtra":      m_extra,
-        "TotalSalario":    bruto,
-        "ReduccionCCSS":   seguro,
-        "Mercaderia":      mercad,
-        "Combustible":     combust,
-        "Adelantos":       adelant,
-        "Prestamos":       prest,
-        "Bonificacion":    bonif,
-        "SalarioSemanal":  neto,
+        "MontoNocturna": m_noct,
+        "HrsMixta": h_mixtas,
+        "ValorHoraMixta": t_mixta,
+        "MontoMixta": m_mixta,
+        "HrsExtraDiurnas": h_ex_d,
+        "HrsExtraMixtas": h_ex_m,
+        "HrsExtraNocturnas": h_ex_n,
+        "ValorHoraExtraDiurna": t_ex_d,
+        "ValorHoraExtraMixta": t_ex_m,
+        "ValorHoraExtraNocturna": t_ex_n,
+        "MontoExtraDiurna": m_ex_d,
+        "MontoExtraMixta": m_ex_m,
+        "MontoExtraNocturna": m_ex_n,
+        "HrsExtra": h_extra_legacy,
+        "ValorHoraExtra": t_ex_d,
+        "MontoExtra": m_ex_d + m_ex_m + m_ex_n,
+        "HrsFeriado": h_fer,
+        "MontoFeriado": m_fer,
+        "ValorHoraFeriado": val_fer,
+        "tiene_fila_feriado": fer_row is not None,
+        "pagar_horas_extra": pagar_extra,
+        "TotalSalario": bruto,
+        "ReduccionCCSS": seguro,
+        "Mercaderia": mercad,
+        "Combustible": combust,
+        "Adelantos": adelant,
+        "Prestamos": prest,
+        "Bonificacion": bonif,
+        "SalarioSemanal": neto,
     }
 
 
@@ -583,18 +695,10 @@ def generar_boletas_semana(archivo_excel, nombre_semana, logo_path, tipo_bono="o
     t_mixta  = get_tarifa(3, 6)
     t_noct   = get_tarifa(3, 8)
     
-    t_extra_raw = ws.cell(3, 10).value
-    try:
-        t_extra = float(t_extra_raw)
-    except (ValueError, TypeError):
-        # Fallback for =$D$3*1.5
-        t_extra = t_diurna * 1.5
-
     tarifas = {
         "Tarifa Diurna": t_diurna,
         "Tarifa Mixta":  t_mixta,
         "Tarifa Noct":   t_noct,
-        "Tarifa Extra":  t_extra,
     }
 
     # Tarifas (modo seguro) y empleados desde BD
@@ -633,7 +737,7 @@ def generar_boletas_semana(archivo_excel, nombre_semana, logo_path, tipo_bono="o
         if val and isinstance(val, str) and "TOTAL" not in val.upper() and val != last_val:
             last_val = val
             try:
-                emp_data = extract_employee_data(ws, row, tarifas)
+                emp_data = extract_employee_data(ws, row, tarifas, tarifas_cfg)
                 emp_data["nombre"]     = val
                 emp_data["forma_pago"] = metodo_actual
                 k = val.strip().upper()
@@ -641,7 +745,13 @@ def generar_boletas_semana(archivo_excel, nombre_semana, logo_path, tipo_bono="o
                 emp_data["aplica_seguro"] = seguro_por_nombre.get(k, 1)
                 _enrich_seguro_si_formula_vacia(emp_data, tarifas_cfg)
 
-                if emp_data["TotalSalario"] > 0 or emp_data["SalarioSemanal"] > 0 or emp_data.get("Bonificacion", 0) > 0:
+                mf = float(emp_data.get("MontoFeriado") or 0)
+                if (
+                    emp_data["TotalSalario"] > 0
+                    or emp_data["SalarioSemanal"] > 0
+                    or emp_data.get("Bonificacion", 0) > 0
+                    or mf > 0
+                ):
                     ruta = os.path.join(out_dir, f"{val.replace(' ', '_')}.jpg")
                     generar_boleta_jpeg(
                         emp_data,

@@ -31,6 +31,7 @@ class Employee(BaseModel):
     is_practicante: bool = False
     strict_preferences: bool = False
     activo: bool = True
+    incluir_en_horario: bool = True
     fixed_shifts: Dict[str, str] = Field(default_factory=dict)
 
 
@@ -60,6 +61,7 @@ def get_employees(include_inactive: bool = False):
             "is_practicante": bool(e.get("es_practicante", 0)),
             "strict_preferences": bool(e.get("strict_preferences", 0)),
             "activo": bool(e.get("activo", 1)),
+            "incluir_en_horario": bool(e.get("incluir_en_horario", 1)),
             "fixed_shifts": fixed_shifts,
         })
         
@@ -87,6 +89,7 @@ def update_employees(employees: List[Employee]):
                 allow_no_rest=1 if e.allow_no_rest else 0,
                 es_jefe_pista=1 if e.is_jefe_pista else 0,
                 strict_preferences=1 if e.strict_preferences else 0,
+                incluir_en_horario=1 if e.incluir_en_horario else 0,
                 turnos_fijos=json.dumps(e.fixed_shifts),
             )
         else:
@@ -100,6 +103,7 @@ def update_employees(employees: List[Employee]):
                 allow_no_rest=1 if e.allow_no_rest else 0,
                 es_jefe_pista=1 if e.is_jefe_pista else 0,
                 strict_preferences=1 if e.strict_preferences else 0,
+                incluir_en_horario=1 if e.incluir_en_horario else 0,
                 turnos_fijos=json.dumps(e.fixed_shifts),
             )
             # Fetch new ID in case it was created without activo
@@ -132,6 +136,7 @@ def update_single_employee(name: str, emp: Employee):
         allow_no_rest=1 if emp.allow_no_rest else 0,
         es_jefe_pista=1 if emp.is_jefe_pista else 0,
         strict_preferences=1 if emp.strict_preferences else 0,
+        incluir_en_horario=1 if emp.incluir_en_horario else 0,
         turnos_fijos=json.dumps(emp.fixed_shifts),
     )
     return {"status": "Updated"}
