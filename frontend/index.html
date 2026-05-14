@@ -57,6 +57,9 @@
                     <button id="nav-partial" class="nav-btn" onclick="switchMainTab('partial')">
                         <i class="fa-solid fa-scissors"></i> Horario Parcial
                     </button>
+                    <button id="nav-manual-schedule" class="nav-btn" onclick="openManualScheduleOverlay()">
+                        <i class="fa-solid fa-pen-ruler"></i> Horario Manual
+                    </button>
                     <button id="nav-history" class="nav-btn" onclick="openOverlay('overlay-history')">
                         <i class="fa-solid fa-clock-rotate-left"></i> Historial Horarios
                     </button>
@@ -128,15 +131,22 @@
                         <button class="btn-action" onclick="exportToImage()">
                             <i class="fa-solid fa-image"></i> Imagen
                         </button>
-                        <button class="btn-action" onclick="toggleHoursColumn()">
-                            <i class="fa-solid fa-clock"></i> Horas
-                        </button>
-                        <button class="btn-action" onclick="toggleVerticalView()" id="btnToggleVertical">
-                            <i class="fa-solid fa-bars-staggered"></i> Vista Vertical
-                        </button>
                         <button class="btn-action" onclick="toggleValidation()" id="btnToggleValidation">
                             <i class="fa-solid fa-check-double"></i> Validación
                         </button>
+                        <div class="schedule-actions-dropdown-wrap" style="position: relative; display: inline-block;">
+                            <button class="btn-action" type="button" onclick="toggleScheduleActionsMenu(event)" id="btnScheduleActionsMenu" aria-expanded="false">
+                                <i class="fa-solid fa-ellipsis-vertical"></i> Más
+                            </button>
+                            <div id="scheduleActionsDropdown" class="schedule-actions-dropdown hidden" role="menu" aria-labelledby="btnScheduleActionsMenu">
+                                <button type="button" class="schedule-actions-item" onclick="toggleHoursColumn(); closeScheduleActionsMenu();">
+                                    <i class="fa-solid fa-clock"></i> Mostrar/Ocultar Horas
+                                </button>
+                                <button type="button" class="schedule-actions-item" onclick="toggleVerticalView(); closeScheduleActionsMenu();" id="btnToggleVertical">
+                                    <i class="fa-solid fa-bars-staggered"></i> Vista Vertical
+                                </button>
+                            </div>
+                        </div>
                         <button class="btn-action primary" onclick="openSaveModal()" id="btnSaveSchedule"
                             class="hidden">
                             <i class="fa-solid fa-floppy-disk"></i> Guardar
@@ -226,6 +236,97 @@
                 </div>
             </div>
 
+            <!-- MANUAL SCHEDULE OVERLAY -->
+            <div id="overlay-manual-schedule" class="section-overlay hidden">
+                <div class="overlay-header">
+                    <h2><i class="fa-solid fa-pen-ruler"></i> Horario Manual</h2>
+                    <button class="close-overlay-btn" onclick="closeAllOverlays()"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+                <div class="overlay-content ms-overlay-content">
+                    <!-- HERO + meta -->
+                    <div class="ms-hero">
+                        <div class="ms-hero-left">
+                            <div class="ms-hero-icon"><i class="fa-solid fa-pen-ruler"></i></div>
+                            <div>
+                                <h3 class="ms-hero-title">Editor de semana manual</h3>
+                                <p class="ms-hero-subtitle">Armá una semana desde cero. Cuando guardes, el motor la usará como referencia para futuras rotaciones.</p>
+                            </div>
+                        </div>
+                        <div class="ms-hero-actions">
+                            <button type="button" class="ms-btn ms-btn-ghost" onclick="manualSchedReloadEmployees()" title="Repoblar con empleados activos incluidos en horario">
+                                <i class="fa-solid fa-rotate"></i> Recargar
+                            </button>
+                            <button type="button" class="ms-btn ms-btn-primary" onclick="manualSchedSave()">
+                                <i class="fa-solid fa-floppy-disk"></i> Guardar al historial
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- META FORM CARD -->
+                    <div class="ms-card ms-meta-card">
+                        <div class="ms-meta-row">
+                            <div class="ms-field">
+                                <label for="manualSchedName">
+                                    <i class="fa-solid fa-tag"></i> Nombre de la semana
+                                </label>
+                                <input type="text" id="manualSchedName" class="ms-input" placeholder="Ej. Semana 14 Abril">
+                            </div>
+                            <div class="ms-field">
+                                <label for="manualSchedFriday">
+                                    <i class="fa-regular fa-calendar"></i> Viernes (inicio)
+                                </label>
+                                <input type="date" id="manualSchedFriday" class="ms-input" onchange="manualSchedRefreshHeaderDates()">
+                            </div>
+                            <div class="ms-stat" id="manualSchedStatChip">
+                                <span class="ms-stat-num" id="manualSchedStatRows">0</span>
+                                <span class="ms-stat-lbl">filas</span>
+                            </div>
+                        </div>
+
+                        <div class="ms-toolbar">
+                            <button type="button" class="ms-btn ms-btn-ghost" onclick="manualSchedAddRow()">
+                                <i class="fa-solid fa-user-plus"></i> Fila vacía
+                            </button>
+                            <span class="ms-toolbar-divider"></span>
+                            <button type="button" class="ms-btn ms-btn-ghost ms-btn-toggle is-active" onclick="manualSchedToggleHours()" id="manualSchedHoursBtn">
+                                <i class="fa-solid fa-clock"></i> Horas
+                            </button>
+                            <button type="button" class="ms-btn ms-btn-ghost ms-btn-toggle" onclick="manualSchedToggleHolidayMode()" id="manualSchedHolidayBtn" title="Click en el header de un día para alternar feriado / cerrado">
+                                <i class="fa-solid fa-star"></i> Feriados/Cerrado
+                            </button>
+                            <span class="ms-toolbar-divider"></span>
+                            <button type="button" class="ms-btn ms-btn-ghost" onclick="manualSchedValidate()">
+                                <i class="fa-solid fa-shield-check"></i> Validar
+                            </button>
+                            <div id="manualSchedStatus" class="ms-status"></div>
+                        </div>
+                    </div>
+
+                    <!-- TABLE CARD -->
+                    <div class="ms-card ms-grid-card">
+                        <div class="ms-grid-wrap">
+                            <table class="ms-table" id="manualSchedTable">
+                                <thead>
+                                    <tr id="manualSchedHeaderRow">
+                                        <th class="ms-col-name">Empleado</th>
+                                        <th data-day="Vie">Vie</th>
+                                        <th data-day="Sáb">Sáb</th>
+                                        <th data-day="Dom">Dom</th>
+                                        <th data-day="Lun">Lun</th>
+                                        <th data-day="Mar">Mar</th>
+                                        <th data-day="Mié">Mié</th>
+                                        <th data-day="Jue">Jue</th>
+                                        <th class="ms-col-hours col-hours">Horas</th>
+                                        <th class="ms-col-action"></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="manualSchedTbody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- TAB: GESTIÓN DE PERSONAL -->
             <section id="tab-gestion" class="schedule-view hidden" data-main-tab>
                 <!-- Content rendered by JS -->
@@ -290,7 +391,8 @@
                                     <input type="date" id="genPanelWeekStart" class="gen-param-date" title="Fecha del viernes que inicia la semana laboral">
                                     <button type="button" class="btn-action" style="padding:0.45rem 0.85rem; font-size:0.8rem;" onclick="refreshGeneratorParamsPanel()"><i class="fa-solid fa-rotate"></i></button>
                                     <button type="button" class="btn-action" style="padding:0.45rem 0.85rem; font-size:0.8rem;" onclick="genPanelSyncRrhh()" title="Copiar vacaciones/permisos de RR.HH. a turnos fijos de la semana"><i class="fa-solid fa-cloud-arrow-down"></i> RR.HH. → turnos</button>
-                                    <button type="button" class="btn-action" style="padding:0.45rem 0.85rem; font-size:0.8rem;" onclick="genPanelBatchForcedQuebrado(true)" title="Activa forzar quebrado en todos los colaboradores de la tabla">Todos: forzar quebrado</button>
+                                    <button type="button" class="btn-action" style="padding:0.45rem 0.85rem; font-size:0.8rem;" onclick="genPanelBatchForcedQuebrado(true)" title="Activa forzar quebrado TOTAL en todos los colaboradores (toda la semana en Q)">Todos: quebrado total</button>
+                                    <button type="button" class="btn-action" style="padding:0.45rem 0.85rem; font-size:0.8rem;" onclick="genPanelBatchForcedQuebradoPartial(true)" title="Activa quebrado PARCIAL en todos: Q solo cuando la cobertura lo requiera">Todos: quebrado parcial</button>
                                     <button type="button" class="btn-action primary" style="padding:0.45rem 0.85rem; font-size:0.8rem;" onclick="saveGeneratorParamsPanel()"><i class="fa-solid fa-floppy-disk"></i> Guardar todo</button>
                                 </div>
                             </div>
@@ -301,7 +403,8 @@
                                             <tr>
                                                 <th class="gen-col-name">Colaborador</th>
                                                 <th class="gen-col-toggle" title="Forzar libres">Libres</th>
-                                                <th class="gen-col-toggle" title="Forzar quebrado">Quebr.</th>
+                                                <th class="gen-col-toggle" title="Forzar quebrado total (toda la semana en Q)">Qbr.T</th>
+                                                <th class="gen-col-toggle" title="Forzar quebrado parcial (Q solo cuando la cobertura lo requiera)">Qbr.P</th>
                                                 <th class="gen-col-toggle" title="Sin descanso estándar">S/desc</th>
                                                 <th class="gen-col-toggle" title="Preferencias estrictas">Estr.</th>
                                                 <th class="gen-col-toggle" title="Jefe de pista">Jefe</th>
@@ -453,6 +556,51 @@
                                         </div>
                                     </div>
                                     <small style="display:block; margin-top: 0.45rem; font-size: 0.72rem; color: var(--text-muted);">Rango en que el refuerzo estará disponible.</small>
+                                    
+                                    <!-- Modo de días del refuerzo -->
+                                    <div style="margin-top: 1rem; padding-top: 0.85rem; border-top: 1px solid var(--border-color);">
+                                        <label style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.5rem; display: block;">Modo de días</label>
+                                        <select id="refuerzoDaysMode" onchange="toggleRefuerzoDaysConfig(); updateConfig()" style="width: 100%; padding: 0.5rem; border-radius: 8px; border: 1px solid var(--border-color); background: var(--surface-2); color: var(--text-main); font-size: 0.85rem;">
+                                            <option value="auto">Automático (Solver decide)</option>
+                                            <option value="manual">Manual (Elegir días)</option>
+                                        </select>
+                                    </div>
+                                    
+                                    <!-- Días manuales del refuerzo -->
+                                    <div id="refuerzoManualDaysContainer" class="hidden fade-in" style="margin-top: 0.85rem;">
+                                        <label style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.5rem; display: block;">Días de trabajo del refuerzo</label>
+                                        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                                            <label class="day-checkbox" style="cursor: pointer;">
+                                                <input type="checkbox" id="refuerzoDayLun" value="Lun" onchange="updateConfig()" style="display: none;">
+                                                <span class="day-checkbox-label" style="padding: 0.4rem 0.8rem; border-radius: 6px; border: 1px solid var(--border-color); font-size: 0.8rem; display: inline-block;">Lun</span>
+                                            </label>
+                                            <label class="day-checkbox" style="cursor: pointer;">
+                                                <input type="checkbox" id="refuerzoDayMar" value="Mar" onchange="updateConfig()" style="display: none;">
+                                                <span class="day-checkbox-label" style="padding: 0.4rem 0.8rem; border-radius: 6px; border: 1px solid var(--border-color); font-size: 0.8rem; display: inline-block;">Mar</span>
+                                            </label>
+                                            <label class="day-checkbox" style="cursor: pointer;">
+                                                <input type="checkbox" id="refuerzoDayMié" value="Mié" onchange="updateConfig()" style="display: none;">
+                                                <span class="day-checkbox-label" style="padding: 0.4rem 0.8rem; border-radius: 6px; border: 1px solid var(--border-color); font-size: 0.8rem; display: inline-block;">Mié</span>
+                                            </label>
+                                            <label class="day-checkbox" style="cursor: pointer;">
+                                                <input type="checkbox" id="refuerzoDayJue" value="Jue" onchange="updateConfig()" style="display: none;">
+                                                <span class="day-checkbox-label" style="padding: 0.4rem 0.8rem; border-radius: 6px; border: 1px solid var(--border-color); font-size: 0.8rem; display: inline-block;">Jue</span>
+                                            </label>
+                                            <label class="day-checkbox" style="cursor: pointer;">
+                                                <input type="checkbox" id="refuerzoDayVie" value="Vie" onchange="updateConfig()" style="display: none;">
+                                                <span class="day-checkbox-label" style="padding: 0.4rem 0.8rem; border-radius: 6px; border: 1px solid var(--border-color); font-size: 0.8rem; display: inline-block;">Vie</span>
+                                            </label>
+                                            <label class="day-checkbox" style="cursor: pointer;">
+                                                <input type="checkbox" id="refuerzoDaySáb" value="Sáb" onchange="updateConfig()" style="display: none;">
+                                                <span class="day-checkbox-label" style="padding: 0.4rem 0.8rem; border-radius: 6px; border: 1px solid var(--border-color); font-size: 0.8rem; display: inline-block;">Sáb</span>
+                                            </label>
+                                            <label class="day-checkbox" style="cursor: pointer;">
+                                                <input type="checkbox" id="refuerzoDayDom" value="Dom" onchange="updateConfig()" style="display: none;">
+                                                <span class="day-checkbox-label" style="padding: 0.4rem 0.8rem; border-radius: 6px; border: 1px solid var(--border-color); font-size: 0.8rem; display: inline-block;">Dom</span>
+                                            </label>
+                                        </div>
+                                        <small style="display:block; margin-top: 0.45rem; font-size: 0.72rem; color: var(--text-muted);">Selecciona los días específicos donde trabaja el refuerzo.</small>
+                                    </div>
                                 </div>
                             </div>
                             </div>
@@ -586,6 +734,80 @@
                                 <!-- Legacy grid (hidden but functional) -->
                                 <div id="weekSpecialDaysSection" class="hidden" style="display: none;">
                                     <div id="weekSpecialDaysGrid"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Tareas de Limpieza (collapsible) -->
+                        <div class="vac-emp-card param-card" style="padding:1.5rem; grid-column: 1 / -1;">
+                            <div class="param-card-header" onclick="toggleParamCard(this)">
+                                <h3 style="color:var(--text-main); margin:0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
+                                    <span style="background:rgba(16,185,129,0.12); color:#10b981; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
+                                        <i class="fa-solid fa-broom" style="font-size:0.85rem;"></i>
+                                    </span>
+                                    Tareas de Limpieza
+                                </h3>
+                                <i class="fa-solid fa-chevron-down chevron"></i>
+                            </div>
+                            <div class="param-card-content">
+                                <p class="helper-text-sm" style="margin-bottom: 0.8rem;">Seleccioná qué tareas se generan cada día. Oficina + Basureros se asigna automáticamente al encargado de Baños AM los Lunes y Jueves.</p>
+                                <div style="overflow-x: auto;">
+                                    <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem; text-align: center;">
+                                        <thead>
+                                            <tr style="border-bottom: 1px solid var(--border-color);">
+                                                <th style="text-align: left; padding: 0.5rem; color: var(--text-muted); font-weight: 500;">Tarea</th>
+                                                <th style="padding: 0.5rem; color: var(--text-muted); font-weight: 500;">Lun</th>
+                                                <th style="padding: 0.5rem; color: var(--text-muted); font-weight: 500;">Mar</th>
+                                                <th style="padding: 0.5rem; color: var(--text-muted); font-weight: 500;">Mié</th>
+                                                <th style="padding: 0.5rem; color: var(--text-muted); font-weight: 500;">Jue</th>
+                                                <th style="padding: 0.5rem; color: var(--text-muted); font-weight: 500;">Vie</th>
+                                                <th style="padding: 0.5rem; color: var(--text-muted); font-weight: 500;">Sáb</th>
+                                                <th style="padding: 0.5rem; color: var(--text-muted); font-weight: 500;">Dom</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr style="border-bottom: 1px solid var(--border-color);">
+                                                <td style="text-align: left; padding: 0.5rem; font-weight: 500; color: var(--text-main);"><i class="fa-solid fa-restroom" style="color:#6366f1; width:16px; text-align:center; margin-right:4px;"></i> Baños AM</td>
+                                                <td><div class="toggle-container" style="justify-content: center; transform: scale(0.8);"><input type="checkbox" id="clean_am_banos_Lun" class="toggle-checkbox" checked onchange="updateConfig()"><div class="toggle-slider"></div></div></td>
+                                                <td><div class="toggle-container" style="justify-content: center; transform: scale(0.8);"><input type="checkbox" id="clean_am_banos_Mar" class="toggle-checkbox" checked onchange="updateConfig()"><div class="toggle-slider"></div></div></td>
+                                                <td><div class="toggle-container" style="justify-content: center; transform: scale(0.8);"><input type="checkbox" id="clean_am_banos_Mié" class="toggle-checkbox" checked onchange="updateConfig()"><div class="toggle-slider"></div></div></td>
+                                                <td><div class="toggle-container" style="justify-content: center; transform: scale(0.8);"><input type="checkbox" id="clean_am_banos_Jue" class="toggle-checkbox" checked onchange="updateConfig()"><div class="toggle-slider"></div></div></td>
+                                                <td><div class="toggle-container" style="justify-content: center; transform: scale(0.8);"><input type="checkbox" id="clean_am_banos_Vie" class="toggle-checkbox" checked onchange="updateConfig()"><div class="toggle-slider"></div></div></td>
+                                                <td><div class="toggle-container" style="justify-content: center; transform: scale(0.8);"><input type="checkbox" id="clean_am_banos_Sáb" class="toggle-checkbox" checked onchange="updateConfig()"><div class="toggle-slider"></div></div></td>
+                                                <td><div class="toggle-container" style="justify-content: center; transform: scale(0.8);"><input type="checkbox" id="clean_am_banos_Dom" class="toggle-checkbox" checked onchange="updateConfig()"><div class="toggle-slider"></div></div></td>
+                                            </tr>
+                                            <tr style="border-bottom: 1px solid var(--border-color);">
+                                                <td style="text-align: left; padding: 0.5rem; font-weight: 500; color: var(--text-main);"><i class="fa-solid fa-restroom" style="color:#6366f1; width:16px; text-align:center; margin-right:4px;"></i> Baños PM</td>
+                                                <td><div class="toggle-container" style="justify-content: center; transform: scale(0.8);"><input type="checkbox" id="clean_pm_banos_Lun" class="toggle-checkbox" checked onchange="updateConfig()"><div class="toggle-slider"></div></div></td>
+                                                <td><div class="toggle-container" style="justify-content: center; transform: scale(0.8);"><input type="checkbox" id="clean_pm_banos_Mar" class="toggle-checkbox" checked onchange="updateConfig()"><div class="toggle-slider"></div></div></td>
+                                                <td><div class="toggle-container" style="justify-content: center; transform: scale(0.8);"><input type="checkbox" id="clean_pm_banos_Mié" class="toggle-checkbox" checked onchange="updateConfig()"><div class="toggle-slider"></div></div></td>
+                                                <td><div class="toggle-container" style="justify-content: center; transform: scale(0.8);"><input type="checkbox" id="clean_pm_banos_Jue" class="toggle-checkbox" checked onchange="updateConfig()"><div class="toggle-slider"></div></div></td>
+                                                <td><div class="toggle-container" style="justify-content: center; transform: scale(0.8);"><input type="checkbox" id="clean_pm_banos_Vie" class="toggle-checkbox" checked onchange="updateConfig()"><div class="toggle-slider"></div></div></td>
+                                                <td><div class="toggle-container" style="justify-content: center; transform: scale(0.8);"><input type="checkbox" id="clean_pm_banos_Sáb" class="toggle-checkbox" checked onchange="updateConfig()"><div class="toggle-slider"></div></div></td>
+                                                <td><div class="toggle-container" style="justify-content: center; transform: scale(0.8);"><input type="checkbox" id="clean_pm_banos_Dom" class="toggle-checkbox" checked onchange="updateConfig()"><div class="toggle-slider"></div></div></td>
+                                            </tr>
+                                            <tr style="border-bottom: 1px solid var(--border-color);">
+                                                <td style="text-align: left; padding: 0.5rem; font-weight: 500; color: var(--text-main);"><i class="fa-solid fa-gas-pump" style="color:#f59e0b; width:16px; text-align:center; margin-right:4px;"></i> Tanques AM</td>
+                                                <td><div class="toggle-container" style="justify-content: center; transform: scale(0.8);"><input type="checkbox" id="clean_am_tanques_Lun" class="toggle-checkbox" checked onchange="updateConfig()"><div class="toggle-slider"></div></div></td>
+                                                <td><div class="toggle-container" style="justify-content: center; transform: scale(0.8);"><input type="checkbox" id="clean_am_tanques_Mar" class="toggle-checkbox" checked onchange="updateConfig()"><div class="toggle-slider"></div></div></td>
+                                                <td><div class="toggle-container" style="justify-content: center; transform: scale(0.8);"><input type="checkbox" id="clean_am_tanques_Mié" class="toggle-checkbox" checked onchange="updateConfig()"><div class="toggle-slider"></div></div></td>
+                                                <td><div class="toggle-container" style="justify-content: center; transform: scale(0.8);"><input type="checkbox" id="clean_am_tanques_Jue" class="toggle-checkbox" checked onchange="updateConfig()"><div class="toggle-slider"></div></div></td>
+                                                <td><div class="toggle-container" style="justify-content: center; transform: scale(0.8);"><input type="checkbox" id="clean_am_tanques_Vie" class="toggle-checkbox" checked onchange="updateConfig()"><div class="toggle-slider"></div></div></td>
+                                                <td><div class="toggle-container" style="justify-content: center; transform: scale(0.8);"><input type="checkbox" id="clean_am_tanques_Sáb" class="toggle-checkbox" checked onchange="updateConfig()"><div class="toggle-slider"></div></div></td>
+                                                <td><div class="toggle-container" style="justify-content: center; transform: scale(0.8);"><input type="checkbox" id="clean_am_tanques_Dom" class="toggle-checkbox" onchange="updateConfig()"><div class="toggle-slider"></div></div></td>
+                                            </tr>
+                                            <tr>
+                                                <td style="text-align: left; padding: 0.5rem; font-weight: 500; color: var(--text-main);"><i class="fa-solid fa-gas-pump" style="color:#f59e0b; width:16px; text-align:center; margin-right:4px;"></i> Tanques PM</td>
+                                                <td><div class="toggle-container" style="justify-content: center; transform: scale(0.8);"><input type="checkbox" id="clean_pm_tanques_Lun" class="toggle-checkbox" checked onchange="updateConfig()"><div class="toggle-slider"></div></div></td>
+                                                <td><div class="toggle-container" style="justify-content: center; transform: scale(0.8);"><input type="checkbox" id="clean_pm_tanques_Mar" class="toggle-checkbox" checked onchange="updateConfig()"><div class="toggle-slider"></div></div></td>
+                                                <td><div class="toggle-container" style="justify-content: center; transform: scale(0.8);"><input type="checkbox" id="clean_pm_tanques_Mié" class="toggle-checkbox" checked onchange="updateConfig()"><div class="toggle-slider"></div></div></td>
+                                                <td><div class="toggle-container" style="justify-content: center; transform: scale(0.8);"><input type="checkbox" id="clean_pm_tanques_Jue" class="toggle-checkbox" checked onchange="updateConfig()"><div class="toggle-slider"></div></div></td>
+                                                <td><div class="toggle-container" style="justify-content: center; transform: scale(0.8);"><input type="checkbox" id="clean_pm_tanques_Vie" class="toggle-checkbox" checked onchange="updateConfig()"><div class="toggle-slider"></div></div></td>
+                                                <td><div class="toggle-container" style="justify-content: center; transform: scale(0.8);"><input type="checkbox" id="clean_pm_tanques_Sáb" class="toggle-checkbox" onchange="updateConfig()"><div class="toggle-slider"></div></div></td>
+                                                <td><div class="toggle-container" style="justify-content: center; transform: scale(0.8);"><input type="checkbox" id="clean_pm_tanques_Dom" class="toggle-checkbox" onchange="updateConfig()"><div class="toggle-slider"></div></div></td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
                                 </div>
                             </div>
                         </div>
@@ -1013,9 +1235,67 @@
                     <label id="textEditLabel">Valor</label>
                     <input type="text" id="textEditInput" class="custom-input" autofocus>
                 </div>
+                <details id="textEditLegendWrap" style="margin-top: 0.6rem; font-size: 0.8rem; display: none;">
+                    <summary style="cursor: pointer; color: var(--primary); user-select: none;">
+                        <i class="fa-solid fa-circle-question"></i> Ver formatos aceptados
+                    </summary>
+                    <div id="textEditLegend" style="margin-top: 0.5rem; padding: 0.6rem 0.7rem; background: var(--surface-2); border: 1px solid var(--border-color, var(--border)); border-radius: 8px; line-height: 1.5;">
+                    </div>
+                </details>
                 <div class="modal-actions">
                     <button type="button" class="btn-text" onclick="closeTextEditModal()">Cancelar</button>
                     <button type="button" class="btn-action primary" onclick="confirmTextEdit()">Guardar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL PARA EDITAR TURNO Y TAREA DE LIMPIEZA -->
+    <div id="shiftTaskModal" class="modal-backdrop hidden">
+        <div class="modal-dialog" style="max-width: 450px;">
+            <div class="modal-content">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.75rem;">
+                    <h3 id="shiftTaskTitle" style="margin: 0; font-size: 1.1rem;">Editar Turno y Tarea</h3>
+                    <button type="button" onclick="closeShiftTaskModal()" style="background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 1.25rem;">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 1rem;">
+                    <!-- Turno -->
+                    <div class="input-group">
+                        <label style="font-weight: 600; font-size: 0.85rem; color: var(--text-main);">
+                            <i class="fa-solid fa-clock" style="margin-right: 6px;"></i>Turno
+                        </label>
+                        <input type="text" id="shiftTaskShiftInput" class="custom-input" placeholder="Ej: 5am-1pm, 13-22, OFF">
+                        <details style="margin-top: 0.5rem; font-size: 0.8rem;">
+                            <summary style="cursor: pointer; color: var(--primary); user-select: none;">
+                                <i class="fa-solid fa-circle-question"></i> Ver formatos aceptados
+                            </summary>
+                            <div id="shiftTaskLegend" style="margin-top: 0.5rem; padding: 0.6rem 0.7rem; background: var(--surface-2); border: 1px solid var(--border-color, var(--border)); border-radius: 8px; color: var(--text-main); line-height: 1.5;">
+                                <!-- Inyectado por JS al abrir el modal -->
+                            </div>
+                        </details>
+                    </div>
+                    <!-- Tarea -->
+                    <div class="input-group">
+                        <label style="font-weight: 600; font-size: 0.85rem; color: var(--text-main);">
+                            <i class="fa-solid fa-broom" style="margin-right: 6px;"></i>Tarea de Limpieza
+                        </label>
+                        <select id="shiftTaskSelect" class="custom-input" style="padding: 0.6rem;">
+                            <option value="">-- Sin tarea --</option>
+                            <option value="Tanques">Medir Tanques</option>
+                            <option value="Baños">Limpiar Baños</option>
+                            <option value="Oficina + Basureros + Baños">Oficina + Basureros + Baños</option>
+                        </select>
+                    </div>
+                    <!-- AM/PM Inferred -->
+                    <div id="shiftTaskAmPmHint" style="font-size: 0.75rem; color: var(--text-muted); padding: 0.5rem; background: var(--surface-2); border-radius: 6px; display: none;">
+                        <i class="fa-solid fa-info-circle"></i> <span id="shiftTaskAmPmText"></span>
+                    </div>
+                </div>
+                <div class="modal-actions" style="margin-top: 1rem;">
+                    <button type="button" class="btn-text" onclick="closeShiftTaskModal()">Cancelar</button>
+                    <button type="button" class="btn-action primary" onclick="confirmShiftTaskEdit()">Guardar</button>
                 </div>
             </div>
         </div>
@@ -1093,8 +1373,17 @@
                             </select>
                         </div>
                         <div class="input-group" id="containerSalarioFijo" style="display: none;">
-                            <label>Salario Fijo Mensual</label>
-                            <input type="number" id="planEmpSalarioFijo" placeholder="Ej. 350000"
+                            <label id="planEmpSalarioFijoLabel">Monto del salario fijo</label>
+                            <p class="helper-text" style="margin: 0 0 0.5rem 0; font-size: 0.78rem; color: var(--text-muted);">
+                                El monto corresponde al pago del período elegido (semanal, quincenal o mensual).
+                            </p>
+                            <select id="planEmpPeriodoSalarioFijo"
+                                style="width: 100%; padding: 0.55rem 0.7rem; margin-bottom: 0.5rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px; font-size: 0.88rem;">
+                                <option value="semanal">Semanal</option>
+                                <option value="quincenal">Quincenal (cada 15 días)</option>
+                                <option value="mensual" selected>Mensual</option>
+                            </select>
+                            <input type="number" id="planEmpSalarioFijo" placeholder="Ej. 350000" min="0" step="1"
                                 style="width: 100%; padding: 0.7rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px;">
                         </div>
                     </div>
@@ -1153,6 +1442,23 @@
                                 <div class="toggle-slider"></div>
                             </div>
                         </label>
+
+                        <label class="option-card hover-glow" style="flex: 1; min-width: 180px; padding: 12px 16px;">
+                            <div class="opt-content">
+                                <div class="opt-icon"
+                                    style="background: rgba(16, 185, 129, 0.1); color: #10b981; width: 32px; height: 32px; font-size: 0.9rem;">
+                                    <i class="fa-solid fa-clock"></i>
+                                </div>
+                                <div class="opt-text">
+                                    <strong style="font-size: 0.85rem;">Incluir en Horarios</strong>
+                                    <small style="font-size: 0.7rem;">Participa en generación</small>
+                                </div>
+                            </div>
+                            <div class="toggle-container">
+                                <input type="checkbox" id="empIncluirEnHorario" class="toggle-checkbox" checked>
+                                <div class="toggle-slider"></div>
+                            </div>
+                        </label>
                     </div>
 
                     <div class="planilla-emp-hint-card" style="margin-top: 1.25rem; padding: 0.85rem 1rem; border-radius: 10px; border: 1px solid var(--border-color); background: var(--surface-2);">
@@ -1178,45 +1484,83 @@
 
     <!-- REGISTRAR VACACION MODAL -->
     <div id="vacacionModal" class="modal-backdrop hidden">
-        <div class="modal-dialog">
+        <div class="modal-dialog vac-modal-dialog" style="max-width: 580px;">
             <div class="modal-header-simple">
-                <h3>Registrar Vacación: <span id="vacEmpName" style="color: var(--primary);"></span></h3>
+                <h3>
+                    <i class="fa-solid fa-umbrella-beach" style="color:#10b981; margin-right:6px;"></i>
+                    Registrar Vacación: <span id="vacEmpName" style="color: var(--primary);"></span>
+                </h3>
                 <button class="close-icon" onclick="closeRegistrarVacacion()"><i class="fa-solid fa-xmark"></i></button>
             </div>
             <div class="modal-body-scroll">
                 <input type="hidden" id="vacEmpId" value="">
+                <input type="hidden" id="vacEditId" value="">
+
+                <!-- Tipo de registro -->
+                <div class="vac-type-selector">
+                    <label class="vac-type-label">Tipo de registro</label>
+                    <div class="vac-type-options" role="radiogroup">
+                        <label class="vac-type-option active" data-tipo="periodo">
+                            <input type="radio" name="vacTipo" value="periodo" checked>
+                            <i class="fa-solid fa-plane-departure"></i>
+                            <div>
+                                <span class="vac-type-title">Período actual</span>
+                                <span class="vac-type-help">Vacación tomada o programada</span>
+                            </div>
+                        </label>
+                        <label class="vac-type-option" data-tipo="ajuste_historico">
+                            <input type="radio" name="vacTipo" value="ajuste_historico">
+                            <i class="fa-solid fa-clock-rotate-left"></i>
+                            <div>
+                                <span class="vac-type-title">Ajuste histórico</span>
+                                <span class="vac-type-help">Días ya disfrutados antes de usar el sistema</span>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+
                 <div class="input-row">
                     <div class="input-group">
-                        <label>Fecha Inicio</label>
-                        <input type="date" id="vacFechaInicio" class="custom-input" onchange="autoCalcVacDias()"
-                            style="width: 100%; padding: 0.7rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px;">
+                        <label for="vacFechaInicio">Fecha Inicio</label>
+                        <input type="date" id="vacFechaInicio" class="custom-input vac-input" onchange="autoCalcVacDias()">
                     </div>
                     <div class="input-group">
-                        <label>Fecha Fin</label>
-                        <input type="date" id="vacFechaFin" class="custom-input" onchange="autoCalcVacDias()"
-                            style="width: 100%; padding: 0.7rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px;">
+                        <label for="vacFechaFin">Fecha Fin</label>
+                        <input type="date" id="vacFechaFin" class="custom-input vac-input" onchange="autoCalcVacDias()">
                     </div>
                 </div>
                 <div class="input-row">
                     <div class="input-group">
-                        <label>Días a Descontar</label>
-                        <input type="number" step="0.5" id="vacDias" placeholder="Ej. 5" class="custom-input"
-                            style="width: 100%; padding: 0.7rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px;">
+                        <label for="vacDias">Días a descontar</label>
+                        <input type="number" step="0.5" id="vacDias" placeholder="Ej. 5" class="custom-input vac-input">
                     </div>
                     <div class="input-group">
-                        <label>Fecha de Reingreso</label>
-                        <input type="date" id="vacFechaReingreso" class="custom-input"
-                            style="width: 100%; padding: 0.7rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px;">
+                        <label for="vacFechaReingreso">Fecha de Reingreso</label>
+                        <input type="date" id="vacFechaReingreso" class="custom-input vac-input">
                     </div>
                 </div>
+
+                <label class="vac-checkbox-row">
+                    <input type="checkbox" id="vacSoloPago">
+                    <span>
+                        <strong>Sólo pagar</strong>
+                        <small>El colaborador sigue trabajando normalmente y no se descuenta de su saldo.</small>
+                    </span>
+                </label>
+
                 <div class="input-group">
-                    <label>Notas Adicionales</label>
-                    <input type="text" id="vacNotas" placeholder="Opcional">
+                    <label for="vacNotas">
+                        <i class="fa-solid fa-comment-dots" style="color:#6366f1; margin-right:4px;"></i> Notas
+                    </label>
+                    <textarea id="vacNotas" class="vac-textarea" rows="2" placeholder="Opcional — motivo, observaciones, lugar de destino..."></textarea>
                 </div>
+                <div id="vacFormError" class="vac-form-error" style="display:none;"></div>
             </div>
             <div class="modal-actions-footer">
                 <button class="btn-text" onclick="closeRegistrarVacacion()">Cancelar</button>
-                <button class="btn-action primary" onclick="guardarVacacion()">Guardar Vacación</button>
+                <button class="btn-action primary" onclick="guardarVacacion()">
+                    <i class="fa-solid fa-floppy-disk"></i> Guardar Vacación
+                </button>
             </div>
         </div>
     </div>
@@ -1236,36 +1580,97 @@
 
     <!-- REGISTRAR PERMISO MODAL -->
     <div id="permisoModal" class="modal-backdrop hidden">
-        <div class="modal-dialog">
+        <div class="modal-dialog vac-modal-dialog" style="max-width: 560px;">
             <div class="modal-header-simple">
-                <h3>Registrar Permiso: <span id="permEmpName" style="color: var(--primary);"></span></h3>
+                <h3>
+                    <i class="fa-solid fa-hand" style="color:#f59e0b; margin-right:6px;"></i>
+                    Registrar Permiso: <span id="permEmpName" style="color: var(--primary);"></span>
+                </h3>
                 <button class="close-icon" onclick="closeRegistrarPermiso()"><i class="fa-solid fa-xmark"></i></button>
             </div>
             <div class="modal-body-scroll">
                 <input type="hidden" id="permEmpId" value="">
+                <input type="hidden" id="permEditId" value="">
                 <div class="input-row">
                     <div class="input-group">
-                        <label>Fecha del Permiso</label>
-                        <input type="date" id="permFecha" class="custom-input"
-                            style="width: 100%; padding: 0.7rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px;">
+                        <label for="permFecha">Fecha inicio</label>
+                        <input type="date" id="permFecha" class="custom-input vac-input" onchange="autoCalcPermDias()">
+                    </div>
+                    <div class="input-group">
+                        <label for="permFechaFin">Fecha fin <small style="color:var(--text-muted); font-weight:400;">(opcional)</small></label>
+                        <input type="date" id="permFechaFin" class="custom-input vac-input" onchange="autoCalcPermDias()">
+                    </div>
+                </div>
+                <div class="input-row">
+                    <div class="input-group">
+                        <label for="permHoras">Horas <small style="color:var(--text-muted); font-weight:400;">(0 = día completo)</small></label>
+                        <input type="number" id="permHoras" min="0" step="0.5" placeholder="0" class="custom-input vac-input" value="0">
+                    </div>
+                    <div class="input-group">
+                        <label for="permMotivo">Motivo</label>
+                        <input type="text" id="permMotivo" class="custom-input vac-input" placeholder="Ej. Cita médica, trámite personal...">
                     </div>
                 </div>
                 <div class="input-group">
-                    <label>Motivo</label>
-                    <input type="text" id="permMotivo" placeholder="Ej. Cita médica, trámite personal...">
+                    <label for="permNotas">
+                        <i class="fa-solid fa-comment-dots" style="color:#6366f1; margin-right:4px;"></i> Notas
+                    </label>
+                    <textarea id="permNotas" class="vac-textarea" rows="3" placeholder="Detalles adicionales — institución, destino, observaciones..."></textarea>
                 </div>
-                <div class="input-group">
-                    <label>Notas Adicionales</label>
-                    <textarea id="permNotas" placeholder="Opcional" rows="2"
-                        style="width:100%; padding:0.7rem; background:var(--bg-app); border:1px solid var(--border); color:var(--text-main); border-radius:8px; resize:vertical;"></textarea>
-                </div>
+                <div id="permFormError" class="vac-form-error" style="display:none;"></div>
             </div>
             <div class="modal-actions-footer">
                 <button class="btn-text" onclick="closeRegistrarPermiso()">Cancelar</button>
-                <button class="btn-action primary" onclick="guardarPermiso()">Guardar Permiso</button>
+                <button class="btn-action primary" onclick="guardarPermiso()">
+                    <i class="fa-solid fa-floppy-disk"></i> Guardar Permiso
+                </button>
             </div>
         </div>
     </div>
+
+    <!-- MODAL: ABONO EXTRAORDINARIO DE PRÉSTAMO -->
+    <div id="abonoExtraordinarioModal" class="modal-backdrop hidden">
+        <div class="modal-dialog" style="max-width: 460px;">
+            <div class="modal-header-simple">
+                <h3>
+                    <i class="fa-solid fa-star" style="color:#f59e0b; margin-right:6px;"></i>
+                    Abono Extraordinario: <span id="abonoExtName" style="color: var(--primary);"></span>
+                </h3>
+                <button class="close-icon" onclick="closeAbonoExtraordinarioModal()"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-body-scroll">
+                <input type="hidden" id="abonoExtPrestamoId" value="">
+                <p style="font-size: 0.85rem; color: var(--text-muted); margin: 0 0 1rem;">
+                    Registra un abono fuera del rebajo semanal automático. El saldo se actualiza al instante.
+                </p>
+                <div class="input-group">
+                    <label for="abonoExtMonto">
+                        <i class="fa-solid fa-coins" style="color:#10b981; margin-right:4px;"></i> Monto del abono
+                    </label>
+                    <div style="position: relative;">
+                        <span style="position:absolute; left:0.85rem; top:50%; transform:translateY(-50%); color:var(--text-muted); font-weight:600; pointer-events:none;">₡</span>
+                        <input type="number" id="abonoExtMonto" class="custom-input"
+                            placeholder="Ej. 25000" min="0" step="any"
+                            style="width:100%; padding:0.7rem 0.7rem 0.7rem 2rem; background:var(--bg-app); border:1px solid var(--border); color:var(--text-main); border-radius:8px; font-size:0.95rem;">
+                    </div>
+                    <small id="abonoExtSaldoPreview" style="display:block; margin-top:0.4rem; font-size:0.78rem; color:var(--text-muted);"></small>
+                </div>
+                <div class="input-group">
+                    <label for="abonoExtNotas">
+                        <i class="fa-solid fa-comment-dots" style="color:#6366f1; margin-right:4px;"></i> Nota (opcional)
+                    </label>
+                    <textarea id="abonoExtNotas" rows="2" placeholder="Ej. Pago en efectivo, transferencia SINPE..."
+                        style="width:100%; padding:0.7rem; background:var(--bg-app); border:1px solid var(--border); color:var(--text-main); border-radius:8px; font-size:0.9rem; resize:vertical; font-family:inherit;"></textarea>
+                </div>
+                <div id="abonoExtError" style="display:none; color:#ef4444; font-size:0.82rem; padding:0.5rem 0.75rem; background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.2); border-radius:8px;"></div>
+            </div>
+            <div class="modal-actions-footer">
+                <button type="button" class="btn-text" onclick="closeAbonoExtraordinarioModal()">Cancelar</button>
+                <button type="button" class="btn-action primary" onclick="confirmAbonoExtraordinario()">
+                    <i class="fa-solid fa-check"></i> Registrar abono
+                </button>
+            </div>
+        </div>
     </div>
 
     <!-- HISTORIAL PERMISOS MODAL -->
@@ -1339,6 +1744,18 @@
                 <p class="helper-text-sm" style="margin-top:0.5rem; color: var(--text-muted);">
                     Solo aplica a empleados con «Aplica seguro» activo en la ficha del empleado.
                 </p>
+                <div class="input-row" style="margin-top: 1rem;">
+                    <div class="input-group" style="flex: 1;">
+                        <label style="display:flex; align-items:center; gap:0.5rem; font-weight:500;">
+                            <input type="checkbox" id="cfgPagarHorasExtra" checked>
+                            Pagar horas extraordinarias en la planilla (150% sobre tarifa ordinaria del tipo)
+                        </label>
+                        <p class="helper-text-sm" style="margin-top:0.35rem; color: var(--text-muted);">
+                            Si se desactiva, el bruto no incluye el monto de las filas de extras; las horas siguen registrándose.
+                            Las hojas semanales nuevas toman este valor al crearse (celda interna AA1).
+                        </p>
+                    </div>
+                </div>
             </div>
             <div class="modal-actions-footer">
                 <button class="btn-text" onclick="closeTarifasModal()">Cancelar</button>
@@ -1472,6 +1889,49 @@
                 </div>
                 <div id="importHorarioExcelInverseWarnings" class="helper-text-sm" style="color: var(--warning, #d97706); margin-bottom: 8px;"></div>
                 <div id="importHorarioExcelPreview"></div>
+
+                <!-- SECCIÓN DE ENTRADA MANUAL -->
+                <div id="importManualWeekSection" style="border-top: 1px solid var(--border); margin-top: 18px; padding-top: 14px;">
+                    <button type="button" class="btn-text" id="toggleManualWeekBtn" onclick="toggleManualWeekForm()">
+                        <i class="fa-solid fa-plus"></i> Agregar semana manualmente
+                    </button>
+                    <div id="importManualWeekForm" class="hidden" style="margin-top: 12px;">
+                        <div style="display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 12px;">
+                            <div class="input-group" style="flex: 1; min-width: 180px; margin: 0;">
+                                <label for="manualWeekName">Nombre de la semana</label>
+                                <input type="text" id="manualWeekName" class="form-input" placeholder="Ej. Semana 1" style="width: 100%;" />
+                            </div>
+                            <div class="input-group" style="flex: 1; min-width: 180px; margin: 0;">
+                                <label for="manualWeekFridayDate">Fecha del Viernes de inicio</label>
+                                <input type="date" id="manualWeekFridayDate" class="form-input" style="width: 100%;" onchange="onManualWeekDateChange()" />
+                            </div>
+                        </div>
+                        <div style="overflow-x: auto; margin-bottom: 8px;">
+                            <table id="manualWeekTable" class="clean-table manual-week-table">
+                                <thead>
+                                    <tr>
+                                        <th style="min-width: 110px;">Empleado</th>
+                                        <th>Vie</th><th>Sáb</th><th>Dom</th>
+                                        <th>Lun</th><th>Mar</th><th>Mié</th><th>Jue</th>
+                                        <th style="width:28px;"></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="manualWeekTableBody"></tbody>
+                            </table>
+                        </div>
+                        <div style="margin-bottom: 12px;">
+                            <button type="button" class="btn-text" style="font-size:0.82rem;" onclick="_addManualEmptyRow()">
+                                <i class="fa-solid fa-user-plus"></i> Agregar colaborador
+                            </button>
+                        </div>
+                        <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
+                            <button type="button" class="btn-action" onclick="addManualWeekToPreview()">
+                                <i class="fa-solid fa-table-list"></i> Agregar al preview
+                            </button>
+                            <span id="manualWeekStatus" class="helper-text-sm"></span>
+                        </div>
+                    </div>
+                </div>
             </div>
             <div class="modal-actions-footer">
                 <button type="button" class="btn-text" onclick="closeImportHorarioExcelHistorialModal()">Cancelar</button>
@@ -1823,6 +2283,70 @@
                 <button type="button" class="btn-text" onclick="closePrefPlantillaModal()">Cancelar</button>
                 <button type="button" class="btn-action" onclick="deletePrefPlantillaCurrent()" id="btnPrefPlantillaDelete" style="display:none; color:var(--danger);">Eliminar</button>
                 <button type="button" class="btn-action primary" onclick="savePrefPlantillaFromModal()">Guardar plantilla</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: RENOMBRAR / VINCULAR PERSONA EN HISTORIAL -->
+    <div id="historyNameModal" class="modal-backdrop hidden">
+        <div class="modal-dialog" style="max-width: 480px;">
+            <div class="modal-header-simple">
+                <h3><i class="fa-solid fa-user-pen"></i> Cambiar nombre en historial</h3>
+                <button type="button" class="close-icon" onclick="closeHistoryNameModal()">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <div class="modal-body-scroll">
+                <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.8rem;">
+                    Escribí el nombre con el que querés mostrar esta fila. Si elegís a alguien de la lista (personas incluidas en el generador), el motor contará esta semana en su rotación.
+                </p>
+                <div class="input-group">
+                    <label for="histNameInput">Nombre mostrado</label>
+                    <input type="text" id="histNameInput" class="custom-input" autocomplete="off" placeholder="Buscar persona o escribir nombre custom...">
+                </div>
+                <div id="histNameLinkBadge" style="font-size: 0.78rem; margin-bottom: 0.6rem; display: none;"></div>
+                <div class="input-group">
+                    <label style="font-size: 0.78rem; color: var(--text-muted);">Sugerencias (incluidos en horarios)</label>
+                    <div id="histNameSuggestions" style="max-height: 220px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 8px; background: var(--surface-2); padding: 0.3rem;"></div>
+                </div>
+                <div id="histNameError" style="display: none; color: var(--error, #ef4444); font-size: 0.8rem; margin-top: 0.5rem;"></div>
+            </div>
+            <div class="modal-actions-footer">
+                <button type="button" class="btn-text" onclick="closeHistoryNameModal()">Cancelar</button>
+                <button type="button" class="btn-action primary" onclick="confirmHistoryNameEdit()">
+                    <i class="fa-solid fa-floppy-disk"></i> Guardar
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: INTERCAMBIAR HORARIOS DE EMPLEADOS -->
+    <div id="swapEmployeesModal" class="modal-backdrop hidden">
+        <div class="modal-dialog" style="max-width: 420px;">
+            <div class="modal-header-simple">
+                <h3><i class="fa-solid fa-right-left"></i> Intercambiar horarios</h3>
+                <button type="button" class="close-icon" onclick="closeSwapEmployeesModal()">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <div class="modal-body-scroll">
+                <p style="font-size: 0.88rem; color: var(--text-muted); margin-bottom: 1.2rem;">
+                    Se intercambiarán todos los turnos y tareas de la semana entre los dos empleados seleccionados.
+                </p>
+                <div class="input-group">
+                    <label for="swapEmpA">Empleado A</label>
+                    <select id="swapEmpA"></select>
+                </div>
+                <div class="input-group">
+                    <label for="swapEmpB">Empleado B</label>
+                    <select id="swapEmpB"></select>
+                </div>
+            </div>
+            <div class="modal-actions-footer">
+                <button type="button" class="btn-text" onclick="closeSwapEmployeesModal()">Cancelar</button>
+                <button type="button" class="btn-action primary" onclick="confirmSwapEmployees()">
+                    <i class="fa-solid fa-right-left"></i> Confirmar intercambio
+                </button>
             </div>
         </div>
     </div>

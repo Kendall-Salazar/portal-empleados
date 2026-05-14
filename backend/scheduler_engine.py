@@ -24,6 +24,11 @@ DAYS = ["Vie", "Sáb", "Dom", "Lun", "Mar", "Mié", "Jue"]
 HOURS = list(range(5, 29))
 ROTATION_HISTORY_CORE_DAYS = ("Vie", "Lun", "Mar", "Mié", "Jue")
 IGNORED_ROTATION_SHIFTS = frozenset({"OFF", "VAC", "PERM", "N_22-05"})
+
+# Ventana de semanas que se usa para rachas AM/PM y rotación de domingos.
+# Se usa en: build_rotation_history_context, recent_entries, Sunday rotation scan.
+ROTATION_HISTORY_WINDOW = 6
+
 HEAVY_EXTENDED_SHIFTS = frozenset({
     "J_07-17",
     "J_08-18",
@@ -569,6 +574,24 @@ def _fallback_rotation_pool(employee_data: dict, allow_long: bool):
             pool.append(token)
     return pool
 
+def _count_streak(tokens: list) -> int:
+    """Counts how many consecutive identical tokens appear at the end of the list.
+
+    Examples:
+        ["AM", "PM", "PM", "PM"] -> 3
+        ["PM", "AM"]              -> 1
+        []                        -> 0
+    """
+    if not tokens:
+        return 0
+    last = tokens[-1]
+    streak = 0
+    for t in reversed(tokens):
+        if t == last:
+            streak += 1
+        else:
+            break
+    return streak
 
 def build_rotation_history_context(employee_names, employee_map, history_entries, allow_long: bool, night_person_name=None, alternating_pair_members=None, rotation_enabled=True):
     normalized_history = []
@@ -632,10 +655,19 @@ def build_rotation_history_context(employee_names, employee_map, history_entries
         if len(pool) <= 1:
             continue
 
+        # Count AM/PM balance and consecutive streak at the end of history
+        am_pm_tokens = [t for t in recent_tokens if t in ("AM", "PM")]
+        am_count = am_pm_tokens.count("AM")
+        pm_count = am_pm_tokens.count("PM")
+        streak = _count_streak(am_pm_tokens)
+
         context[employee_name] = {
             "recent_tokens": recent_tokens,
             "pool": pool,
             "cycle_weeks": len(pool),
+            "am_count": am_count,
+            "pm_count": pm_count,
+            "streak": streak,
         }
 
     return context
@@ -651,6 +683,38 @@ def _fixed_shift_token_for_day(employee_data: dict, day: str):
         return None
 
     return "AM" if min(shift_hours) < 12 else "PM"
+
+
+def _fixed_dominant_token(employee_data: dict):
+    """Retorna el token AM/PM dominante entre los turnos fijos (manuales) del empleado.
+
+    Si la mayoría de los turnos fijos son AM → retorna 'AM'.
+    Si la mayoría son PM                    → retorna 'PM'.
+    Si no hay turnos fijos, o hay empate    → retorna None.
+
+    Se usa para ignorar las streak/balance penalties cuando una asignación manual
+    ya dictamina el turno de la semana (el usuario eligió eso a propósito).
+    """
+    fixed_map = employee_data.get("fixed_shifts") or {}
+    am = 0
+    pm = 0
+    for day, shift in fixed_map.items():
+        if shift not in SHIFTS or shift in IGNORED_ROTATION_SHIFTS:
+            continue
+        hours = SHIFTS.get(shift, set())
+        if not hours:
+            continue
+        if min(hours) < 12:
+            am += 1
+        else:
+            pm += 1
+    if am == 0 and pm == 0:
+        return None
+    if am > pm:
+        return "AM"
+    if pm > am:
+        return "PM"
+    return None  # empate → no hay dominante claro
 
 
 def _has_working_fixed_shift(employee_data: dict, day: str = None) -> bool:
@@ -871,51 +935,68 @@ class ShiftScheduler:
                 return pool[0]
             
             def q_label(base, worker):
-                if worker['is_quebrado']:
-                    return f"{base} {'↑AM' if worker['start'] < 12 else '↓PM'}"
-                return base
+                # Siempre agregar sufijo AM/PM basado en hora de inicio del turno
+                return f"{base} {'↑AM' if worker['start'] < 12 else '↓PM'}"
+            
+            def is_task_enabled(task_id, day):
+                ct = self.config.get("cleaning_tasks")
+                if ct and day in ct:
+                    return ct[day].get(task_id, True)
+                # Fallback to defaults
+                if day == "Dom" and task_id in ["am_tanques", "pm_tanques"]: return False
+                if day == "Sáb" and task_id == "pm_tanques": return False
+                return True
             
             # --- AM TANQUES: 5 AM starter (gender-neutral) ---
-            pool = [w for w in available if w['start'] == 5 and w['name'] not in assigned_today]
-            pick = fair_pick(pool)
-            if pick:
-                res_tasks[pick['name']][d] = q_label("Tanques", pick)
-                assigned_today.add(pick['name']); task_count[pick['name']] += 1
+            if is_task_enabled("am_tanques", d):
+                pool = [w for w in available if w['start'] == 5 and w['name'] not in assigned_today]
+                pick = fair_pick(pool)
+                if pick:
+                    res_tasks[pick['name']][d] = q_label("Tanques", pick)
+                    assigned_today.add(pick['name']); task_count[pick['name']] += 1
             
             # --- AM BAÑOS: starts ≤ 7 AM (gender-neutral, fair rotation) ---
-            pool = [w for w in available if w['start'] <= 7 and w['has_am'] and w['name'] not in assigned_today]
             oficina_person = None
-            if is_weekday_like_mode(self.day_modes.get(d)) and d in ["Lun", "Jue"]:
-                ofi_pool = [w for w in pool if w['start'] <= 6 or w['is_quebrado']]
-                ofi_pick = fair_pick(ofi_pool)
-                if ofi_pick:
-                    oficina_person = ofi_pick['name']
-                    pool = [w for w in pool if w['name'] == oficina_person] + [w for w in pool if w['name'] != oficina_person]
-            pick = fair_pick(pool) if not oficina_person else (pool[0] if pool else None)
-            if pick:
-                if is_weekday_like_mode(self.day_modes.get(d)) and d in ["Lun", "Jue"] and pick['name'] == oficina_person:
-                    res_tasks[pick['name']][d] = q_label("Oficina + Basureros + Baños", pick)
-                else:
-                    res_tasks[pick['name']][d] = q_label("Baños", pick)
-                assigned_today.add(pick['name']); task_count[pick['name']] += 1
+            if is_task_enabled("am_banos", d):
+                pool = [w for w in available if w['start'] <= 7 and w['has_am'] and w['name'] not in assigned_today]
+                if is_weekday_like_mode(self.day_modes.get(d)) and d in ["Lun", "Jue"]:
+                    ofi_pool = [w for w in pool if w['start'] <= 6 or w['is_quebrado']]
+                    ofi_pick = fair_pick(ofi_pool)
+                    if ofi_pick:
+                        oficina_person = ofi_pick['name']
+                        pool = [w for w in pool if w['name'] == oficina_person] + [w for w in pool if w['name'] != oficina_person]
+                pick = fair_pick(pool) if not oficina_person else (pool[0] if pool else None)
+                if pick:
+                    if is_weekday_like_mode(self.day_modes.get(d)) and d in ["Lun", "Jue"] and pick['name'] == oficina_person:
+                        res_tasks[pick['name']][d] = q_label("Oficina + Basureros + Baños", pick)
+                    else:
+                        res_tasks[pick['name']][d] = q_label("Baños", pick)
+                    assigned_today.add(pick['name']); task_count[pick['name']] += 1
             
             # --- PM TANQUES: starts ≥ 12 PM OR quebrado with PM (gender-neutral) ---
-            pool = [w for w in available if (w['start'] >= 12 or w['is_quebrado']) and w['has_pm'] and w['name'] not in assigned_today]
-            pick = fair_pick(pool)
-            if pick:
-                res_tasks[pick['name']][d] = q_label("Tanques", pick)
-                assigned_today.add(pick['name']); task_count[pick['name']] += 1
+            if is_task_enabled("pm_tanques", d):
+                pool = [w for w in available if (w['start'] >= 12 or w['is_quebrado']) and w['has_pm'] and w['name'] not in assigned_today]
+                pick = fair_pick(pool)
+                if pick:
+                    res_tasks[pick['name']][d] = q_label("Tanques", pick)
+                    assigned_today.add(pick['name']); task_count[pick['name']] += 1
             
             # --- PM BAÑOS: starts ≥ 12 PM OR quebrado with PM (gender-neutral) ---
-            pool = [w for w in available if (w['start'] >= 12 or w['is_quebrado']) and w['has_pm'] and w['name'] not in assigned_today]
-            pick = fair_pick(pool)
-            if pick:
-                res_tasks[pick['name']][d] = q_label("Baños", pick)
-                assigned_today.add(pick['name']); task_count[pick['name']] += 1
+            if is_task_enabled("pm_banos", d):
+                pool = [w for w in available if (w['start'] >= 12 or w['is_quebrado']) and w['has_pm'] and w['name'] not in assigned_today]
+                pick = fair_pick(pool)
+                if pick:
+                    res_tasks[pick['name']][d] = q_label("Baños", pick)
+                    assigned_today.add(pick['name']); task_count[pick['name']] += 1
             
             # Oficina fallback
             if is_weekday_like_mode(self.day_modes.get(d)) and d in ["Lun", "Jue"] and oficina_person and oficina_person not in assigned_today:
-                res_tasks[oficina_person][d] = "Oficina + Basureros"
+                # Encontrar el turno de la oficina_person para determinar AM/PM
+                ofi_shift = schedule[oficina_person].get(d, "OFF")
+                ofi_hours = SHIFTS.get(ofi_shift, set())
+                ofi_start = min(ofi_hours) if ofi_hours else 12
+                ofi_suffix = "↑AM" if ofi_start < 12 else "↓PM"
+                res_tasks[oficina_person][d] = f"Oficina + Basureros + Baños {ofi_suffix}"
                 assigned_today.add(oficina_person); task_count[oficina_person] += 1
         
         return res_tasks
@@ -1125,6 +1206,23 @@ class ShiftScheduler:
             SHIFT_MAX_HOUR,
         )
 
+        # =========================
+        # DYNAMIC PENALTY MODE (Standard Mode Detection)
+        # =========================
+        # Count active employees (not on VAC/PERM all week)
+        active_count = 0
+        for e in self.employees:
+            # Excluir Refuerzo del conteo
+            if self.emp_data[e].get('is_refuerzo', False):
+                continue
+            fixed = self.emp_data[e].get('fixed_shifts', {})
+            all_absent = all(fixed.get(d) in ['VAC', 'PERM'] for d in DAYS)
+            if not all_absent:
+                active_count += 1
+        
+        # THRESHOLD: With >= 10 active employees, standard 8h shifts cover all peaks.
+        standard_mode = active_count >= 10
+
         x = {} 
         penalties = []
         peak_penalties = []
@@ -1157,6 +1255,11 @@ class ShiftScheduler:
         # OFF en pills (fixed_shifts) es restricción dura; aquí se alinea el total semanal OFF+VAC.
         for e in self.employees:
             if self.emp_data[e].get('is_refuerzo'): continue
+            # forced_quebrado_total: their OFF count is handled exclusively by the
+            # forced_quebrado constraint below (sum(OFF+VAC+PERM)==1). Applying
+            # required_off_vac here would conflict with that constraint on feriado
+            # weeks (forced_closed>0 makes required_off_vac==2 → INFEASIBLE).
+            if self.emp_data[e].get('forced_quebrado', False): continue
             fs = self.emp_data[e].get('fixed_shifts', {}) or {}
             
             forced_vac = sum(1 for d in DAYS if fs.get(d) == 'VAC')
@@ -1238,14 +1341,20 @@ class ShiftScheduler:
                     model.Add(sum(turno_principal[e].values()) == 1)
                 continue
             
+            # forced_quebrado_total employees only work Q shifts — they have no
+            # meaningful non-Q principal shift.  Skip to avoid creating a
+            # turno_principal over non-Q shifts that can never be used.
+            if self.emp_data[e].get('forced_quebrado', False):
+                continue
+
             turno_principal[e] = {}
             for s in SHIFT_NAMES:
                 if s in ["OFF", "VAC", "PERM"] or s.startswith("J_") or s.startswith("X_") or s.startswith("Q"): continue
                 turno_principal[e][s] = model.NewBoolVar(f"principal_{e}_{s}")
-            
+
             if turno_principal[e]:
                 model.Add(sum(turno_principal[e].values()) == 1)
-                
+
                 # Consistency Penalty: Penalize deviations from the assigned turno_principal.
                 # If they work a shift `s` on day `d` that is NOT their `turno_principal[s]`, apply penalty.
                 # (Excluding special shifts like OFF, VAC, PERM, J_, X_, Q_)
@@ -1357,20 +1466,47 @@ class ShiftScheduler:
                 for s in SHIFT_NAMES:
                     model.Add(x[(e, d, s)] == (1 if s == "OFF" else 0))
         
-        # Apply SOFT constraints (flexible employees)
-        # Penalty per day of deviation.  In standard mode (≥10 employees), 2M is
-        # high enough to respect preferences while still allowing coverage-driven
-        # deviations.  In short-staff mode (<10 employees), Q shifts MUST win
-        # consistently: Q reward (-800k) - 2M penalty = +1.2M net cost, which is
-        # only 800k better than the PM coverage gap (2M) — too close for the solver
-        # to commit reliably.  At 600k: Q net = -200k (reward), gap vs no-Q = 2.2M.
-        PREF_DEVIATION_PENALTY = 2000000 if standard_mode else 600000
+        # Apply SOFT constraints (flexible employees) — Family-Aware Three-Level Hierarchy
+        # ─────────────────────────────────────────────────────────────────────────────────
+        # When a soft preference is configured (e.g. Maikel: T1_05-13 on Lunes):
+        #
+        #   Level 1 — exact shift used         → cost 0          (ideal)
+        #   Level 2 — same AM/PM family used   → cost PREF_DEVIATION_PENALTY   (acceptable)
+        #   Level 3 — opposite family used     → cost PREF_DEVIATION_PENALTY
+        #                                          + PREF_FAMILY_PENALTY       (last resort)
+        #
+        # This ensures that when the solver can't assign T1_05-13, it tries other AM
+        # shifts (T2_06-14, T3_07-15 ...) before falling back to a PM shift.
+        # Consistency across the week is automatically handled by turno_principal (50K/day).
+        #
+        # Standard mode: 2M deviation keeps the preference strong vs. coverage needs.
+        # Short-staff:   600K so Q-shifts can still win against the soft preference.
+        PREF_DEVIATION_PENALTY = 2_000_000 if standard_mode else 600_000
+        PREF_FAMILY_PENALTY    = 400_000   # extra cost for crossing AM<->PM boundary
+
         for (e, d), s_code in soft_preferences.items():
+            pref_family = _am_pm_token(s_code)  # "AM", "PM", or None
+
+            # Level 1: penalize when the exact preferred shift is NOT used
             pref_violated = model.NewBoolVar(f"pref_violated_{e}_{d}")
             model.Add(x[(e, d, s_code)] == 0).OnlyEnforceIf(pref_violated)
             model.Add(x[(e, d, s_code)] == 1).OnlyEnforceIf(pref_violated.Not())
             penalties.append(PREF_DEVIATION_PENALTY * pref_violated)
-                
+
+            # Level 2: when deviated AND landed on the wrong AM/PM family, add extra cost
+            if pref_family:
+                for s in SHIFT_NAMES:
+                    if s == s_code or s in IGNORED_ROTATION_SHIFTS:
+                        continue
+                    s_family = _am_pm_token(s)
+                    if not s_family or s_family == pref_family:
+                        continue  # same family -- no extra cost
+                    # Wrong family: pref_violated AND x[e,d,s] == 1
+                    wrong_family_used = model.NewBoolVar(f"wrong_fam_{e}_{d}_{s}")
+                    model.AddBoolAnd([pref_violated, x[(e, d, s)]]).OnlyEnforceIf(wrong_family_used)
+                    model.AddBoolOr([pref_violated.Not(), x[(e, d, s)].Not()]).OnlyEnforceIf(wrong_family_used.Not())
+                    penalties.append(PREF_FAMILY_PENALTY * wrong_family_used)
+        
         # =========================
         # RESTRICCIÓN: SÁBADOS DE JEFE DE PISTA (5AM a 1PM)
         # =========================
@@ -1885,23 +2021,6 @@ class ShiftScheduler:
                 for (s1, s2) in INCOMPATIBLE_LT:
                     model.Add(x[(e, d2, s2)] == 0).OnlyEnforceIf(x[(e, d1, s1)])
 
-        # =========================
-        # DYNAMIC PENALTY MODE (Standard Mode Detection)
-        # =========================
-        # Count active employees (not on VAC/PERM all week)
-        active_count = 0
-        for e in self.employees:
-            # Excluir Refuerzo del conteo
-            if self.emp_data[e].get('is_refuerzo', False):
-                continue
-            fixed = self.emp_data[e].get('fixed_shifts', {})
-            all_absent = all(fixed.get(d) in ['VAC', 'PERM'] for d in DAYS)
-            if not all_absent:
-                active_count += 1
-        
-        # THRESHOLD: With >= 10 active employees, standard 8h shifts cover all peaks.
-        standard_mode = active_count >= 10
-
         # Empleados no disponibles por día — incluye VAC/PERM/OFF en fixed_constraints
         unavailable_per_day = {}
         for _d in DAYS:
@@ -1910,6 +2029,14 @@ class ShiftScheduler:
                 if fixed_constraints.get((_e, _d)) in ("VAC", "PERM", "OFF"):
                     _count += 1
             unavailable_per_day[_d] = _count
+
+        # Detectar si Q shifts están activos (global o por empleado parcial).
+        # Cuando Q está activo, h11/h12 se relajan de hard-min=3 a hard-min=2
+        # para que un trabajador AM pueda cambiar a Q sin causar infeasibility.
+        _q_shifts_active = (
+            self.config.get('allow_collision_quebrado', False) or
+            any(self.emp_data[e].get('forced_quebrado_partial', False) for e in self.employees)
+        )
 
         # Cobertura
         coverage = {}
@@ -1942,7 +2069,13 @@ class ShiftScheduler:
                 coverage[(d, h)] = cov
                 # Si hay empleados en VAC/PERM, reducir el mínimo requerido para
                 # que el solver nunca sea INFEASIBLE por causa de vacaciones/permisos.
-                mn_adjusted = max(0, min(mn, available_day))
+                # Cuando Q está activo, relajar h11/h12 de hard-min=3 a hard-min=2 en días
+                # normales: esto permite que un trabajador AM (T1/T3) cambie a Q sin que h11
+                # caiga debajo del mínimo. Una penalidad soft separada (200k) compensa.
+                if _q_shifts_active and h in (11, 12) and day_modes.get(d) == SPECIAL_DAY_MODE_NORMAL:
+                    mn_adjusted = max(0, min(2, available_day))
+                else:
+                    mn_adjusted = max(0, min(mn, available_day))
                 model.Add(cov >= mn_adjusted)
                 model.Add(cov <= mx)
                 if d in overstaff_policy["days"] and mx >= overstaff_policy["cap_value"]:
@@ -1976,6 +2109,22 @@ class ShiftScheduler:
             model.Add(cov6 < 3).OnlyEnforceIf(below_3_h6)
             model.Add(cov6 >= 3).OnlyEnforceIf(below_3_h6.Not())
             peak_penalties.append(200000 * below_3_h6)
+
+        # SOFT: Cuando Q está activo, penalizar h11/h12 < 3 (200k).
+        # Esto compensa la relajación del hard-min (3→2) hecha arriba: el solver
+        # solo acepta bajar a 2 en h11/h12 cuando el gain de PM (500k/hr) lo justifica.
+        if _q_shifts_active:
+            for d in DAYS:
+                if day_modes.get(d) != SPECIAL_DAY_MODE_NORMAL:
+                    continue
+                if len(self.employees) - unavailable_per_day.get(d, 0) < 3:
+                    continue
+                for h in (11, 12):
+                    cov_h = coverage[(d, h)]
+                    below_3_h = model.NewBoolVar(f"below3_h{h}_{d}_q")
+                    model.Add(cov_h < 3).OnlyEnforceIf(below_3_h)
+                    model.Add(cov_h >= 3).OnlyEnforceIf(below_3_h.Not())
+                    peak_penalties.append(200000 * below_3_h)
 
         # SOFT: Prefer 4+ people during peak hours (Lun-Sáb, h7-10 and h16-19)
         # AM peak (h7-h10) has a much higher penalty than PM — losing AM coverage can NEVER
@@ -2036,6 +2185,9 @@ class ShiftScheduler:
         if standard_mode:
             for e in self.employees:
                 if e == night_person_name or self.emp_data[e].get('is_jefe_pista', False) or self.emp_data[e].get('is_practicante', False):
+                    continue
+                # forced_quebrado_total always has Q — penalizing spread is meaningless
+                if self.emp_data[e].get('forced_quebrado', False):
                     continue
                 has_any_q = model.NewBoolVar(f"has_any_q_{e}")
                 q_sum = sum(x[(e, d, "Q1_05-11+17-20")] + x[(e, d, "Q2_07-11+17-20")] + x[(e, d, "Q3_05-11+17-22")] for d in DAYS)
@@ -2367,13 +2519,21 @@ class ShiftScheduler:
                 peak_penalties.append(2000000 * shortfall_pm)
         
         # =========================
-        # REFUERZO LOGIC - Collision day by default, or Saturday-only if requested
+        # REFUERZO LOGIC - Puede ser automático (solver decide) o manual (usuario elige días)
         # =========================
         if use_refuerzo:
             refuerzo = "Refuerzo"
             ref_type = self.config.get('refuerzo_type', 'personalizado')
+            ref_days_mode = self.config.get('refuerzo_days_mode', 'auto')
+            ref_manual_days = self.config.get('refuerzo_manual_days', [])
             saturday_only_refuerzo = ref_type == "sabado"
             effective_ref_type = "automatico" if saturday_only_refuerzo else ref_type
+            
+            # Determinar días activos del refuerzo
+            refuerzo_active_days = {}
+            
+            # Si modo manual, usar días específicos; sino usar collision days
+            use_manual_days = ref_days_mode == "manual" and ref_manual_days
             
             for d in DAYS:
                 if is_special_closed(d) or is_special_sunday_like(d):
@@ -2390,12 +2550,22 @@ class ShiftScheduler:
                         refuerzo_active_days[d] = model.NewConstant(0)
                     continue
 
-                # HARD: If collision day -> Refuerzo MUST work
-                model.Add(x[(refuerzo, d, "OFF")] == 0).OnlyEnforceIf(collision_vars[d])
-                # HARD: If NOT collision day -> Refuerzo MUST be OFF
-                model.Add(x[(refuerzo, d, "OFF")] == 1).OnlyEnforceIf(collision_vars[d].Not())
-                
-                refuerzo_active_days[d] = collision_vars[d]
+                if use_manual_days:
+                    # Modo manual: Refuerzo trabaja solo en días seleccionados por usuario
+                    if d in ref_manual_days:
+                        model.Add(x[(refuerzo, d, "OFF")] == 0)
+                        refuerzo_active_days[d] = model.NewConstant(1)
+                    else:
+                        model.Add(x[(refuerzo, d, "OFF")] == 1)
+                        refuerzo_active_days[d] = model.NewConstant(0)
+                else:
+                    # Modo automático: Refuerzo trabaja en collision days (default)
+                    # HARD: If collision day -> Refuerzo MUST work
+                    model.Add(x[(refuerzo, d, "OFF")] == 0).OnlyEnforceIf(collision_vars[d])
+                    # HARD: If NOT collision day -> Refuerzo MUST be OFF
+                    model.Add(x[(refuerzo, d, "OFF")] == 1).OnlyEnforceIf(collision_vars[d].Not())
+                    
+                    refuerzo_active_days[d] = collision_vars[d]
             
             # Turnos Permitidos segun preferencia
             allowed_shifts_refuerzo = ["OFF"]
@@ -2562,12 +2732,15 @@ class ShiftScheduler:
         #   - Sunday up to 2 flex OFFs
 
         # Set Q shift penalty dynamically
+        # PRIORIDAD: Refuerzo > Q > Coverage Gap
+        # Cuando use_refuerzo=True, el refuerzo se usa primero. Q es fallback.
         if standard_mode:
             if allow_collision_q:
-                # When collision Q is enabled, use moderate penalty
-                # (200k < 500k coverage penalty, so solver uses Q when needed)
-                q1_penalty = 200000
-                q2_penalty = 200000
+                # Q penalty REDUCIDO para hacerlo más atractivo que coverage gap
+                # El refuerzo tiene prioridad (penalty 3000), Q es fallback
+                # 100k vs 200k anterior - más incentivos para usar Q cuando Refuerzo no alcanza
+                q1_penalty = 100000
+                q2_penalty = 100000
             else:
                 # PROHIBITIVE: solver must NEVER choose Q shifts with 10+ employees.
                 q1_penalty = 999999
@@ -2596,8 +2769,11 @@ class ShiftScheduler:
         # Bridge/short shifts (R1 4h, R2 4h, T13 6h) not needed with full staff.
         if standard_mode:
             for e in self.employees:
-                # Skip forced_quebrado employees — they NEED Q shifts
+                # Skip forced_quebrado_total employees — they NEED Q shifts all week
                 if self.emp_data[e].get('forced_quebrado', False):
+                    continue
+                # Skip forced_quebrado_partial employees — they need Q access on coverage-gap days
+                if self.emp_data[e].get('forced_quebrado_partial', False):
                     continue
                 # Skip Refuerzo — they legitimately take 4h shifts
                 if self.emp_data[e].get('is_refuerzo', False):
@@ -2669,6 +2845,8 @@ class ShiftScheduler:
         for e in self.employees:
             if e not in turno_principal: continue
 
+            fq_partial = self.emp_data[e].get('forced_quebrado_partial', False)
+
             for d in DAYS:
                 if _has_working_fixed_shift(self.emp_data[e], d):
                     continue
@@ -2677,6 +2855,18 @@ class ShiftScheduler:
                 # penalty so the solver can freely pick the best Sunday shift
                 # for coverage without fighting the 900k consistency wall.
                 is_sunday_day = is_special_sunday_like(d)
+
+                # forced_quebrado_partial: on days where they work a Q shift
+                # they are exempt from the 900k consistency penalty — the whole
+                # point is that Q is assigned only when necessary, so we must
+                # not make it prohibitively expensive through consistency.
+                working_q_today = None
+                if fq_partial:
+                    working_q_today = model.NewBoolVar(f"working_q_partial_{e}_{d}")
+                    q_sum_d = sum(x[(e, d, q)] for q in ["Q1_05-11+17-20", "Q2_07-11+17-20", "Q3_05-11+17-22"])
+                    model.Add(q_sum_d >= 1).OnlyEnforceIf(working_q_today)
+                    model.Add(q_sum_d == 0).OnlyEnforceIf(working_q_today.Not())
+
                 for s in turno_principal[e]:
                     usa_otro = model.NewBoolVar(f"usa_otro_{e}_{d}_{s}")
                     model.AddBoolAnd([x[(e, d, s)], turno_principal[e][s].Not()]).OnlyEnforceIf(usa_otro)
@@ -2690,6 +2880,10 @@ class ShiftScheduler:
 
                     if e in persona_hace_libres:
                         conditions_exento.append(persona_hace_libres[e])
+
+                    # forced_quebrado_partial: exempt from consistency on Q days
+                    if working_q_today is not None:
+                        conditions_exento.append(working_q_today)
 
                     if primary_night and e == primary_night:
                         model.Add(exento == 1)
@@ -2709,12 +2903,27 @@ class ShiftScheduler:
 
                     penalties.append(penalizacion)
                     
-        # O3. Broken shifts Q1/Q2/Q3 — penalty depends on standard_mode
+        # O3. Broken shifts Q1/Q2/Q3 — penalty depends on mode and employee config.
+        # forced_quebrado_total: no penalty (they MUST work Q by hard constraint).
+        # forced_quebrado_partial: moderate penalty so solver only uses Q when
+        #   coverage gap cost (500k/hr) exceeds this penalty.  In short-staffed
+        #   mode partial employees follow the same reward as everyone else.
+        FQ_PARTIAL_Q_PENALTY = 200_000
         for e in self.employees:
+            fq_total = self.emp_data[e].get('forced_quebrado', False)
+            fq_partial = self.emp_data[e].get('forced_quebrado_partial', False)
             for d in DAYS:
-                penalties.append(q1_penalty * x[(e, d, "Q1_05-11+17-20")])
-                penalties.append(q2_penalty * x[(e, d, "Q2_07-11+17-20")])
-                penalties.append(q1_penalty * x[(e, d, "Q3_05-11+17-22")])  # Same penalty as Q1
+                if fq_total:
+                    pass  # No penalty — hard constraint already forces Q shifts
+                elif fq_partial:
+                    p = FQ_PARTIAL_Q_PENALTY if standard_mode else q1_penalty
+                    penalties.append(p * x[(e, d, "Q1_05-11+17-20")])
+                    penalties.append(p * x[(e, d, "Q2_07-11+17-20")])
+                    penalties.append(p * x[(e, d, "Q3_05-11+17-22")])
+                else:
+                    penalties.append(q1_penalty * x[(e, d, "Q1_05-11+17-20")])
+                    penalties.append(q2_penalty * x[(e, d, "Q2_07-11+17-20")])
+                    penalties.append(q1_penalty * x[(e, d, "Q3_05-11+17-22")])
 
         # O4. Turnos Cortos T13
         for e in self.employees:
@@ -2899,10 +3108,18 @@ class ShiftScheduler:
         #   - Sáb / Dom           : D2 recompensado (-1 500),  T10 recompensado (-1 500)
         lun_vie = [d for d in DAYS if is_weekday_like(d) and d != "Sáb"]
         for e in self.employees:
-            # Sábado y Domingo: recompensar ambos igual que antes
+            # Sábado: preferir T10_15-22 sobre D2_14-22.
+            # D2 empieza a las 14h vs T10 que empieza a las 15h. En la práctica
+            # ambos cubren el mismo bloque útil pero D2 tiene más riesgo de romper
+            # la restricción de descanso mínimo entre turnos. T10 es la opción correcta.
             for d_special in [d for d in DAYS if is_special_sunday_like(d) or d == "Sáb"]:
-                penalties.append(-1500 * x[(e, d_special, "D2_14-22")])
-                penalties.append(-1500 * x[(e, d_special, "T10_15-22")])
+                # T10_15-22: reward mayor (preferido)
+                penalties.append(-3000 * x[(e, d_special, "T10_15-22")])
+                # D2_14-22: reward menor + penalidad extra en Sáb para desincentivar
+                if d_special == "Sáb":
+                    penalties.append(5000 * x[(e, d_special, "D2_14-22")])  # disuadir en Sáb
+                else:
+                    penalties.append(-1500 * x[(e, d_special, "D2_14-22")])  # DOM: neutro
 
             # Lunes a Viernes: comportamiento condicional según si es día de colisión
             for d in lun_vie:
@@ -2974,10 +3191,12 @@ class ShiftScheduler:
         # =========================
         
         rotation_enabled = self.config.get('rotation_enabled', True)
+        # Limitar a ROTATION_HISTORY_WINDOW semanas para rachas y rotación de domingos.
+        history_window = history_entries[-ROTATION_HISTORY_WINDOW:] if len(history_entries) > ROTATION_HISTORY_WINDOW else history_entries
         rotation_history_context = build_rotation_history_context(
             self.employees,
             self.emp_data,
-            history_entries,
+            history_window,
             allow_long=allow_long,
             night_person_name=night_person_name,
             alternating_pair_members=alternating_pair_members_set,
@@ -2987,7 +3206,7 @@ class ShiftScheduler:
         # 2 consecutive weeks, BLOCK it this week.
         # SOFT PENALTY: Penalize 1-week and 2-week repeats for variety.
         
-        recent_entries = history_entries[-3:] if len(history_entries) >= 3 else history_entries
+        recent_entries = history_window[-ROTATION_HISTORY_WINDOW:] if len(history_window) >= ROTATION_HISTORY_WINDOW else history_window
 
         def _history_window_for_employee(employee_name, entries):
             if not entries:
@@ -3063,7 +3282,31 @@ class ShiftScheduler:
         # Resto del equipo: se mira una ventana de N semanas, donde N es el tamano
         # del pool real de rotacion de esa persona, para evitar repetir el mismo
         # turno principal antes de completar el ciclo.
+        #
+        # FAIRNESS (revisado): el motor priorizó en exceso la cobertura por sobre la
+        # equidad de rotación — varios usuarios reportaron personas trabadas en PM
+        # 4–5 semanas seguidas mientras otros se quedaban en AM. Cambios:
+        #   - El balance personal AM vs PM ahora penaliza desde |delta| >= 2
+        #     (antes >= 3) para corregir antes de que se vuelva crónico.
+        #   - El streak escala más temprano: streak=2 ya pesa el doble (antes =1x).
+        #   - Se agrega un término global de equidad team-wide: si la persona
+        #     concentra mucho más PM (o AM) que el promedio del equipo, se penaliza
+        #     fuertemente continuar en ese token.
+        #   streak=1 → 1x base
+        #   streak=2 → 2x  (era 1x antes del fix)
+        #   streak=3 → 4x
+        #   streak=4 → 8x
         rotation_penalty_weights = [180000, 120000, 80000, 50000, 30000, 18000]
+
+        # Calcular promedio del equipo para equidad team-wide.
+        team_am_total = 0
+        team_pm_total = 0
+        for _ctx in rotation_history_context.values():
+            team_am_total += int(_ctx.get("am_count", 0) or 0)
+            team_pm_total += int(_ctx.get("pm_count", 0) or 0)
+        team_total = team_am_total + team_pm_total
+        team_pm_ratio = (team_pm_total / team_total) if team_total > 0 else 0.5
+
         for e, ctx in rotation_history_context.items():
             if e not in turno_principal or not turno_principal[e]:
                 continue
@@ -3085,15 +3328,120 @@ class ShiftScheduler:
 
             if uses_ampm and last_token in ("AM", "PM"):
                 opposite_token = "PM" if last_token == "AM" else "AM"
-                # Pair members get a stronger signal (900K) than general rotation (600K)
-                penalty_same = 900000 if is_alternating else 600000
-                reward_opp = -180000 if is_alternating else -100000
+                streak = ctx.get("streak", 1)
+
+                # Si los turnos fijos (manuales) ya determinan el token AM/PM del empleado,
+                # omitir TODA la lógica de racha — la asignación manual tiene prioridad
+                # absoluta y no debe ser interferida por la rotación histórica.
+                # IMPORTANTE: antes solo se salteaba cuando fixed_token == last_token,
+                # lo que dejaba activa la penalización cuando el fixed shift pedía el
+                # turno opuesto al historial (bug: rotación vs preferencia fija).
+                fixed_token = _fixed_dominant_token(self.emp_data[e])
+                if fixed_token is not None:
+                    # El empleado tiene turnos ESTRICTOS que definen su familia AM/PM.
+                    # Reforzamos la familia correcta con una recompensa adicional
+                    # para asegurar que turno_principal siga la preferencia fija.
+                    FIXED_FAMILY_BOOST = 500_000
+                    for s, var in turno_principal[e].items():
+                        token = _am_pm_token(s)
+                        if token == fixed_token:
+                            penalties.append(-FIXED_FAMILY_BOOST * var)  # recompensa
+                        elif token is not None and token != fixed_token:
+                            penalties.append(FIXED_FAMILY_BOOST * var)   # penaliza familia opuesta
+                    continue
+
+                # SOFT PREFERENCES OVERRIDE: si el empleado tiene preferencias de turno
+                # configuradas manualmente en el panel (no estrictas), esas preferencias
+                # definen su familia AM/PM para esta semana y deben ganar al historial.
+                # Caso exacto de Keilor: T3_07-15 configurado → no dejar que el historial
+                # PM lo arrastre a tarde. SOFT_PREF_BOOST (3M) > penalty_same típica (600K-1.2M).
+                soft_pref_token = None
+                emp_soft_prefs = {
+                    d: s for (emp_k, d), s in soft_preferences.items()
+                    if emp_k == e and _am_pm_token(s) is not None
+                }
+                if emp_soft_prefs:
+                    am_days = sum(1 for s in emp_soft_prefs.values() if _am_pm_token(s) == "AM")
+                    pm_days = sum(1 for s in emp_soft_prefs.values() if _am_pm_token(s) == "PM")
+                    if am_days > pm_days:
+                        soft_pref_token = "AM"
+                    elif pm_days > am_days:
+                        soft_pref_token = "PM"
+                    elif am_days > 0:  # empate: AM gana como desempate (más común)
+                        soft_pref_token = "AM"
+
+                if soft_pref_token is not None:
+                    # El panel de parámetros define la familia de turno para esta semana.
+                    # Damos prioridad a esa elección por encima del historial de rotación.
+                    # SOFT_PREF_BOOST debe superar la penalidad de racha más alta posible
+                    # (600K * streak_multiplier, cap 5M) en el caso típico (streak ≤ 2 → 1.2M).
+                    SOFT_PREF_BOOST = 3_000_000
+                    for s, var in turno_principal[e].items():
+                        token = _am_pm_token(s)
+                        if token == soft_pref_token:
+                            penalties.append(-SOFT_PREF_BOOST * var)  # fuerte recompensa
+                        elif token is not None and token != soft_pref_token:
+                            penalties.append(SOFT_PREF_BOOST * var)   # fuerte penalidad familia opuesta
+                    continue
+
+                # Penalty for repeating same token — scales exponentially with streak.
+                # Pair members get base 900K; others get base 600K.
+                # Bumped earlier: streak=2 ahora = 2x (antes 1x), porque permitía
+                # 2 semanas consecutivas sin presión real para rotar.
+                base_same = 900000 if is_alternating else 600000
+                # streak=1→1, streak=2→2, streak=3→4, streak=4→8 (cap)
+                streak_multiplier = min(8, max(1, 2 ** max(0, streak - 1)))
+                if streak >= 2:
+                    # Boost extra desde el segundo repetido para evitar mesetas largas.
+                    streak_multiplier = max(streak_multiplier, 2)
+                penalty_same = min(5_000_000, base_same * streak_multiplier)
+
+                # Reward for switching to opposite token — scales with streak too
+                base_opp = 180000 if is_alternating else 120000
+                reward_opp = -min(1_500_000, base_opp * streak_multiplier)
+
                 for s, var in turno_principal[e].items():
                     token = _am_pm_token(s)
                     if token == last_token:
                         penalties.append(penalty_same * var)
                     elif token == opposite_token:
                         penalties.append(reward_opp * var)
+
+                # BALANCE CHECK: penalización extra desde |balance| >= 2 (antes 3).
+                # Activarla antes evita que un desbalance de 3 (PM-heavy crónico)
+                # se vuelva el "estado normal" del solver.
+                am_count = ctx.get("am_count", 0)
+                pm_count = ctx.get("pm_count", 0)
+                balance = pm_count - am_count  # positive = PM-heavy, negative = AM-heavy
+                if abs(balance) >= 2:
+                    # balance=2 → +800K, balance=3 → +1.6M, balance=4 → +2.4M, ≥5 → +5M cap
+                    imbalance_penalty = min(5_000_000, 800_000 * max(1, abs(balance) - 1))
+                    dominant_token = "PM" if balance > 0 else "AM"
+                    for s, var in turno_principal[e].items():
+                        token = _am_pm_token(s)
+                        if token == dominant_token:
+                            penalties.append(imbalance_penalty * var)
+
+                # TEAM-WIDE EQUITY: penalizar a quien concentra mucho más PM (o AM)
+                # que el promedio del equipo. Evita que el solver "elija siempre
+                # al mismo" para tarde porque tiene disponibilidad: ahora también
+                # mira qué tan desbalanceado está respecto al resto.
+                personal_total = am_count + pm_count
+                if team_total >= 4 and personal_total >= 2:
+                    personal_pm_ratio = pm_count / personal_total
+                    pm_excess = personal_pm_ratio - team_pm_ratio  # >0 si la persona hace más PM que la media
+                    am_excess = -pm_excess
+                    # Umbral: 25 puntos porcentuales de desviación.
+                    if pm_excess > 0.25:
+                        equity_pen = min(5_000_000, int(2_500_000 * (pm_excess - 0.25) + 400_000))
+                        for s, var in turno_principal[e].items():
+                            if _am_pm_token(s) == "PM":
+                                penalties.append(equity_pen * var)
+                    elif am_excess > 0.25:
+                        equity_pen = min(5_000_000, int(2_500_000 * (am_excess - 0.25) + 400_000))
+                        for s, var in turno_principal[e].items():
+                            if _am_pm_token(s) == "AM":
+                                penalties.append(equity_pen * var)
                 continue
             lookback_weeks = min(max(ctx.get("cycle_weeks", 1) - 1, 0), len(recent_tokens))
             if lookback_weeks <= 0:
@@ -3121,11 +3469,13 @@ class ShiftScheduler:
                         if not self.emp_data[e].get('is_jefe_pista', False)
                         and e not in sat_dom_only]
             
-            # Scan history to find each employee's last Sunday OFF (index = recency)
+            # Scan history to find each employee's last Sunday OFF (index = recency).
+            # Cap at ROTATION_HISTORY_WINDOW semanas para consistencia con el sistema de rachas.
             last_sunday_off = {}  # employee -> history_index (higher = more recent)
+            sunday_scan_entries = history_window  # ya limitado a 6 semanas
             
             # We need to look at historical schedules to figure out who had Sunday OFF
-            for idx, entry in enumerate(history_entries):
+            for idx, entry in enumerate(sunday_scan_entries):
                 if _history_day_is_neutral(entry, "Dom"):
                     continue
                 sched = entry.get('schedule', {})
@@ -3136,7 +3486,7 @@ class ShiftScheduler:
             # Build queue: sort by last_sunday_off ascending (least recent first)
             # Employees who NEVER had Sunday OFF go to the END (large number), not the front
             # This ensures people WITH history but long wait go first
-            max_idx = len(history_entries) if history_entries else 0
+            max_idx = len(sunday_scan_entries) if sunday_scan_entries else 0
             rotation_queue = sorted(eligible, key=lambda e: last_sunday_off.get(e, max_idx + 1))
             
             rotation_target = rotation_queue[0] if rotation_queue else None
@@ -3271,8 +3621,10 @@ class ShiftScheduler:
             solver.parameters.num_search_workers = 8
             
         solver.parameters.search_branching = cp_model.PORTFOLIO_SEARCH
-        # Removed linearization_level=0 to allow the solver to perform better LP bounding and search deeper for better objective values
-        # instead of getting stuck in local booleans.
+        # interleave_search=True: permite que los workers diversifiquen su búsqueda
+        # en lugar de que todos converjan a la misma región (cerca de los hints del
+        # historial anterior). Mejora la calidad del óptimo encontrado en el tiempo límite.
+        solver.parameters.interleave_search = True
 
         # Add History Hints to start search close to previous state
         if most_recent_schedule:

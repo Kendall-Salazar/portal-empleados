@@ -1,7 +1,7 @@
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ConfigDict
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 import json
 import os
 import datetime
@@ -155,6 +155,7 @@ def load_db():
             "allow_no_rest": bool(r["allow_no_rest"]),
             "forced_libres": bool(r["forced_libres"]),
             "forced_quebrado": bool(r["forced_quebrado"]),
+            "forced_quebrado_partial": bool(r["forced_quebrado_partial"]) if "forced_quebrado_partial" in r.keys() else False,
             "is_jefe_pista": bool(r["es_jefe_pista"]),
             "is_practicante": bool(r["es_practicante"]) if "es_practicante" in r.keys() else False,
             "strict_preferences": bool(r["strict_preferences"]) if "strict_preferences" in r.keys() else False,
@@ -174,6 +175,8 @@ def load_db():
             "refuerzo_type": cfg_row["refuerzo_type"],
             "refuerzo_start": cfg_row["refuerzo_start"] if "refuerzo_start" in cfg_row.keys() and cfg_row["refuerzo_start"] else "07:00",
             "refuerzo_end": cfg_row["refuerzo_end"] if "refuerzo_end" in cfg_row.keys() and cfg_row["refuerzo_end"] else "12:00",
+            "refuerzo_days_mode": cfg_row["refuerzo_days_mode"] if "refuerzo_days_mode" in cfg_row.keys() and cfg_row["refuerzo_days_mode"] else "auto",
+            "refuerzo_manual_days": json.loads(cfg_row["refuerzo_manual_days"]) if "refuerzo_manual_days" in cfg_row.keys() and cfg_row["refuerzo_manual_days"] else [],
             "allow_collision_quebrado": bool(cfg_row["allow_collision_quebrado"]),
             "collision_peak_priority": cfg_row["collision_peak_priority"],
             "sunday_cycle_index": cfg_row["sunday_cycle_index"] or 0,
@@ -278,10 +281,10 @@ def save_db(data):
         conn.execute("""
             INSERT INTO horario_config
             (id, night_mode, fixed_night_person, allow_long_shifts, use_refuerzo,
-             refuerzo_type, refuerzo_start, refuerzo_end, allow_collision_quebrado,
-             collision_peak_priority, sunday_cycle_index, sunday_rotation_queue, use_history, holidays,
+             refuerzo_type, refuerzo_start, refuerzo_end, refuerzo_days_mode, refuerzo_manual_days,
+             allow_collision_quebrado, collision_peak_priority, sunday_cycle_index, sunday_rotation_queue, use_history, holidays,
              jefe_base_shift, use_pref_plantilla)
-            VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             cfg.get("night_mode", "rotation"),
             cfg.get("fixed_night_person"),
@@ -290,6 +293,8 @@ def save_db(data):
             cfg.get("refuerzo_type", "personalizado"),
             cfg.get("refuerzo_start", "07:00"),
             cfg.get("refuerzo_end", "12:00"),
+            cfg.get("refuerzo_days_mode", "auto"),
+            json.dumps(cfg.get("refuerzo_manual_days", [])),
             1 if cfg.get("allow_collision_quebrado", False) else 0,
             cfg.get("collision_peak_priority", "pm"),
             cfg.get("sunday_cycle_index", 0),
@@ -651,6 +656,7 @@ class Employee(BaseModel):
     is_practicante: bool = False
     strict_preferences: bool = False
     activo: bool = True
+    incluir_en_horario: bool = True
     fixed_shifts: Dict[str, str] = Field(default_factory=dict)
 
 class Config(BaseModel):
@@ -661,6 +667,8 @@ class Config(BaseModel):
     refuerzo_type: str = "personalizado"
     refuerzo_start: str = "07:00"
     refuerzo_end: str = "12:00"
+    refuerzo_days_mode: str = "auto"  # "auto" = solver decide, "manual" = usuario elige
+    refuerzo_manual_days: List[str] = []  # Días específicos cuando refuerzo_days_mode="manual"
     allow_collision_quebrado: bool = False
     collision_peak_priority: str = "pm"
     use_history: bool = True
@@ -672,6 +680,7 @@ class Config(BaseModel):
     prioritize_jefe_coverage: bool = True  # Suavizar objetivo: favorece asignar turnos al jefe cuando el solver elige
     jefe_base_shift: str = "J_06-16"  # Turno tipo lun–vie al aplicar plantilla de jefe desde Parámetros
     use_pref_plantilla: bool = False  # Si False, el motor ignora horario_pref_plantilla (preferencias en turnos_fijos)
+    cleaning_tasks: Optional[Dict[str, Dict[str, bool]]] = None
 
 class SolverRequest(BaseModel):
     employees: List[Employee]
@@ -684,6 +693,8 @@ class PlanillaPermiso(BaseModel):
     fecha: str
     motivo: Optional[str] = None
     notas: Optional[str] = None
+    fecha_fin: Optional[str] = None
+    horas: Optional[float] = 0
 
 class DescontarPermisosRequest(BaseModel):
     empleado_id: int
@@ -698,6 +709,7 @@ class SyncVacPermRequest(BaseModel):
 class GeneratorParamFlags(BaseModel):
     forced_libres: Optional[bool] = None
     forced_quebrado: Optional[bool] = None
+    forced_quebrado_partial: Optional[bool] = None
     allow_no_rest: Optional[bool] = None
     strict_preferences: Optional[bool] = None
     is_jefe_pista: Optional[bool] = None
@@ -728,6 +740,7 @@ class HistoryEntry(BaseModel):
     week_dates: Optional[Dict[str, str]] = None
     special_days: Dict[str, str] = Field(default_factory=dict)
     timestamp: str = "" 
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class HorarioExcelImportItem(BaseModel):
@@ -778,6 +791,7 @@ def get_employees(include_inactive: bool = False):
             "is_practicante": bool(e.get("es_practicante", 0)),
             "strict_preferences": bool(e.get("strict_preferences", 0)),
             "activo": bool(e.get("activo", 1)),
+            "incluir_en_horario": bool(e.get("incluir_en_horario", 1)),
             "fixed_shifts": fixed_shifts,
             "pref_plantilla_id": pid,
             "pref_plantilla_nombre": e.get("pref_plantilla_nombre"),
@@ -881,6 +895,8 @@ def solve_schedule(request: SolverRequest):
     # La variable 'employees' en app.js es un 'let' que nunca vive en window,
     # así que planillas_ui.js no puede actualizarla. La fuente de verdad es la DB.
     unified_emps = plan_db.get_empleados(solo_activos=True)
+    # Filtrar solo empleados que se incluyen en el generador de horarios
+    unified_emps = [e for e in unified_emps if e.get("incluir_en_horario", 1) == 1]
     use_tpl = plan_db.get_use_pref_plantilla()
     employees_data = []
     for e in unified_emps:
@@ -944,8 +960,27 @@ def solve_schedule(request: SolverRequest):
 
 @app.get("/api/history")
 def get_history():
-    db = load_db()
-    return db.get("history_log", [])
+    """Get schedule history from SQLite."""
+    conn = _get_conn()
+    rows = conn.execute(
+        f"SELECT id, nombre, horario, tareas, metadata, timestamp FROM horarios_generados WHERE deleted = 0 ORDER BY {_HISTORY_LIST_ORDER}"
+    ).fetchall()
+    conn.close()
+    
+    result = []
+    for row in rows:
+        meta = json.loads(row["metadata"]) if row["metadata"] else {}
+        result.append({
+            "db_id": row["id"],
+            "name": row["nombre"],
+            "schedule": json.loads(row["horario"]) if row["horario"] else {},
+            "daily_tasks": json.loads(row["tareas"]) if row["tareas"] else {},
+            "metadata": meta,
+            "special_days": meta.get("special_days", {}),
+            "week_dates": meta.get("week_dates"),
+            "timestamp": row["timestamp"] or "",
+        })
+    return result
 
 @app.get("/api/rotacion-domingos")
 def get_sunday_rotation():
@@ -1031,7 +1066,13 @@ def _upsert_history_horario_import(
 
     horario_json = json.dumps(schedule, ensure_ascii=False)
     tareas_json = json.dumps(daily_tasks, ensure_ascii=False)
-    ts = datetime.datetime.now().isoformat()
+    # Usar la fecha real del Viernes como timestamp para orden cronológico correcto
+    vie_str = week_dates.get("Vie", "")
+    try:
+        vie_date = datetime.datetime.strptime(vie_str, "%d/%m/%Y")
+        ts = vie_date.replace(hour=12, minute=0, second=0).isoformat()
+    except (ValueError, TypeError):
+        ts = datetime.datetime.now().isoformat()
 
     if row_id:
         row = conn.execute(
@@ -1157,12 +1198,16 @@ def save_history(entry: HistoryEntry):
 
     horario_json = json.dumps(entry.schedule, ensure_ascii=False)
     tareas_json = json.dumps(entry.daily_tasks or {}, ensure_ascii=False)
-    metadata_json = json.dumps({
+    # Mergear metadata extra del cliente (holiday_days, source, display_aliases, etc.)
+    # con los campos núcleo manejados por el endpoint.
+    extra_meta = dict(entry.metadata or {})
+    extra_meta.update({
         "rotation_queue": entry.next_sunday_rotation_queue,
         "rotation_target": entry.next_sunday_cycle_index,
         "special_days": entry.special_days or {},
         "week_dates": entry.week_dates,
-    }, ensure_ascii=False)
+    })
+    metadata_json = json.dumps(extra_meta, ensure_ascii=False)
     ts = entry.timestamp or datetime.datetime.now().isoformat()
 
     # Siempre insertar una entrada nueva — nunca sobreescribir por nombre
@@ -1266,6 +1311,11 @@ def _patch_history_row(conn, row_id: int, entry: HistoryEntry) -> bool:
         existing_meta.pop("special_days", None)
     if entry.week_dates is not None:
         existing_meta["week_dates"] = entry.week_dates
+    
+    # Merge metadata (holiday_days, etc)
+    if entry.metadata:
+        for key, value in entry.metadata.items():
+            existing_meta[key] = value
 
     metadata_json = json.dumps(existing_meta, ensure_ascii=False)
 
@@ -1325,20 +1375,58 @@ def _reassign_history_tasks_for_row(conn, row_id: int) -> dict:
         raise HTTPException(status_code=400, detail="El historial no tiene un horario válido")
 
     employees_rows = conn.execute("SELECT * FROM horario_empleados WHERE activo=1").fetchall()
-    employees_data = [dict(e) for e in employees_rows]
-    employee_names = {emp.get("nombre", "") for emp in employees_data}
+    
+    # Map from database columns (nombre, es_jefe_pista, etc) to ShiftScheduler keys (name, is_jefe_pista, etc)
+    employees_data = []
+    for e in employees_rows:
+        e = dict(e)
+        try:
+            fixed_shifts = json.loads(e["turnos_fijos"]) if e["turnos_fijos"] else {}
+        except:
+            fixed_shifts = {}
+        employees_data.append({
+            "name": e["nombre"],
+            "gender": e.get("genero", "M"),
+            "can_do_night": bool(e.get("puede_nocturno", 1)),
+            "allow_no_rest": bool(e.get("allow_no_rest", 0)),
+            "forced_libres": bool(e.get("forced_libres", 0)),
+            "forced_quebrado": bool(e.get("forced_quebrado", 0)),
+            "is_jefe_pista": bool(e.get("es_jefe_pista", 0)),
+            "is_practicante": bool(e.get("es_practicante", 0)),
+            "strict_preferences": bool(e.get("strict_preferences", 0)),
+            "fixed_shifts": fixed_shifts
+        })
+
+    employee_names = {emp["name"] for emp in employees_data}
     for missing_name in sorted(name for name in schedule.keys() if name not in employee_names):
-        employees_data.append({"nombre": missing_name, "genero": "M", "puede_nocturno": 1})
+        employees_data.append({
+            "name": missing_name, 
+            "gender": "M", 
+            "can_do_night": 1,
+            "is_jefe_pista": 0,
+            "fixed_shifts": {}
+        })
 
     config_row = conn.execute("SELECT * FROM horario_config WHERE id=1").fetchone()
     config_data = dict(config_row) if config_row else {}
+    # Incorporar la configuración global desde JSON (incluyendo cleaning_tasks)
+    db = load_db()
+    json_config = db.get("config", {})
+    if "cleaning_tasks" in json_config:
+        config_data["cleaning_tasks"] = json_config["cleaning_tasks"]
     config_data["use_refuerzo"] = "Refuerzo" in schedule
     existing_meta = json.loads(row["metadata"]) if row["metadata"] else {}
     special_days = _normalize_special_days(existing_meta.get("special_days", {}))
     config_data["special_days"] = special_days
 
     scheduler = ShiftScheduler(employees_data, config_data, history_data=[])
-    daily_tasks = scheduler.assign_tasks(schedule)
+    try:
+        daily_tasks = scheduler.assign_tasks(schedule)
+    except Exception as e:
+        print(f"Error in assign_tasks: {e}")
+        # Fallback to empty tasks instead of crashing
+        daily_tasks = {}
+
 
     existing_meta["daily_tasks"] = daily_tasks
     if special_days:
@@ -1356,6 +1444,50 @@ def _reassign_history_tasks_for_row(conn, row_id: int) -> dict:
         "daily_tasks": daily_tasks,
         "special_days": special_days,
     }
+
+
+@app.patch("/api/history/entry/{row_id}/task")
+def update_history_task(row_id: int, employee_name: str, day: str, task: str = None):
+    """Update or remove a specific cleaning task in a history entry."""
+    conn = plan_db.get_conn()
+    row = conn.execute(
+        "SELECT tareas, metadata FROM horarios_generados WHERE id = ? AND deleted = 0",
+        (row_id,),
+    ).fetchone()
+    
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Historial no encontrado")
+
+    try:
+        daily_tasks = json.loads(row["tareas"]) if row["tareas"] else {}
+        metadata = json.loads(row["metadata"]) if row["metadata"] else {}
+    except:
+        daily_tasks = {}
+        metadata = {}
+
+    if not isinstance(daily_tasks, dict):
+        daily_tasks = {}
+
+    if employee_name not in daily_tasks:
+        daily_tasks[employee_name] = {}
+    
+    if task and task.strip():
+        daily_tasks[employee_name][day] = task.strip()
+    else:
+        # Remove task
+        if day in daily_tasks[employee_name]:
+            daily_tasks[employee_name][day] = None
+
+    metadata["daily_tasks"] = daily_tasks
+
+    conn.execute(
+        "UPDATE horarios_generados SET tareas = ?, metadata = ? WHERE id = ?",
+        (json.dumps(daily_tasks, ensure_ascii=False), json.dumps(metadata, ensure_ascii=False), row_id),
+    )
+    conn.commit()
+    conn.close()
+    return {"status": "Updated", "daily_tasks": daily_tasks}
 
 
 @app.post("/api/history/entry/{row_id}/reassign_tasks")
@@ -1459,6 +1591,7 @@ EXCEL_EMPLOYEE_COLOR_MAP = {
     "Jensy": "D86DCD",
     "Keilor": "153D64",
     "Maikel": "8ED973",
+    "Natanael": "FF0000",
     "Alejandro": "D9EAD3",
     "Randall": "BFBFBF",
     "Steven": "F1A983",
@@ -1467,6 +1600,7 @@ EXCEL_EMPLOYEE_COLOR_MAP = {
 }
 EXCEL_EMPLOYEE_FONT_COLOR_MAP = {
     "Eligio": "FFFFFF",
+    "Natanael": "FFFFFF",
 }
 EXCEL_LIBRE_FILL = "FFFF00"
 
@@ -1637,120 +1771,6 @@ def _build_validation_rules_impl(special_days=None):
 def get_validation_rules():
     return _build_validation_rules_impl({})
 
-    db = load_db()
-    employees = db.get("employees", [])
-    
-    # Calculate standard_mode identical to scheduler_engine
-    from scheduler_engine import DAYS
-    active_count = 0
-    for e in employees:
-        if e.get('is_refuerzo', False) or e.get('name') == 'Refuerzo':
-            continue
-        fixed = e.get('fixed_shifts', {})
-        all_absent = all(fixed.get(d) in ['VAC', 'PERM'] for d in DAYS)
-        if not all_absent:
-            active_count += 1
-            
-    standard_mode = active_count >= 10
-    
-    from scheduler_engine import (
-        SHIFTS,
-        HOURS,
-        coverage_bounds,
-        effective_coverage_bounds,
-        get_overstaff_policy,
-        ensure_manual_shift_code,
-        sync_refuerzo_custom_shift,
-    )
-    sync_refuerzo_custom_shift(db.get("config", {}))
-    ensure_manual_shift_code(7, 12)
-    
-    # Precompute coverage matrix bounds: { "Dom": { "5": 2, "6": 2... } }
-    bounds = {}
-    max_bounds = {}
-    soft_bounds = {}  # Desired optimal coverage (for yellow warnings)
-    overstaff_policy = get_overstaff_policy()
-    for d in DAYS:
-        bounds[d] = {}
-        max_bounds[d] = {}
-        soft_bounds[d] = {}
-        for h in HOURS:
-            mn, _ = coverage_bounds(h, d, standard_mode)
-            _, effective_mx = effective_coverage_bounds(h, d, standard_mode)
-            bounds[d][h] = mn
-            max_bounds[d][h] = effective_mx
-            
-            # Soft targets (desired, not strictly enforced)
-            if d == "Dom" and standard_mode:
-                # Exact puzzle — no slack, soft = hard
-                soft_bounds[d][h] = mn
-            elif d == "Dom":
-                soft_bounds[d][h] = mn  # No specific soft targets on short-staffed Sunday
-            else:
-                # Weekdays: peak hours have soft target of 4
-                if 7 <= h <= 10 or 17 <= h <= 19:
-                    soft_bounds[d][h] = 4
-                elif h == 6:
-                    soft_bounds[d][h] = 3
-                else:
-                    soft_bounds[d][h] = mn  # Same as hard
-            
-    # Shift sets list conversion
-    shift_sets = {s: list(hours) for s, hours in SHIFTS.items()}
-    
-    shift_options = [
-        {"code": "AUTO", "label": "Auto"},
-        {"code": "VAC", "label": "VACACIONES"},
-        {"code": "PERM", "label": "PERMISO"},
-        {"code": "OFF", "label": "LIBRE"},
-    ]
-    shift_hours = {
-        "OFF": 0, "VAC": 0, "PERM": 0
-    }
-    if standard_mode:
-        sunday_allowed_shifts = [
-            "OFF",
-            "VAC",
-            "PERM",
-            "T1_05-13",
-            "T3_07-15",
-            "T8_13-20",
-            "D4_13-22",
-            "T10_15-22",
-            "N_22-05",
-        ]
-    else:
-        sunday_allowed_shifts = [
-            s for s in SHIFTS.keys()
-            if s not in ["AUTO"]
-        ]
-    
-    for s, hours in SHIFTS.items():
-        if s in ["OFF", "VAC", "PERM", "AUTO"]: continue
-        shift_hours[s] = len(hours)
-        if s == "N_22-05":
-            label = "Noche"
-        else:
-            parts = s.split("_")
-            label = parts[1] if len(parts) > 1 else s
-            if "+" in label: # For Q1_05-11+17-20 -> Q1
-                label = parts[0]
-        shift_options.append({"code": s, "label": label})
-    
-    return {
-        "shift_sets": shift_sets,
-        "shift_options": shift_options,
-        "shift_hours": shift_hours,
-        "bounds": bounds,
-        "max_bounds": max_bounds,
-        "soft_bounds": soft_bounds,
-        "sunday_allowed_shifts": sunday_allowed_shifts,
-        "overstaff_policy": overstaff_policy,
-        "standard_mode": standard_mode,
-        "active_employees": active_count
-    }
-
-
 @app.post("/api/validation_rules")
 def post_validation_rules(request: ValidationRulesRequest):
     return _build_validation_rules_impl(request.special_days)
@@ -1846,6 +1866,18 @@ def export_excel(history_index: Optional[int] = None, history_db_id: Optional[in
                     meta = {}
             week_dates = meta.get("week_dates")
     current_row = 1
+
+    # --- Fila de título: nombre del horario (A1:H1 unificada) ---
+    schedule_title = (selected_entry or {}).get("name", "") if selected_entry else ""
+    if schedule_title:
+        title_cell = ws.cell(row=current_row, column=1, value=schedule_title)
+        ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=8)
+        title_cell.font = Font(bold=True, color="2F5496", size=24)
+        title_cell.alignment = Alignment(horizontal="center", vertical="center")
+        ws.row_dimensions[current_row].height = 36
+        current_row += 1
+
+    # --- Fila de fechas ---
     if week_dates:
         date_font = Font(bold=True, color="2F5496", size=10)
         for day_idx, day in enumerate(DAYS, start=2):
@@ -1965,10 +1997,11 @@ def export_excel(history_index: Optional[int] = None, history_db_id: Optional[in
     separator_row = ws.max_row + 2
     
     ws.cell(row=separator_row, column=1, value="OBLIGACIONES / LIMPIEZA")
-    title_cell = ws.cell(row=separator_row, column=1)
-    title_cell.font = Font(bold=True, size=13, color="2F5496")
-    title_cell.alignment = Alignment(horizontal="left", vertical="center")
-    ws.merge_cells(start_row=separator_row, start_column=1, end_row=separator_row, end_column=9)
+    cleaning_title_cell = ws.cell(row=separator_row, column=1)
+    cleaning_title_cell.font = Font(bold=True, size=24, color="2F5496")
+    cleaning_title_cell.alignment = Alignment(horizontal="center", vertical="center")
+    ws.merge_cells(start_row=separator_row, start_column=1, end_row=separator_row, end_column=8)
+    ws.row_dimensions[separator_row].height = 36
     
     task_header_row = separator_row + 1
     task_headers = ["Colaborador"] + DAYS
@@ -2022,8 +2055,9 @@ def export_excel(history_index: Optional[int] = None, history_db_id: Optional[in
     # Save to temp
     suffix = ".xlsm" if use_vba else ".xlsx"
     export_base_name = "horario"
-    if history_index is not None:
-        export_base_name = _get_export_base_name(selected_entry, f"historial_{history_index + 1}")
+    if selected_entry:
+        fallback = f"historial_{history_index + 1}" if history_index is not None else "horario"
+        export_base_name = _get_export_base_name(selected_entry, fallback)
     filename = f"{export_base_name}{suffix}"
     
     # Save a local backup to EXPORT_DIR
@@ -2037,7 +2071,22 @@ def export_excel(history_index: Optional[int] = None, history_db_id: Optional[in
     tmp.close()
     wb.close()
     
-    return FileResponse(tmp.name, filename=filename)
+    return FileResponse(
+        tmp.name,
+        filename=filename,
+        headers={"X-Export-Local-Path": local_path},
+    )
+
+
+@app.post("/api/open_export_folder")
+def open_export_folder():
+    """Abre la carpeta de exportaciones en el explorador de archivos."""
+    if not os.path.isdir(EXPORT_DIR):
+        os.makedirs(EXPORT_DIR, exist_ok=True)
+    if os.name == "nt":
+        os.startfile(EXPORT_DIR)
+    return {"status": "ok", "path": EXPORT_DIR}
+
 
 @app.post("/api/export_image")
 def export_image(req: ImageExportRequest):
@@ -2067,6 +2116,8 @@ class PlanillaEmpleado(BaseModel):
     nombre: str
     tipo_pago: str
     salario_fijo: Optional[float] = None
+    # semanal | quincenal | mensual — el monto salario_fijo es el pago de ese período (solo tipo fijo)
+    periodo_salario_fijo: Optional[str] = "mensual"
     cedula: Optional[str] = None
     correo: Optional[str] = None
     telefono: Optional[str] = None
@@ -2081,6 +2132,7 @@ class PlanillaEmpleado(BaseModel):
     es_practicante: Optional[int] = 0
     strict_preferences: Optional[int] = 0
     activo: Optional[int] = 1
+    incluir_en_horario: Optional[int] = 1
     turnos_fijos: Optional[str] = "{}"
     pref_plantilla_id: Optional[int] = None
 
@@ -2093,6 +2145,7 @@ class PlanillaEmpleadoUpdate(BaseModel):
     nombre: str
     tipo_pago: str
     salario_fijo: Optional[float] = None
+    periodo_salario_fijo: Optional[str] = None
     cedula: Optional[str] = None
     correo: Optional[str] = None
     telefono: Optional[str] = None
@@ -2101,6 +2154,7 @@ class PlanillaEmpleadoUpdate(BaseModel):
     genero: Optional[str] = None
     puede_nocturno: Optional[int] = None
     activo: Optional[int] = None
+    incluir_en_horario: Optional[int] = None
     forced_libres: Optional[int] = None
     forced_quebrado: Optional[int] = None
     allow_no_rest: Optional[int] = None
@@ -2138,6 +2192,12 @@ class PlanillaVacacion(BaseModel):
     dias: float
     fecha_reingreso: Optional[str] = None
     notas: Optional[str] = None
+    solo_pago: bool = False
+    # Categorización del registro: 'periodo' (default), 'ajuste_historico'
+    # (días gozados antes de usar el sistema) o 'descuento_permiso'.
+    tipo: Optional[str] = None
+    # Año al que pertenece el período (default = año de fecha_inicio).
+    anio_periodo: Optional[int] = None
 
 class PlanillaTarifas(BaseModel):
     tarifa_diurna: float
@@ -2145,6 +2205,7 @@ class PlanillaTarifas(BaseModel):
     tarifa_mixta: float
     seguro_modo: str = "porcentual"  # porcentual | fijo
     seguro_valor: float  # tasa decimal (ej. 0.1067) o monto fijo en colones por semana
+    pagar_horas_extra: bool = True  # si False, el bruto de la planilla no incluye pago por filas de extras
 
 class PlanillaMes(BaseModel):
     anio: int
@@ -2171,8 +2232,8 @@ def get_planillas_empleados(solo_activos: bool = True):
 @app.post("/api/planillas/empleados")
 def add_planilla_empleado(emp: PlanillaEmpleado):
     ok, msg = plan_db.add_empleado(
-        emp.nombre, emp.tipo_pago, emp.salario_fijo, 
-        cedula=emp.cedula, correo=emp.correo, 
+        emp.nombre, emp.tipo_pago, emp.salario_fijo,
+        cedula=emp.cedula, correo=emp.correo,
         telefono=emp.telefono, fecha_inicio=emp.fecha_inicio,
         aplica_seguro=emp.aplica_seguro, genero=emp.genero,
         puede_nocturno=emp.puede_nocturno,
@@ -2181,6 +2242,8 @@ def add_planilla_empleado(emp: PlanillaEmpleado):
         es_practicante=emp.es_practicante,
         strict_preferences=emp.strict_preferences, turnos_fijos=emp.turnos_fijos,
         pref_plantilla_id=emp.pref_plantilla_id,
+        incluir_en_horario=emp.incluir_en_horario,
+        periodo_salario_fijo=emp.periodo_salario_fijo,
     )
     if not ok:
         raise HTTPException(status_code=400, detail=msg)
@@ -2296,12 +2359,15 @@ def get_planillas_vacaciones(emp_id: int):
     if emp_data:
         fi = emp_data.get("fecha_inicio")
         acumulados = plan_db.calcular_dias_vacaciones(fi) if fi else 0
-        tomados = plan_db.total_dias_vacaciones_tomados(emp_id)
+        desglose = plan_db.desglose_vacaciones_empleado(emp_id)
+        # 'tomados' (compatible) = todo lo que descuenta saldo
+        tomados = desglose["descuento_saldo_total"]
         return {
             "registros": vacs,
             "acumulados": acumulados,
             "tomados": tomados,
-            "disponibles": max(0, acumulados - tomados)
+            "disponibles": max(0, acumulados - tomados),
+            "desglose": desglose,
         }
     return {"registros": vacs}
 
@@ -2309,7 +2375,8 @@ def get_planillas_vacaciones(emp_id: int):
 def add_planilla_vacacion(vac: PlanillaVacacion):
     plan_db.add_vacacion(
         vac.empleado_id, vac.fecha_inicio, vac.fecha_fin, vac.dias,
-        fecha_reingreso=vac.fecha_reingreso, notas=vac.notas
+        fecha_reingreso=vac.fecha_reingreso, notas=vac.notas, solo_pago=vac.solo_pago,
+        tipo=getattr(vac, "tipo", None), anio_periodo=getattr(vac, "anio_periodo", None),
     )
     return {"status": "success"}
 
@@ -2322,7 +2389,8 @@ def delete_planilla_vacacion(vac_id: int):
 def update_planilla_vacacion(vac_id: int, vac: PlanillaVacacion):
     plan_db.update_vacacion(
         vac_id, vac.fecha_inicio, vac.fecha_fin, vac.dias,
-        fecha_reingreso=vac.fecha_reingreso, notas=vac.notas
+        fecha_reingreso=vac.fecha_reingreso, notas=vac.notas, solo_pago=vac.solo_pago,
+        tipo=getattr(vac, "tipo", None), anio_periodo=getattr(vac, "anio_periodo", None),
     )
     return {"status": "success"}
 
@@ -2341,9 +2409,18 @@ def get_planillas_permisos(emp_id: int, anio: Optional[int] = None):
 @app.post("/api/planillas/permisos")
 def add_planilla_permiso(perm: PlanillaPermiso):
     permiso_id = plan_db.add_permiso(
-        perm.empleado_id, perm.fecha, motivo=perm.motivo, notas=perm.notas
+        perm.empleado_id, perm.fecha, motivo=perm.motivo, notas=perm.notas,
+        fecha_fin=perm.fecha_fin, horas=perm.horas or 0,
     )
     return {"status": "success", "id": permiso_id}
+
+@app.put("/api/planillas/permisos/{permiso_id}")
+def update_planilla_permiso(permiso_id: int, perm: PlanillaPermiso):
+    plan_db.update_permiso(
+        permiso_id, perm.fecha, motivo=perm.motivo, notas=perm.notas,
+        fecha_fin=perm.fecha_fin, horas=perm.horas or 0,
+    )
+    return {"status": "success"}
 
 @app.delete("/api/planillas/permisos/{permiso_id}")
 def delete_planilla_permiso(permiso_id: int, restaurar: bool = True):
@@ -2888,7 +2965,12 @@ def update_planillas_tarifas(t: PlanillaTarifas):
     if modo not in ("porcentual", "fijo"):
         raise HTTPException(status_code=400, detail="seguro_modo debe ser 'porcentual' o 'fijo'.")
     plan_db.set_tarifas(
-        t.tarifa_diurna, t.tarifa_nocturna, t.tarifa_mixta, modo, float(t.seguro_valor)
+        t.tarifa_diurna,
+        t.tarifa_nocturna,
+        t.tarifa_mixta,
+        modo,
+        float(t.seguro_valor),
+        1 if t.pagar_horas_extra else 0,
     )
     return {"status": "success"}
 
@@ -2996,9 +3078,10 @@ def agregar_semana(s: PlanillaSemana):
     num = pl_module.contar_semanas(wb) + 1
     sem_num = pl_module.num_semana_anual(viernes_date)
     
+    _cfg_plan = load_db()
     nombre_hoja, gran_row, section_totals = pl_module.crear_hoja_semanal(
         wb, num, viernes_date, empleados, tarifas=tarifas,
-        holiday_dates=db.get("config", {}).get("holidays", [])
+        holiday_dates=_cfg_plan.get("config", {}).get("holidays", []),
     )
     pl_module.crear_resumen_semanal(wb, nombre_hoja, sem_num, viernes_date)
     pl_module.crear_resumen_mensual(wb)
@@ -3115,9 +3198,10 @@ def agregar_semana_a_mes_historico(mes_id: int, s: PlanillaSemana):
     num = pl_module.contar_semanas(wb) + 1
     sem_num = pl_module.num_semana_anual(viernes_date)
 
+    _cfg_plan_h = load_db()
     nombre_hoja, gran_row, section_totals = pl_module.crear_hoja_semanal(
         wb, num, viernes_date, empleados, tarifas=tarifas,
-        holiday_dates=db.get("config", {}).get("holidays", [])
+        holiday_dates=_cfg_plan_h.get("config", {}).get("holidays", []),
     )
     pl_module.crear_resumen_semanal(wb, nombre_hoja, sem_num, viernes_date)
     pl_module.crear_resumen_mensual(wb)
@@ -3133,6 +3217,17 @@ def agregar_semana_a_mes_historico(mes_id: int, s: PlanillaSemana):
 def get_horarios_disponibles():
     horarios = horario_db.get_horarios_generados()
     return {"status": "success", "horarios": horarios}
+
+
+@app.put("/api/planillas/horarios/{horario_id}/tareas")
+def update_horario_tareas_endpoint(horario_id: int, tareas: Dict[str, Any]):
+    """Actualiza las tareas de limpieza de un horario existente."""
+    horario = horario_db.get_horario_por_id(horario_id)
+    if not horario:
+        raise HTTPException(status_code=404, detail="Horario no encontrado")
+    horario_db.update_horario_tareas(horario_id, tareas)
+    return {"status": "success", "message": "Tareas actualizadas"}
+
 
 @app.post("/api/planillas/semanas/importar")
 def importar_horario_semana(req: PlanillaImportarHorario):
@@ -3174,12 +3269,23 @@ def importar_horario_semana(req: PlanillaImportarHorario):
             if emp_nombre in emp_map:
                 bruto = h.get("salario_bruto")
                 if bruto is None:
-                    bruto = (h["diurnas"] * tarifas["tarifa_diurna"]) + \
-                            (h["mixtas"] * tarifas["tarifa_mixta"]) + \
-                            (h["nocturnas"] * tarifas["tarifa_nocturna"]) + \
-                            (h["extra"] * (tarifas["tarifa_diurna"] * 1.5)) + \
-                            float(h.get("recargo_feriado") or 0)
-                
+                    td = float(tarifas["tarifa_diurna"])
+                    tm = float(tarifas["tarifa_mixta"])
+                    tn = float(tarifas["tarifa_nocturna"])
+                    bruto = (
+                        h["diurnas"] * td
+                        + h["mixtas"] * tm
+                        + h["nocturnas"] * tn
+                        + float(h.get("recargo_feriado") or 0)
+                    )
+                    if int(tarifas.get("pagar_horas_extra") or 1):
+                        ed = float(h.get("extra_diurnas") or 0)
+                        em = float(h.get("extra_mixtas") or 0)
+                        en = float(h.get("extra_nocturnas") or 0)
+                        if ed + em + en == 0:
+                            ed = float(h.get("extra") or 0)
+                        bruto += ed * td * 1.5 + em * tm * 1.5 + en * tn * 1.5
+
                 plan_db.guardar_salario_semanal(
                     emp_map[emp_nombre], emp_nombre,
                     mes_activo["anio"], mes_activo["mes"], sem_num, bruto
@@ -3237,11 +3343,22 @@ def importar_horario_semana_historico(mes_id: int, semana_nombre: str, req: Plan
             if emp_nombre in emp_map:
                 bruto = h.get("salario_bruto")
                 if bruto is None:
-                    bruto = (h["diurnas"] * tarifas["tarifa_diurna"]) + \
-                            (h["mixtas"] * tarifas["tarifa_mixta"]) + \
-                            (h["nocturnas"] * tarifas["tarifa_nocturna"]) + \
-                            (h["extra"] * (tarifas["tarifa_diurna"] * 1.5)) + \
-                            float(h.get("recargo_feriado") or 0)
+                    td = float(tarifas["tarifa_diurna"])
+                    tm = float(tarifas["tarifa_mixta"])
+                    tn = float(tarifas["tarifa_nocturna"])
+                    bruto = (
+                        h["diurnas"] * td
+                        + h["mixtas"] * tm
+                        + h["nocturnas"] * tn
+                        + float(h.get("recargo_feriado") or 0)
+                    )
+                    if int(tarifas.get("pagar_horas_extra") or 1):
+                        ed = float(h.get("extra_diurnas") or 0)
+                        em = float(h.get("extra_mixtas") or 0)
+                        en = float(h.get("extra_nocturnas") or 0)
+                        if ed + em + en == 0:
+                            ed = float(h.get("extra") or 0)
+                        bruto += ed * td * 1.5 + em * tm * 1.5 + en * tn * 1.5
 
                 plan_db.guardar_salario_semanal(
                     emp_map[emp_nombre], emp_nombre,
@@ -3333,8 +3450,12 @@ class DocAmonestacion(BaseModel):
 class DocVacacionesReq(BaseModel):
     emp_id: int
     tipo: str  # 'total' or 'parcial'
-    fecha_inicio: str
-    fecha_reingreso: str
+    fecha_inicio: str = ""
+    fecha_reingreso: str = ""
+    solo_pago: bool = False
+    modo_periodo: bool = False
+    periodo_texto: str = ""
+    dias_periodo: float = 0.0
 
 class DocLiquidacion(BaseModel):
     emp_id: int
@@ -3373,9 +3494,36 @@ def generar_doc_amonestacion(req: DocAmonestacion):
 @app.post("/api/utilidades/vacaciones")
 def generar_doc_vacaciones(req: DocVacacionesReq):
     nombre, cedula = _get_emp_info(req.emp_id)
+    
+    # Calculate payout based on base tariff from planillas settings
+    total_pagar = 0.0
+    tarifa_diurna = 0.0
+    horas_totales = 0.0
+    if req.solo_pago:
+        try:
+            if req.modo_periodo:
+                dias_calculados = float(req.dias_periodo)
+            else:
+                from datetime import datetime
+                dt_inicio = datetime.strptime(req.fecha_inicio, "%Y-%m-%d")
+                dt_reingreso = datetime.strptime(req.fecha_reingreso, "%Y-%m-%d")
+                dias_calculados = (dt_reingreso - dt_inicio).days
+            
+            tarifas = plan_db.get_tarifas()
+            tarifa_diurna = float(tarifas.get("tarifa_diurna", 0.0))
+            horas_totales = dias_calculados * 8.0
+            total_pagar = horas_totales * tarifa_diurna
+        except Exception:
+            pass
+
     logo = os.path.join(_planillas_dir, "logo.png")
     base = _runtime_root
-    path = docx_generator.generar_vacaciones(nombre, cedula, req.tipo, req.fecha_inicio, req.fecha_reingreso, logo, base)
+    path = docx_generator.generar_vacaciones(
+        nombre, cedula, req.tipo, req.fecha_inicio, req.fecha_reingreso, 
+        logo, base, solo_pago=req.solo_pago, total_pagar=total_pagar,
+        modo_periodo=req.modo_periodo, periodo_texto=req.periodo_texto, dias_periodo=req.dias_periodo,
+        tarifa_diurna=tarifa_diurna, horas_totales=horas_totales
+    )
     return {"status": "success", "path": path}
 
 @app.post("/api/utilidades/despido")

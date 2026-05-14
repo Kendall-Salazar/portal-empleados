@@ -544,6 +544,57 @@ th.th-closed {
     background: rgba(239, 68, 68, 0.2) !important;
 }
 
+/* Mismo día: cerrado (planilla) + feriado — CERRADO y estrella conviven */
+th.th-day-col.th-closed.th-holiday {
+    background: linear-gradient(135deg, rgba(239, 68, 68, 0.12) 0%, rgba(245, 158, 11, 0.14) 100%) !important;
+    border-bottom: 3px solid;
+    border-image: linear-gradient(90deg, #ef4444 0%, #f59e0b 100%) 1;
+}
+
+.dark-mode th.th-day-col.th-closed.th-holiday {
+    background: linear-gradient(135deg, rgba(239, 68, 68, 0.22) 0%, rgba(245, 158, 11, 0.2) 100%) !important;
+}
+
+/* Cabeceras de días (Vie–Jue): centradas con estrella / badges alineados */
+th.th-day-col {
+    text-align: center;
+    vertical-align: middle;
+}
+
+.th-day-col-inner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+    text-align: center;
+    line-height: 1.2;
+}
+
+.th-day-col-inner .th-day-name {
+    display: block;
+    font-size: inherit;
+    letter-spacing: inherit;
+    text-transform: uppercase;
+}
+
+.th-day-head-badge-closed {
+    display: inline-block;
+    background: #ef4444;
+    color: white;
+    font-size: 0.6rem;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+}
+
+.th-day-head-star {
+    color: #f59e0b;
+    font-size: 0.7rem;
+    line-height: 1;
+}
+
 /* Holiday column cells get subtle tint */
 td.holiday-col {
     background: rgba(245, 158, 11, 0.03);
@@ -551,6 +602,14 @@ td.holiday-col {
 
 .dark-mode td.holiday-col {
     background: rgba(245, 158, 11, 0.06);
+}
+
+td.closed-col.holiday-col {
+    background: linear-gradient(135deg, rgba(239, 68, 68, 0.04) 0%, rgba(245, 158, 11, 0.055) 100%);
+}
+
+.dark-mode td.closed-col.holiday-col {
+    background: linear-gradient(135deg, rgba(239, 68, 68, 0.1) 0%, rgba(245, 158, 11, 0.1) 100%);
 }
 
 /* Closed day column cells get subtle red tint */
@@ -748,6 +807,64 @@ tr:hover td {
 
 .dark-mode .pill-off {
     background: repeating-linear-gradient(45deg, transparent, transparent 10px, rgba(255, 255, 255, 0.03) 10px, rgba(255, 255, 255, 0.03) 20px);
+}
+
+/* Día marcado como cerrado en planilla + sin turno (no es "LIBRE") */
+.shift-pill.pill-closed-establishment {
+    background: linear-gradient(145deg, rgba(254, 226, 226, 0.98), rgba(254, 202, 202, 0.92));
+    color: #7f1d1d;
+    border: 1px solid #f87171;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45);
+    opacity: 1;
+    scale: 1;
+    gap: 0.2rem;
+}
+
+.shift-pill.pill-closed-establishment .pill-icon {
+    color: #dc2626;
+    font-size: 1.05rem;
+}
+
+.shift-pill.pill-closed-establishment .pill-time {
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: none;
+    font-size: 0.82rem;
+}
+
+.pill-closed-hint {
+    display: block;
+    font-size: 0.62rem;
+    font-weight: 600;
+    line-height: 1.25;
+    opacity: 0.9;
+    color: #991b1b;
+    max-width: 100%;
+    padding: 0 0.15rem;
+}
+
+.pill-closed-inline-label {
+    font-size: 0.62rem;
+    font-weight: 700;
+    color: #b91c1c;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-top: 1px;
+}
+
+.dark-mode .shift-pill.pill-closed-establishment {
+    background: linear-gradient(145deg, rgba(69, 10, 10, 0.92), rgba(127, 29, 29, 0.88));
+    color: #fecaca;
+    border-color: #dc2626;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.dark-mode .pill-closed-hint {
+    color: #fca5a5;
+}
+
+.dark-mode .pill-closed-inline-label {
+    color: #fecaca;
 }
 
 .pill-vac {
@@ -1707,6 +1824,14 @@ select:focus {
     background-color: #065f46;
 }
 
+/* Modal feriado (historial): el checkbox debe cubrir el slider para que el clic registre bien */
+#holidayModal .toggle-container .toggle-checkbox {
+    width: 100%;
+    height: 100%;
+    inset: 0;
+    z-index: 2;
+}
+
 /* Segmented Control & Gender Pills */
 .segmented-control {
     display: flex;
@@ -1799,6 +1924,21 @@ select:focus {
 
 .hidden {
     display: none !important;
+}
+
+/* Day checkbox styles for Refuerzo manual days */
+.day-checkbox input:checked + .day-checkbox-label {
+    background: var(--accent-color, #6366f1);
+    color: white;
+    border-color: var(--accent-color, #6366f1);
+}
+
+.day-checkbox-label {
+    transition: all 0.2s ease;
+}
+
+.day-checkbox-label:hover {
+    background: rgba(99, 102, 241, 0.1);
 }
 
 /* Modal Overlay */
@@ -3687,30 +3827,10 @@ select:focus {
     }
 }
 
-/* Reopen floating button (shown after overlay is minimized) */
+/* Floating reopen pill: removed in favor of unified control via the main
+   "Validación" button. Kept selector hidden for legacy DOM safety. */
 .validator-reopen-btn {
-    position: fixed;
-    bottom: 1.5rem;
-    right: 1.5rem;
-    z-index: 8990;
-    background: var(--primary);
-    color: white;
-    border: none;
-    border-radius: 999px;
-    padding: 0.6rem 1.2rem;
-    font-size: 0.85rem;
-    font-weight: 700;
-    display: none;
-    align-items: center;
-    gap: 0.5rem;
-    cursor: pointer;
-    box-shadow: 0 4px 20px rgba(99, 102, 241, 0.45);
-    transition: transform 0.2s, box-shadow 0.2s;
-}
-
-.validator-reopen-btn:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 28px rgba(99, 102, 241, 0.55);
+    display: none !important;
 }
 
 /* =======================================================================
@@ -6693,4 +6813,1079 @@ select:focus {
 .dark-mode .gen-jefe-base-card {
     background: var(--surface-1);
     border-color: var(--border-color);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   EXCEL IMPORT MODAL — PREMIUM COMPONENTS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Sheet selector container — flex-wrap for pill chips */
+#importHorarioExcelSheetList {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    padding: 0.5rem 0;
+    min-height: 40px;
+}
+
+/* Individual sheet chip */
+.excel-sheet-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.35rem 0.9rem;
+    border-radius: 999px;
+    font-size: var(--fs-sm, 0.78rem);
+    font-weight: 600;
+    cursor: pointer;
+    user-select: none;
+    border: 1.5px solid var(--border-strong);
+    background: var(--surface, #fff);
+    color: var(--text-muted);
+    transition: all var(--transition, 0.18s ease);
+    box-shadow: var(--shadow-sm);
+    letter-spacing: 0.01em;
+}
+
+.excel-sheet-chip:hover {
+    border-color: var(--primary);
+    color: var(--primary);
+    background: var(--primary-subtle);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.18);
+}
+
+.excel-sheet-chip.selected {
+    background: linear-gradient(135deg, var(--primary) 0%, #7c3aed 100%);
+    border-color: var(--primary);
+    color: #fff;
+    box-shadow: 0 4px 14px rgba(79, 70, 229, 0.35);
+}
+
+.excel-sheet-chip.selected:hover {
+    filter: brightness(1.1);
+    color: #fff;
+}
+
+.dark-mode .excel-sheet-chip {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: var(--border-strong);
+    color: var(--text-muted);
+}
+
+.dark-mode .excel-sheet-chip.selected {
+    background: linear-gradient(135deg, var(--primary) 0%, #7c3aed 100%);
+    color: #fff;
+}
+
+/* Draft preview card */
+.import-excel-draft-card {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg, 14px);
+    padding: 1.1rem;
+    margin-bottom: 1.25rem;
+    box-shadow: var(--shadow-sm);
+    transition: border-color var(--transition);
+}
+
+.import-excel-draft-card:hover {
+    border-color: var(--primary);
+}
+
+/* Cleaning tasks preview block */
+.import-tasks-preview {
+    margin-top: 1rem;
+    background: var(--primary-subtle);
+    border: 1px solid rgba(99, 102, 241, 0.25);
+    border-radius: var(--radius-md, 10px);
+    padding: 0.75rem 1rem;
+    overflow: hidden;
+}
+
+.import-tasks-title {
+    font-size: var(--fs-sm, 0.78rem);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--primary);
+    margin-bottom: 0.6rem;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.import-tasks-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+}
+
+.import-tasks-row {
+    display: grid;
+    grid-template-columns: 140px repeat(7, 1fr);
+    gap: 0.25rem;
+    align-items: center;
+}
+
+.import-tasks-emp {
+    font-size: var(--fs-xs, 0.68rem);
+    font-weight: 600;
+    color: var(--text-main);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.import-tasks-cell {
+    font-size: 0.62rem;
+    text-align: center;
+    padding: 0.25rem 0.1rem;
+    border-radius: 6px;
+    color: var(--text-dim);
+    background: transparent;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.import-tasks-cell.has-task {
+    background: rgba(16, 185, 129, 0.12);
+    color: #065f46;
+    font-weight: 600;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.dark-mode .import-tasks-preview {
+    background: rgba(99, 102, 241, 0.08);
+    border-color: rgba(99, 102, 241, 0.2);
+}
+
+.dark-mode .import-tasks-cell.has-task {
+    background: rgba(16, 185, 129, 0.15);
+    color: #a7f3d0;
+    border-color: rgba(16, 185, 129, 0.25);
+}
+
+/* Colores específicos por tipo de tarea en la grilla de preview de limpieza */
+.import-tasks-cell.has-task.itc-banos {
+    background: rgba(180, 83, 9, 0.1);
+    color: #b45309;
+    border-color: rgba(180, 83, 9, 0.25);
+}
+.import-tasks-cell.has-task.itc-tanques {
+    background: rgba(29, 78, 216, 0.1);
+    color: #1d4ed8;
+    border-color: rgba(29, 78, 216, 0.25);
+}
+.import-tasks-cell.has-task.itc-oficina {
+    background: rgba(190, 24, 93, 0.1);
+    color: #be185d;
+    border-color: rgba(190, 24, 93, 0.25);
+}
+.dark-mode .import-tasks-cell.has-task.itc-banos {
+    background: rgba(251, 191, 36, 0.13);
+    color: #fbbf24;
+    border-color: rgba(251, 191, 36, 0.25);
+}
+.dark-mode .import-tasks-cell.has-task.itc-tanques {
+    background: rgba(96, 165, 250, 0.13);
+    color: #60a5fa;
+    border-color: rgba(96, 165, 250, 0.25);
+}
+.dark-mode .import-tasks-cell.has-task.itc-oficina {
+    background: rgba(244, 114, 182, 0.13);
+    color: #f472b6;
+    border-color: rgba(244, 114, 182, 0.25);
+}
+
+/* Manual week entry table */
+.manual-week-table td,
+.manual-week-table th {
+    padding: 4px 5px;
+    white-space: nowrap;
+    vertical-align: top;
+}
+
+.manual-week-table .manual-shift-sel {
+    display: block;
+    width: 100%;
+    min-width: 90px;
+    font-size: 0.72rem;
+    padding: 2px 4px;
+    border-radius: 6px;
+    background: var(--bg-app);
+    border: 1px solid var(--border);
+    color: var(--text-main);
+    cursor: pointer;
+}
+
+.manual-week-table .manual-task-sel {
+    display: block;
+    width: 100%;
+    min-width: 90px;
+    font-size: 0.68rem;
+    padding: 1px 3px;
+    margin-top: 3px;
+    border-radius: 5px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    cursor: pointer;
+}
+
+#importManualWeekSection {
+    border-top: 1px solid var(--border);
+    margin-top: 18px;
+    padding-top: 14px;
+}
+
+#importManualWeekForm .input-group label {
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+    display: block;
+}
+
+.manual-emp-name-input {
+    width: 100%;
+    font-size: 0.78rem;
+    padding: 3px 6px;
+    border-radius: 6px;
+    background: var(--bg-app);
+    border: 1px solid var(--primary, #6366f1);
+    color: var(--text-main);
+}
+
+.manual-custom-time {
+    display: none;
+    width: 100%;
+    font-size: 0.68rem;
+    padding: 2px 4px;
+    margin-top: 2px;
+    border-radius: 5px;
+    background: var(--bg-app);
+    border: 1px solid var(--primary, #6366f1);
+    color: var(--text-main);
+}
+/* ================================
+   Sort Mode Indicator — Column Header
+   ================================ */
+
+/* Columna de empleado clickeable: feedback hover */
+th[id^="th-collaborator"] {
+    transition: background 0.15s ease;
+}
+th[id^="th-collaborator"]:hover {
+    background: rgba(99, 102, 241, 0.08);
+}
+
+/* Ícono de ordenamiento: por hora (reloj) */
+.sort-active-time {
+    color: #6366f1;
+    opacity: 0.85;
+    animation: sort-icon-pulse 0.25s ease;
+}
+
+/* Ícono de ordenamiento: alfabético */
+.sort-active-alpha {
+    color: #10b981;
+    opacity: 0.85;
+    animation: sort-icon-pulse 0.25s ease;
+}
+
+@keyframes sort-icon-pulse {
+    0%   { transform: scale(0.7); opacity: 0.3; }
+    100% { transform: scale(1);   opacity: 0.85; }
+}
+
+/* =======================================================================
+   MANUAL SCHEDULE EDITOR — design system aligned
+   ======================================================================= */
+#overlay-manual-schedule .ms-overlay-content {
+    max-width: 1400px;
+    padding: 1.75rem 2rem 2.5rem;
+    gap: 1.25rem;
+}
+
+/* HERO */
+.ms-hero {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 1rem;
+    padding: 1.25rem 1.5rem;
+    background: linear-gradient(135deg,
+        rgba(99, 102, 241, 0.08) 0%,
+        rgba(139, 92, 246, 0.06) 100%);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+}
+
+.ms-hero-left {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.ms-hero-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.25rem;
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.35);
+    flex-shrink: 0;
+}
+
+.ms-hero-title {
+    margin: 0;
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: var(--text-main);
+    letter-spacing: -0.01em;
+}
+
+.ms-hero-subtitle {
+    margin: 0.25rem 0 0;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    line-height: 1.45;
+    max-width: 540px;
+}
+
+.ms-hero-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+/* CARDS */
+.ms-card {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+}
+
+.ms-meta-card {
+    padding: 1rem 1.25rem 1.1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+}
+
+.ms-meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    align-items: flex-end;
+}
+
+/* FIELDS */
+.ms-field {
+    flex: 1 1 220px;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.ms-field label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-bottom: 0.4rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    letter-spacing: 0.01em;
+    text-transform: uppercase;
+}
+
+.ms-field label i {
+    color: var(--primary);
+    font-size: 0.78em;
+}
+
+.ms-input {
+    width: 100%;
+    padding: 0.6rem 0.75rem;
+    font-size: 0.9rem;
+    border-radius: 9px;
+    background: var(--bg-app);
+    border: 1px solid var(--border);
+    color: var(--text-main);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    box-sizing: border-box;
+}
+
+.ms-input:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.16);
+}
+
+/* STATS chip */
+.ms-stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 0.55rem 1rem;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    min-width: 70px;
+}
+
+.ms-stat-num {
+    font-size: 1.35rem;
+    font-weight: 800;
+    color: var(--primary);
+    line-height: 1;
+}
+
+.ms-stat-lbl {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-top: 2px;
+}
+
+/* TOOLBAR */
+.ms-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+    padding-top: 0.65rem;
+    border-top: 1px dashed var(--border);
+}
+
+.ms-toolbar-divider {
+    width: 1px;
+    height: 22px;
+    background: var(--border);
+    margin: 0 0.25rem;
+}
+
+.ms-status {
+    margin-left: auto;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    padding: 0 0.5rem;
+    min-height: 1.1rem;
+}
+
+/* BUTTONS */
+.ms-btn {
+    appearance: none;
+    border: 1px solid var(--border);
+    background: var(--bg-panel);
+    color: var(--text-main);
+    padding: 0.5rem 0.85rem;
+    border-radius: 9px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+}
+
+.ms-btn:hover {
+    border-color: var(--primary);
+    background: rgba(99, 102, 241, 0.08);
+    transform: translateY(-1px);
+}
+
+.ms-btn i {
+    font-size: 0.85em;
+    color: var(--text-muted);
+    transition: color 0.15s ease;
+}
+
+.ms-btn:hover i {
+    color: var(--primary);
+}
+
+.ms-btn-ghost {
+    background: transparent;
+}
+
+.ms-btn-primary {
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    border-color: transparent;
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
+}
+
+.ms-btn-primary i {
+    color: #fff;
+}
+
+.ms-btn-primary:hover {
+    background: linear-gradient(135deg, #4f46e5, #7c3aed);
+    color: #fff;
+    box-shadow: 0 4px 14px rgba(99, 102, 241, 0.45);
+}
+
+.ms-btn-primary:hover i { color: #fff; }
+
+.ms-btn-toggle.is-active {
+    background: rgba(99, 102, 241, 0.12);
+    border-color: var(--primary);
+    color: var(--primary);
+}
+
+.ms-btn-toggle.is-active i {
+    color: var(--primary);
+}
+
+/* GRID / TABLE */
+.ms-grid-card {
+    padding: 0;
+}
+
+.ms-grid-wrap {
+    overflow-x: auto;
+    padding: 0.25rem;
+}
+
+.ms-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    background: transparent;
+    min-width: 980px;
+}
+
+.ms-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--surface-2);
+    color: var(--text-main);
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 0.85rem 0.5rem;
+    text-align: center;
+    border-bottom: 1px solid var(--border);
+    user-select: none;
+}
+
+.ms-table thead th[data-day] {
+    min-width: 120px;
+}
+
+.ms-table thead th.manual-sched-day-clickable {
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.ms-table thead th.manual-sched-day-clickable:hover {
+    background: rgba(99, 102, 241, 0.1);
+}
+
+.ms-table thead th.th-closed {
+    background: rgba(239, 68, 68, 0.16);
+    color: #ef4444;
+}
+
+.ms-table thead th.th-holiday {
+    background: rgba(245, 158, 11, 0.16);
+    color: #d97706;
+}
+
+.ms-table tbody td {
+    padding: 0.5rem 0.45rem;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+    text-align: center;
+    background: transparent;
+    transition: background 0.15s ease;
+}
+
+.ms-table tbody tr:hover td {
+    background: rgba(99, 102, 241, 0.04);
+}
+
+.ms-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.ms-table .ms-col-name {
+    text-align: left;
+    min-width: 180px;
+    padding-left: 1rem !important;
+}
+
+.ms-table tbody td.ms-name-cell {
+    text-align: left;
+    padding-left: 1rem;
+}
+
+.ms-name-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.55rem;
+    font-weight: 600;
+    color: var(--text-main);
+    font-size: 0.9rem;
+    line-height: 1.2;
+}
+
+.ms-name-avatar {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    color: #fff;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.72rem;
+    font-weight: 700;
+    flex-shrink: 0;
+}
+
+.ms-table .ms-col-hours {
+    min-width: 70px;
+    font-weight: 700;
+    color: var(--primary);
+}
+
+.ms-table .ms-col-action {
+    width: 36px;
+}
+
+.ms-table .ms-cell-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    align-items: stretch;
+}
+
+.ms-table select.manual-shift-sel,
+.ms-table select.manual-task-sel {
+    width: 100%;
+    min-width: 100px;
+    font-size: 0.78rem;
+    padding: 5px 8px;
+    border-radius: 7px;
+    background: var(--bg-app);
+    border: 1px solid var(--border);
+    color: var(--text-main);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    cursor: pointer;
+}
+
+.ms-table select.manual-shift-sel:focus,
+.ms-table select.manual-task-sel:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.18);
+}
+
+.ms-table select.manual-task-sel {
+    background: var(--surface-2);
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    padding: 4px 7px;
+}
+
+.ms-table input.manual-custom-time {
+    width: 100%;
+    font-size: 0.75rem;
+    padding: 5px 8px;
+    border-radius: 6px;
+    background: var(--bg-app);
+    border: 1px solid var(--primary);
+    color: var(--text-main);
+}
+
+.ms-table .manual-row-del {
+    appearance: none;
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 0.85rem;
+    padding: 6px 8px;
+    border-radius: 6px;
+    transition: all 0.15s ease;
+}
+
+.ms-table .manual-row-del:hover {
+    background: rgba(239, 68, 68, 0.12);
+    border-color: rgba(239, 68, 68, 0.25);
+    color: #ef4444;
+}
+
+.ms-name-input {
+    width: 100%;
+    padding: 0.45rem 0.65rem;
+    font-size: 0.88rem;
+    border-radius: 7px;
+    background: var(--bg-app);
+    border: 1px solid var(--border);
+    color: var(--text-main);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.ms-name-input:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.16);
+}
+
+.ms-day-date-badge {
+    display: block;
+    margin-top: 3px;
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    font-weight: 500;
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+.ms-day-mini-badge {
+    display: inline-block;
+    margin-left: 4px;
+    font-size: 0.55rem;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+}
+
+.ms-day-mini-badge.closed {
+    background: rgba(239, 68, 68, 0.18);
+    color: #ef4444;
+}
+
+.ms-day-mini-badge.holiday {
+    background: rgba(245, 158, 11, 0.18);
+    color: #d97706;
+}
+
+.ms-table .col-hours.hidden-col,
+.ms-table .ms-col-hours.hidden-col {
+    display: none;
+}
+
+@media (max-width: 760px) {
+    .ms-hero { padding: 1rem; }
+    .ms-hero-icon { width: 40px; height: 40px; }
+    .ms-hero-title { font-size: 1rem; }
+    .ms-hero-subtitle { display: none; }
+    .ms-meta-card { padding: 0.85rem; }
+    .ms-toolbar .ms-status { display: none; }
+}
+
+/* =======================================================================
+   VACACIONES + PERMISOS — modal styling refresh
+   ======================================================================= */
+.vac-modal-dialog .modal-body-scroll {
+    padding: 1.25rem 1.5rem 1.5rem;
+}
+
+.vac-input,
+.vac-textarea {
+    width: 100%;
+    padding: 0.65rem 0.8rem;
+    border-radius: 9px;
+    background: var(--bg-app);
+    border: 1px solid var(--border);
+    color: var(--text-main);
+    font-size: 0.9rem;
+    font-family: inherit;
+    box-sizing: border-box;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.vac-input:focus,
+.vac-textarea:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+}
+
+.vac-textarea {
+    resize: vertical;
+    min-height: 64px;
+    line-height: 1.4;
+}
+
+.vac-form-error {
+    margin-top: 0.7rem;
+    padding: 0.55rem 0.75rem;
+    color: #ef4444;
+    background: rgba(239, 68, 68, 0.08);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    border-radius: 8px;
+    font-size: 0.82rem;
+}
+
+/* TYPE SELECTOR (Período actual / Ajuste histórico) */
+.vac-type-selector {
+    margin-bottom: 1.1rem;
+}
+
+.vac-type-label {
+    display: block;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-bottom: 0.55rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.vac-type-options {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.6rem;
+}
+
+.vac-type-option {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    padding: 0.7rem 0.85rem;
+    background: var(--bg-app);
+    border: 1.5px solid var(--border);
+    border-radius: 11px;
+    cursor: pointer;
+    transition: all 0.18s ease;
+    user-select: none;
+}
+
+.vac-type-option:hover {
+    border-color: var(--primary);
+    background: rgba(99, 102, 241, 0.05);
+}
+
+.vac-type-option.active {
+    border-color: var(--primary);
+    background: rgba(99, 102, 241, 0.1);
+    box-shadow: 0 2px 8px rgba(99, 102, 241, 0.15);
+}
+
+.vac-type-option input[type="radio"] {
+    display: none;
+}
+
+.vac-type-option > i {
+    font-size: 1.2rem;
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+
+.vac-type-option.active > i {
+    color: var(--primary);
+}
+
+.vac-type-option > div {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.vac-type-title {
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: var(--text-main);
+    line-height: 1.1;
+}
+
+.vac-type-help {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    line-height: 1.25;
+}
+
+/* CHECKBOX ROW (sólo pago) */
+.vac-checkbox-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.7rem;
+    padding: 0.75rem 0.85rem;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    cursor: pointer;
+    margin: 0.85rem 0;
+    transition: border-color 0.15s ease;
+}
+
+.vac-checkbox-row:hover {
+    border-color: var(--primary);
+}
+
+.vac-checkbox-row input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    margin-top: 1px;
+    flex-shrink: 0;
+    accent-color: var(--primary);
+}
+
+.vac-checkbox-row > span {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.vac-checkbox-row strong {
+    font-size: 0.88rem;
+    color: var(--text-main);
+    font-weight: 600;
+}
+
+.vac-checkbox-row small {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    line-height: 1.35;
+}
+
+@media (max-width: 540px) {
+    .vac-type-options { grid-template-columns: 1fr; }
+}
+
+/* VAC EMP CARD — desglose section */
+.vac-emp-breakdown {
+    margin-top: 0.7rem;
+    padding-top: 0.7rem;
+    border-top: 1px dashed var(--border);
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.4rem 0.85rem;
+    font-size: 0.78rem;
+}
+
+.vac-emp-breakdown-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+}
+
+.vac-emp-breakdown-row .lbl {
+    color: var(--text-muted);
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-weight: 500;
+}
+
+.vac-emp-breakdown-row .val {
+    color: var(--text-main);
+    font-weight: 700;
+}
+
+.vac-emp-breakdown-row .lbl i {
+    font-size: 0.72em;
+    width: 12px;
+    text-align: center;
+}
+
+/* HISTORY card type badge */
+.vhist-type-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-left: 0.4rem;
+}
+
+.vhist-type-badge.tipo-periodo {
+    background: rgba(16, 185, 129, 0.12);
+    color: #059669;
+}
+
+.vhist-type-badge.tipo-ajuste {
+    background: rgba(245, 158, 11, 0.14);
+    color: #d97706;
+}
+
+.vhist-type-badge.tipo-permiso {
+    background: rgba(99, 102, 241, 0.14);
+    color: #6366f1;
+}
+
+.vhist-type-badge.tipo-pago {
+    background: rgba(236, 72, 153, 0.14);
+    color: #db2777;
+}
+
+/* =======================================================================
+   SCHEDULE ACTIONS DROPDOWN
+   ======================================================================= */
+.schedule-actions-dropdown {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    min-width: 220px;
+    background: var(--bg-panel, var(--surface-2));
+    border: 1px solid var(--border-color, var(--border));
+    border-radius: 10px;
+    padding: 0.35rem;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+    z-index: 200;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    animation: schedActionsFadeIn 0.12s ease-out;
+}
+
+.schedule-actions-dropdown.hidden {
+    display: none;
+}
+
+.schedule-actions-item {
+    text-align: left;
+    background: none;
+    border: none;
+    color: var(--text-main);
+    padding: 0.55rem 0.75rem;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    transition: background 0.12s ease;
+}
+
+.schedule-actions-item:hover {
+    background: var(--surface-3, rgba(99, 102, 241, 0.1));
+}
+
+.schedule-actions-item i {
+    width: 16px;
+    text-align: center;
+    color: var(--text-muted);
+}
+
+@keyframes schedActionsFadeIn {
+    from { opacity: 0; transform: translateY(-3px); }
+    to { opacity: 1; transform: translateY(0); }
 }

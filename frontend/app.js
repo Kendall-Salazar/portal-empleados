@@ -97,6 +97,19 @@ document.addEventListener("DOMContentLoaded", () => {
         initCustomShiftsUI(); // Init custom shifts UI
         loadCustomShiftsFromConfig(); // Load saved custom shifts
         loadHolidaysFromConfig(); // Load saved holidays
+        
+        // Auto-fill main week start date with upcoming Friday if empty
+        const startInput = document.getElementById("weekStartDate");
+        if (startInput && !startInput.value) {
+            const d = new Date();
+            const diff = (5 - d.getDay() + 7) % 7;
+            d.setDate(d.getDate() + diff);
+            const y = d.getFullYear();
+            const m = String(d.getMonth() + 1).padStart(2, "0");
+            const dayDate = String(d.getDate()).padStart(2, "0");
+            startInput.value = `${y}-${m}-${dayDate}`;
+            if (typeof autoCalcWeekEnd === "function") autoCalcWeekEnd();
+        }
     });
 
     // Theme toggle
@@ -401,15 +414,33 @@ function isHoliday(dateStr) {
     return holidaysData.find(h => h.date === dateStr);
 }
 
-function getHolidayForDay(dayName, weekDatesMap) {
-    // Given a day name (Vie, Sáb, etc) and the week dates map, check if that date is a holiday
-    if (!weekDatesMap || !weekDatesMap[dayName]) return null;
-    // weekDatesMap has format like "15/09/2026"
-    const parts = weekDatesMap[dayName].split('/');
+/** Convierte fecha de celda week_dates (DD/MM/YYYY o YYYY-MM-DD) a ISO YYYY-MM-DD. */
+function weekDateCellToIso(raw) {
+    if (raw == null || raw === "") return null;
+    const s = String(raw).trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    const parts = s.split("/");
     if (parts.length === 3) {
-        const isoDate = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
-        return isHoliday(isoDate);
+        const dd = parts[0].padStart(2, "0");
+        const mm = parts[1].padStart(2, "0");
+        const yy = parts[2];
+        return `${yy}-${mm}-${dd}`;
     }
+    return null;
+}
+
+function getHolidayForDay(dayName, weekDatesMap, metadataHolidayDays = null) {
+    // Cruza feriados globales (holidaysData) con la fecha REAL de esa columna en la semana mostrada.
+    // Importante en historial: weekDatesMap debe ser entry.week_dates, no la semana del selector del motor.
+    let calHoliday = null;
+    if (weekDatesMap && weekDatesMap[dayName]) {
+        const iso = weekDateCellToIso(weekDatesMap[dayName]);
+        if (iso) calHoliday = isHoliday(iso) || null;
+    }
+    const metaName = metadataHolidayDays?.[dayName];
+    const hasMeta = metaName != null && String(metaName).trim() !== "";
+    if (calHoliday) return calHoliday;
+    if (hasMeta) return { name: String(metaName).trim(), isMetadata: true };
     return null;
 }
 
@@ -748,6 +779,7 @@ async function loadEmployees() {
         renderEmployees();
     } catch (e) { console.error("Error reloading employees:", e); }
 }
+window.loadEmployees = loadEmployees;
 
 function renderEmployees() {
     const grid = document.getElementById("employeeGrid");
@@ -769,6 +801,10 @@ function renderEmployees() {
 
     let foundSelection = false;
     employees.forEach((emp, index) => {
+        // Excluir personas marcadas como "no incluir en horarios" del selector de
+        // turno noche (a menos que sean la selección actual, para no perder la referencia).
+        const includedInHorario = emp.incluir_en_horario !== false && emp.incluir_en_horario !== 0;
+        if (!includedInHorario && emp.name !== currentVal) return;
         // Only show employees who can do night OR are already selected
         if (!emp.can_do_night && emp.name !== currentVal && emp.activo !== false) return;
         
@@ -915,7 +951,20 @@ function renderConfig() {
     const refuerzoEndInput = document.getElementById("refuerzoEndTime");
     if (refuerzoEndInput) refuerzoEndInput.value = config.refuerzo_end || "12:00";
 
+    // Refuerzo days mode (auto/manual)
+    const refuerzoDaysModeSel = document.getElementById("refuerzoDaysMode");
+    if (refuerzoDaysModeSel) refuerzoDaysModeSel.value = config.refuerzo_days_mode || "auto";
+    
+    // Cargar días manuales seleccionados
+    const manualDays = config.refuerzo_manual_days || [];
+    const dayCheckboxes = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+    dayCheckboxes.forEach(day => {
+        const cb = document.getElementById("refuerzoDay" + day);
+        if (cb) cb.checked = manualDays.includes(day);
+    });
+    
     toggleRefuerzoConfig();
+    toggleRefuerzoDaysConfig();;
 
     // Collision Q-shift Config
     const collisionCb = document.getElementById("allowCollisionQuebrado");
@@ -949,6 +998,31 @@ function renderConfig() {
     // Strict weekly alternation
     const strictWeeklyCb = document.getElementById("strictWeeklyAlternation");
     if (strictWeeklyCb) strictWeeklyCb.checked = config.strict_weekly_alternation || false;
+
+    // Cleaning tasks config
+    const ctDays = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+    const ctTasks = ["am_banos", "pm_banos", "am_tanques", "pm_tanques"];
+    const cleaningTasks = config.cleaning_tasks || {};
+    ctDays.forEach(d => {
+        const dayConfig = cleaningTasks[d] || {};
+        ctTasks.forEach(t => {
+            const cb = document.getElementById(`clean_${t}_${d}`);
+            if (cb) {
+                if (cleaningTasks[d] && typeof dayConfig[t] === "boolean") {
+                    cb.checked = dayConfig[t];
+                } else {
+                    // Defaults as requested
+                    if (d === "Dom" && (t === "am_tanques" || t === "pm_tanques")) {
+                        cb.checked = false;
+                    } else if (d === "Sáb" && t === "pm_tanques") {
+                        cb.checked = false;
+                    } else {
+                        cb.checked = true;
+                    }
+                }
+            }
+        });
+    });
 
     fillJefeBaseShiftSelectFromRules();
 }
@@ -985,6 +1059,19 @@ function toggleRefuerzoConfig() {
         else customContainer.classList.add("hidden");
     }
     updateConfig();
+}
+
+// Toggle para mostrar/ocultar la sección de días manuales del refuerzo
+function toggleRefuerzoDaysConfig() {
+    const daysMode = document.getElementById("refuerzoDaysMode")?.value || "auto";
+    const manualDaysContainer = document.getElementById("refuerzoManualDaysContainer");
+    if (manualDaysContainer) {
+        if (daysMode === "manual") {
+            manualDaysContainer.classList.remove("hidden");
+        } else {
+            manualDaysContainer.classList.add("hidden");
+        }
+    }
 }
 
 function toggleCollisionConfig() {
@@ -1082,6 +1169,19 @@ async function updateConfig() {
     config.collision_peak_priority = document.getElementById("collisionPeakPriority")?.value || "pm";
     config.use_history = document.getElementById("useHistoryContext")?.checked ?? true;
     config.rotation_enabled = document.getElementById("rotationEnabled")?.checked ?? true;
+
+    config.cleaning_tasks = {};
+    const ctDays = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+    const ctTasks = ["am_banos", "pm_banos", "am_tanques", "pm_tanques"];
+    ctDays.forEach(d => {
+        config.cleaning_tasks[d] = {};
+        ctTasks.forEach(t => {
+            const cb = document.getElementById(`clean_${t}_${d}`);
+            if (cb) {
+                config.cleaning_tasks[d][t] = cb.checked;
+            }
+        });
+    });
 
     const jefeBaseSel = document.getElementById("jefeBaseShiftSelect");
     if (jefeBaseSel && jefeBaseSel.value) {
@@ -1518,6 +1618,7 @@ async function saveEmployee() {
         allow_no_rest: document.getElementById("empNoRest")?.checked ?? false,
         strict_preferences: document.getElementById("empStrictPreferences")?.checked ?? false,
         activo: document.getElementById("empActiveStatus") ? document.getElementById("empActiveStatus").checked : true,
+        incluir_en_horario: document.getElementById("empIncluirEnHorario") ? document.getElementById("empIncluirEnHorario").checked : true,
         fixed_shifts: {},
     };
 
@@ -1596,6 +1697,22 @@ async function generateSchedule() {
     config.refuerzo_type = document.getElementById("refuerzoTypeSelect")?.value || "personalizado";
     config.refuerzo_start = document.getElementById("refuerzoStartTime")?.value || "07:00";
     config.refuerzo_end = document.getElementById("refuerzoEndTime")?.value || "12:00";
+    
+    // Refuerzo days mode (auto/manual)
+    config.refuerzo_days_mode = document.getElementById("refuerzoDaysMode")?.value || "auto";
+    if (config.refuerzo_days_mode === "manual") {
+        // Recopilar días manuales seleccionados
+        const selectedDays = [];
+        const dayCheckboxes = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+        dayCheckboxes.forEach(day => {
+            const cb = document.getElementById("refuerzoDay" + day);
+            if (cb && cb.checked) selectedDays.push(day);
+        });
+        config.refuerzo_manual_days = selectedDays;
+    } else {
+        config.refuerzo_manual_days = [];
+    }
+    
     config.allow_collision_quebrado = document.getElementById("allowCollisionQuebrado")?.checked || false;
     config.collision_peak_priority = document.getElementById("collisionPeakPriority")?.value || "pm";
     config.use_history = document.getElementById("useHistoryContext")?.checked ?? true;
@@ -1930,6 +2047,9 @@ function buildRestReportClient(schedule, targetHours = 12) {
 
 
 let currentSortMode = 'time';
+// Per-history-entry sort mode (independent from main schedule)
+const historySortModes = new Map(); // historyIndex -> 'time' | 'alpha'
+
 
 function getAverageStartHour(name, schedule) {
     const days = ["Vie", "Sáb", "Dom", "Lun", "Mar", "Mié", "Jue"];
@@ -1972,7 +2092,14 @@ function toggleVerticalView() {
     }
 }
 
-function renderSchedule(schedule, tableSelector, tasks = {}, specialDaysOverride = null) {
+function renderSchedule(
+    schedule,
+    tableSelector,
+    tasks = {},
+    specialDaysOverride = null,
+    metadataHolidayDays = null,
+    weekDatesOverride = null
+) {
     const tableEl = document.querySelector(tableSelector);
     const thead = document.querySelector(`${tableSelector} thead tr`);
     const tbody = document.querySelector(`${tableSelector} tbody`);
@@ -1982,35 +2109,47 @@ function renderSchedule(schedule, tableSelector, tasks = {}, specialDaysOverride
     thead.innerHTML = "";
 
     let keys = Object.keys(schedule);
-    if (currentSortMode === 'time' && !tableSelector.includes("hist")) {
-        // Only sort main schedule by time, history usually static or same logic
+    let isHistory = tableSelector.includes("hist");
+    let historyIndex = isHistory ? parseInt(tableSelector.split("-").pop()) : null;
+    const effectiveSortMode = isHistory
+        ? (historySortModes.get(historyIndex) || 'time')
+        : currentSortMode;
+
+    if (effectiveSortMode === 'time') {
         keys.sort((a, b) => {
             const avgA = getAverageStartHour(a, schedule);
             const avgB = getAverageStartHour(b, schedule);
-            if (Math.abs(avgA - avgB) < 0.01) return a.localeCompare(b); // Tie-break with name
+            if (Math.abs(avgA - avgB) < 0.01) return a.localeCompare(b);
             return avgA - avgB;
         });
     } else {
-        keys.sort(); // Alphabetical default
+        keys.sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
     }
 
-    let isHistory = tableSelector.includes("hist");
-    let historyIndex = isHistory ? parseInt(tableSelector.split("-").pop()) : null;
+    const verticalAliases = isHistory
+        ? (historyEntriesCache[historyIndex]?.metadata?.display_aliases || {})
+        : {};
 
     if (isVerticalView) {
         tableEl.classList.add("vertical-table");
 
         // --- VERTICAL (CALENDAR) HEADERS ---
-        const weekDatesMapV = getWeekDatesMap();
+        const weekDatesMapV = weekDatesOverride != null ? weekDatesOverride : getWeekDatesMap();
         const specialDaysV = specialDaysOverride ?? currentMetadata?.special_days ?? {};
-        thead.innerHTML = `<th style="width:120px; text-align:center;">Horario</th>`;
+        thead.innerHTML = `<th class="th-horario-col" style="width:120px; text-align:center;">Horario</th>`;
         DAYS.forEach(d => {
-            const holiday = getHolidayForDay(d, weekDatesMapV);
+            const holiday = getHolidayForDay(d, weekDatesMapV, metadataHolidayDays);
             const isClosedV = specialDaysV[d] === 'closed';
-            const closedBadgeV = isClosedV ? `<span style="background:#ef4444; color:white; font-size:0.6rem; padding:1px 6px; border-radius:4px; font-weight:700; letter-spacing:0.5px; margin-left:4px;">CERRADO</span>` : '';
-            const holidayIcon = holiday && !isClosedV ? `<i class="fa-solid fa-star" style="color:#f59e0b; font-size:0.75rem; margin-left:4px;" title="${holiday.name}"></i>` : '';
-            thead.innerHTML += `<th style="text-align:center; min-width:140px;${isClosedV ? ' background: rgba(239,68,68,0.12);' : holiday ? ' background: rgba(245,158,11,0.08);' : ''}">
-                <div style="font-size:1.1rem; font-weight:800; color:var(--text-main);">${d}${closedBadgeV}${holidayIcon}</div>
+            const closedBadgeV = isClosedV ? `<span class="th-day-head-badge-closed">CERRADO</span>` : '';
+            const holidayIcon = holiday ? `<i class="fa-solid fa-star th-day-head-star" title="${escapeHtmlAttr(holiday.name)}"></i>` : '';
+            const closedHdrClass = isClosedV ? " th-closed" : "";
+            const holidayHdrClass = holiday ? " th-holiday" : "";
+            // Clickeable para agregar feriados en historial
+            const clickAction = isHistory ? `onclick="openHolidayDayModal('${d}', ${historyIndex})" style="cursor:pointer;"` : '';
+            thead.innerHTML += `<th class="th-day-col${closedHdrClass}${holidayHdrClass}" style="min-width:140px;" ${clickAction} title="${isHistory ? 'Click para marcar como feriado' : ''}">
+                <div class="th-day-col-inner" style="font-size:1.1rem; font-weight:800; color:var(--text-main);">
+                    <span class="th-day-name">${d}</span>${closedBadgeV}${holidayIcon}
+                </div>
             </th>`;
         });
 
@@ -2054,7 +2193,13 @@ function renderSchedule(schedule, tableSelector, tasks = {}, specialDaysOverride
 
             // Render Cells for Each Day
             DAYS.forEach(d => {
-                let cellHtml = `<td style="vertical-align: top;">
+                const holidayTd = getHolidayForDay(d, weekDatesMapV, metadataHolidayDays);
+                const isClosedTd = specialDaysV[d] === "closed";
+                const tdParts = [];
+                if (isClosedTd) tdParts.push("closed-col");
+                if (holidayTd) tdParts.push("holiday-col");
+                const tdDayClass = tdParts.length ? ` ${tdParts.join(" ")}` : "";
+                let cellHtml = `<td class="${tdDayClass.trim()}" style="vertical-align: top;">
                                   <div style="display:flex; flex-direction:column; gap:0.5rem; min-height:60px;">`;
 
                 // Find all employees that have exactly THIS shift on THIS day
@@ -2075,9 +2220,18 @@ function renderSchedule(schedule, tableSelector, tasks = {}, specialDaysOverride
                         const nightBadge = emp && emp.can_do_night ? '<i class="fa-solid fa-moon" style="font-size:0.7em;"></i> ' : '';
 
                         let info = getShiftInfo(s); // To get colors
+                        const closedOffCard = isHistory && isClosedTd && s === "OFF";
 
                         let tagHtml = role ? `<div style="font-size:0.6rem; opacity:0.8; margin-top:2px;">${role}</div>` : "";
-                        let taskHtml = getTaskLabelHTML(tasks, name, d);
+                        
+                        let taskData = {...(tasks || {})};
+                        if (isHistory) {
+                            taskData._is_history = true;
+                            taskData._history_index = historyIndex;
+                        }
+                        let taskHtml = getTaskLabelHTML(taskData, name, d);
+                        // El click en el shift-pill ahora abre el modal de turno + tarea
+                        // Ya no necesitamos el placeholder de tarea vacía separado
 
                         let historyAttrs = "";
                         let cursorStyle = "";
@@ -2093,10 +2247,16 @@ function renderSchedule(schedule, tableSelector, tasks = {}, specialDaysOverride
                             cursorStyle = "cursor:pointer; user-select:none;";
                         }
 
+                        const pillClass = closedOffCard
+                            ? `shift-pill pill-closed-establishment${isHistory ? " history-shift-pill" : ""}`
+                            : `shift-pill ${info.class}${isHistory ? " history-shift-pill" : ""}`;
+
+                        const verticalDisplayName = isHistory && verticalAliases[name] ? verticalAliases[name] : name;
                         cellHtml += `
-                            <div class="shift-pill ${info.class}${isHistory ? " history-shift-pill" : ""}" ${historyAttrs} style="min-height:auto; padding:0.4rem; flex-direction:row; justify-content:space-between; ${cursorStyle}">
+                            <div class="${pillClass}" ${historyAttrs} style="min-height:auto; padding:0.4rem; flex-direction:row; justify-content:space-between; ${cursorStyle}">
                                 <div style="display:flex; flex-direction:column; align-items:flex-start; text-align:left;">
-                                    <span style="font-weight:700; font-size:0.9rem;">${nightBadge}${name}</span>
+                                    <span style="font-weight:700; font-size:0.9rem;">${nightBadge}${verticalDisplayName}</span>
+                                    ${closedOffCard ? '<span class="pill-closed-inline-label">Cerrado</span>' : ""}
                                     ${tagHtml}
                                 </div>
                                 <div style="display:flex; align-items:center;">
@@ -2117,38 +2277,64 @@ function renderSchedule(schedule, tableSelector, tasks = {}, specialDaysOverride
     } else {
         tableEl.classList.remove("vertical-table");
 
-        // --- HORIZONTAL HEADERS ---
-        const weekDatesMap = getWeekDatesMap();
+        // Determine active sort mode for icon feedback
+        const activeSortMode = isHistory
+            ? (historySortModes.get(historyIndex) || 'time')
+            : currentSortMode;
+        const sortIconClass = activeSortMode === 'time'
+            ? 'fa-solid fa-clock sort-active-time'
+            : 'fa-solid fa-sort-alpha-down sort-active-alpha';
+        const sortTitle = activeSortMode === 'time'
+            ? 'Ordenado por hora — click para ordenar A-Z'
+            : 'Ordenado A-Z — click para ordenar por hora';
+
+        const weekDatesMap = weekDatesOverride != null ? weekDatesOverride : getWeekDatesMap();
         const specialDays = specialDaysOverride ?? currentMetadata?.special_days ?? {};
+
         thead.innerHTML = `
-            <th id="th-collaborator" style="cursor:pointer; min-width:160px;" title="Click para ordenar (Nombre / Hora)">
-                Empleado <i class="fa-solid fa-sort"></i>
+            <th id="${isHistory ? `th-collaborator-hist-${historyIndex}` : 'th-collaborator'}" style="cursor:pointer; min-width:160px; user-select:none;" title="${sortTitle}">
+                Empleado <i class="${sortIconClass}" style="font-size:0.75rem; margin-left:4px;"></i>
             </th>
             ${DAYS.map(d => {
-                const holiday = getHolidayForDay(d, weekDatesMap);
+                const holiday = getHolidayForDay(d, weekDatesMap, metadataHolidayDays);
                 const isClosed = specialDays[d] === 'closed';
                 const closedClass = isClosed ? ' th-closed' : '';
                 const holidayClass = holiday ? ' th-holiday' : '';
-                const closedBadge = isClosed ? `<br><span style="background:#ef4444; color:white; font-size:0.6rem; padding:1px 6px; border-radius:4px; font-weight:700; letter-spacing:0.5px;">CERRADO</span>` : '';
-                const holidayIcon = holiday && !isClosed ? `<br><i class="fa-solid fa-star" style="color:#f59e0b; font-size:0.7rem;" title="${holiday.name}"></i>` : '';
-                return `<th class="${closedClass}${holidayClass}">${d}${closedBadge}${holidayIcon}</th>`;
+                const closedBadge = isClosed ? `<span class="th-day-head-badge-closed">CERRADO</span>` : '';
+                const holidayIcon = holiday ? `<i class="fa-solid fa-star th-day-head-star" title="${escapeHtmlAttr(holiday.name)}"></i>` : '';
+                const clickAction = isHistory ? `onclick="openHolidayDayModal('${d}', ${isHistory ? historyIndex : -1})" style="cursor:pointer;"` : '';
+                return `<th class="th-day-col${closedClass}${holidayClass}" ${clickAction} title="${isHistory ? 'Click para marcar como feriado' : ''}"><div class="th-day-col-inner"><span class="th-day-name">${d}</span>${closedBadge}${holidayIcon}</div></th>`;
             }).join('')}
             <th class="col-hours">Horas</th>
         `;
 
-        // Setup sort listener on main table
-        if (!isHistory) {
-            thead.querySelector('#th-collaborator').addEventListener('click', () => {
-                currentSortMode = currentSortMode === 'time' ? 'alpha' : 'time';
-                if (currentGeneratedSchedule) renderSchedule(currentGeneratedSchedule, '#scheduleTable', currentDailyTasks);
+        // Setup sort listener
+        const thCollab = thead.querySelector(`#${isHistory ? `th-collaborator-hist-${historyIndex}` : 'th-collaborator'}`);
+        if (thCollab) {
+            thCollab.addEventListener('click', () => {
+                if (isHistory) {
+                    const prev = historySortModes.get(historyIndex) || 'time';
+                    historySortModes.set(historyIndex, prev === 'time' ? 'alpha' : 'time');
+                    renderHistoryEntryTable(historyIndex);
+                } else {
+                    currentSortMode = currentSortMode === 'time' ? 'alpha' : 'time';
+                    if (currentGeneratedSchedule) renderSchedule(currentGeneratedSchedule, '#scheduleTable', currentDailyTasks);
+                }
             });
         }
 
         // --- HORIZONTAL BODY ---
+        const historyAliases = isHistory
+            ? (historyEntriesCache[historyIndex]?.metadata?.display_aliases || {})
+            : {};
         keys.forEach(name => {
             const row = document.createElement("tr");
 
-            const initials = name === "Refuerzo" ? "RF" : name.substring(0, 2).toUpperCase();
+            const displayName = isHistory && historyAliases[name] ? historyAliases[name] : name;
+            const aliasIndicator = isHistory && historyAliases[name] && historyAliases[name] !== name
+                ? `<i class="fa-solid fa-link" style="font-size:0.65em; margin-left:4px; color:var(--text-muted);" title="Vinculado a ${escapeHtmlAttr(name)}"></i>`
+                : '';
+            const initials = name === "Refuerzo" ? "RF" : (displayName || name).substring(0, 2).toUpperCase();
             const emp = employees.find(e => e.name === name);
             const nightBadge = emp && emp.can_do_night ? '<i class="fa-solid fa-moon" style="font-size:0.7em; margin-left:4px; color:#6366f1;" title="Turno Noche"></i>' : '';
             const noRestBadge = emp && emp.allow_no_rest ? '<i class="fa-solid fa-battery-empty" style="font-size:0.7em; margin-left:4px; color:#ef4444;" title="Sin Descanso"></i>' : '';
@@ -2156,12 +2342,17 @@ function renderSchedule(schedule, tableSelector, tasks = {}, specialDaysOverride
             const forcedQuebradoBadge = emp && emp.forced_quebrado ? '<i class="fa-solid fa-bolt" style="font-size:0.7em; margin-left:4px; color:#7c3aed;" title="Forzar Quebrado"></i>' : '';
             const refBadge = name === "Refuerzo" ? '<span class="tag night" style="font-size:0.6em; margin-left:4px;">REF</span>' : '';
 
+            const nameJsLiteral = JSON.stringify(name).replace(/"/g, "&quot;");
+            const nameClickAttrs = isHistory
+                ? `class="emp-name hist-name-edit" onclick="openHistoryNameModal(${historyIndex}, ${nameJsLiteral})" title="Click para renombrar o vincular" style="cursor:pointer; text-decoration: underline dotted; text-underline-offset: 2px;"`
+                : `class="emp-name"`;
+
             row.innerHTML = `
                 <td>
                     <div class="emp-cell-content">
                         <div class="emp-avatar" style="${name === "Refuerzo" ? 'background: var(--accent-color);' : ''}">${initials}</div>
                         <div class="emp-details">
-                            <span class="emp-name">${name} ${nightBadge} ${noRestBadge} ${forcedLibresBadge} ${forcedQuebradoBadge} ${refBadge}</span>
+                            <span ${nameClickAttrs}>${displayName}${aliasIndicator} ${nightBadge} ${noRestBadge} ${forcedLibresBadge} ${forcedQuebradoBadge} ${refBadge}</span>
                             <span class="emp-role">${name === "Refuerzo" ? 'Apoyo Extra' : (emp && sqlIntFlagOn(emp.is_jefe_pista) ? 'Jefe de Pista' : (emp && emp.is_practicante ? 'Practicante' : 'Colaborador'))}</span>
                         </div>
                     </div>
@@ -2179,9 +2370,12 @@ function renderSchedule(schedule, tableSelector, tasks = {}, specialDaysOverride
                 let fixedClass = "";
                 if (emp && emp.fixed_shifts && emp.fixed_shifts[d]) fixedClass = "pill-fixed";
 
-                const holiday = getHolidayForDay(d, weekDatesMap);
+                const holiday = getHolidayForDay(d, weekDatesMap, metadataHolidayDays);
                 const isClosedDay = specialDays[d] === 'closed';
-                const cellClass = isClosedDay ? ' closed-col' : (holiday ? ' holiday-col' : '');
+                const cellParts = [];
+                if (isClosedDay) cellParts.push('closed-col');
+                if (holiday) cellParts.push('holiday-col');
+                const cellClass = cellParts.length ? ` ${cellParts.join(' ')}` : '';
 
                 let historyAttrs = "";
                 let cursorStyle = "";
@@ -2197,12 +2391,28 @@ function renderSchedule(schedule, tableSelector, tasks = {}, specialDaysOverride
                     cursorStyle = "cursor:pointer; user-select:none;";
                 }
 
-                // Si el día está cerrado, mostrar badge CERRADO en cada celda
-                if (isClosedDay) {
+                // Día cerrado + sin turno: tarjeta "Cerrado" (no LIBRE); en historial sigue siendo editable
+                const showClosedEstablishmentPill = isClosedDay && s === "OFF";
+
+                // Día cerrado en horario principal: tarjeta coherente con diseño (no editable)
+                if (isClosedDay && !isHistory) {
                     row.innerHTML += `
                         <td class="${cellClass}">
-                            <div style="display:flex; align-items:center; justify-content:center; min-height:36px; padding:0.3rem;">
-                                <span style="background:#ef4444; color:white; font-size:0.65rem; padding:2px 8px; border-radius:4px; font-weight:700; letter-spacing:0.5px;">CERRADO</span>
+                            <div class="shift-pill pill-closed-establishment" style="cursor:default;">
+                                <i class="fa-solid fa-store-slash pill-icon"></i>
+                                <span class="pill-time">Cerrado</span>
+                                <span class="pill-closed-hint">Sin servicio</span>
+                            </div>
+                        </td>
+                    `;
+                } else if (showClosedEstablishmentPill && isHistory) {
+                    row.innerHTML += `
+                        <td class="${cellClass}">
+                            <div class="shift-pill pill-closed-establishment ${fixedClass} history-shift-pill" ${historyAttrs} style="${cursorStyle}">
+                                <i class="fa-solid fa-store-slash pill-icon"></i>
+                                <span class="pill-time">Cerrado</span>
+                                <span class="pill-closed-hint">Sin servicio</span>
+                                ${getTaskLabelHTML(tasks, name, d)}
                             </div>
                         </td>
                     `;
@@ -2263,7 +2473,15 @@ async function fetchHistoryEntries(forceRefresh = false) {
 function renderHistoryEntryTable(index) {
     const entry = historyEntriesCache[index];
     if (!entry) return;
-    renderSchedule(entry.schedule, `#hist-table-${index}`, entry.daily_tasks || {}, entry.special_days || {});
+    const metadataHolidayDays = entry.metadata?.holiday_days || null;
+    renderSchedule(
+        entry.schedule,
+        `#hist-table-${index}`,
+        entry.daily_tasks || {},
+        entry.special_days || {},
+        metadataHolidayDays,
+        entry.week_dates || null
+    );
     applyHistoryHoursVisibility(index);
 }
 
@@ -2332,6 +2550,10 @@ function renderHistoryList() {
                     </button>
                     <button type="button" class="btn-icon" onclick="exportHistoryExcel(${i}, event)" title="Exportar Excel">
                         <i class="fa-solid fa-file-excel"></i>
+                    </button>
+                    <button type="button" class="btn-icon history-action-button" onclick="swapHistoryEmployees(${i}, event)" title="Intercambiar horarios de dos empleados">
+                        <i class="fa-solid fa-right-left"></i>
+                        <span>Intercambiar</span>
                     </button>
                     <i class="fa-solid fa-chevron-down arrow"></i>
                     <button type="button" class="btn-icon delete" onclick="deleteHistory(${i}, event)">
@@ -2443,25 +2665,31 @@ async function onImportHorarioExcelHistorialFileChange(ev) {
         if (!res.ok) throw new Error(_importHorarioExcelApiErrorMessage(data, res.statusText));
         if (st) st.textContent = `Archivo: ${f.name} — elija pestañas y pulse Vista previa.`;
         (data.sheetnames || []).forEach((name) => {
-            const row = document.createElement("div");
-            row.style.display = "flex";
-            row.style.alignItems = "center";
-            row.style.gap = "8px";
-            row.style.marginBottom = "4px";
+            const n = String(name).trim();
+            const isDefault = /^(10|11|12|13)$/.test(n);
+            const safeId = `import-excel-sheet-${String(name).replace(/\W/g, "_")}`;
+
+            // Hidden real checkbox (drives the form logic)
             const cb = document.createElement("input");
             cb.type = "checkbox";
             cb.value = name;
-            const safeId = `import-excel-sheet-${String(name).replace(/\W/g, "_")}`;
             cb.id = safeId;
-            const n = String(name).trim();
-            if (/^(10|11|12|13)$/.test(n)) cb.checked = true;
-            const lb = document.createElement("label");
-            lb.htmlFor = safeId;
-            lb.textContent = name;
-            lb.style.cursor = "pointer";
-            row.appendChild(cb);
-            row.appendChild(lb);
-            sl.appendChild(row);
+            cb.checked = isDefault;
+            cb.style.display = "none";
+
+            // Visual pill chip
+            const chip = document.createElement("label");
+            chip.htmlFor = safeId;
+            chip.className = "excel-sheet-chip" + (isDefault ? " selected" : "");
+            chip.textContent = n || name;
+            chip.title = name;
+
+            cb.addEventListener("change", () => {
+                chip.classList.toggle("selected", cb.checked);
+            });
+
+            sl.appendChild(cb);
+            sl.appendChild(chip);
         });
     } catch (e) {
         console.error(e);
@@ -2594,7 +2822,48 @@ function renderImportHorarioExcelHistorialPreview(drafts) {
         wrap.appendChild(table);
         card.appendChild(wrap);
         pv.appendChild(card);
-        renderSchedule(d.schedule || {}, `#import-hist-prev-${i}`, {}, {});
+        renderSchedule(d.schedule || {}, `#import-hist-prev-${i}`, d.daily_tasks || {}, {}, null, d.week_dates || null);
+
+        // ── Cleaning tasks preview ────────────────────────────────────────────
+        const tasks = d.daily_tasks || {};
+        const DAYS_PREVIEW = ["Vie", "Sáb", "Dom", "Lun", "Mar", "Mié", "Jue"];
+        const taskEntries = Object.entries(tasks).filter(
+            ([, days]) => DAYS_PREVIEW.some((day) => days[day])
+        );
+        if (taskEntries.length) {
+            const tasksWrap = document.createElement("div");
+            tasksWrap.className = "import-tasks-preview";
+            const tasksTitle = document.createElement("div");
+            tasksTitle.className = "import-tasks-title";
+            tasksTitle.innerHTML = `<i class="fa-solid fa-broom"></i> Tareas de Limpieza Detectadas`;
+            tasksWrap.appendChild(tasksTitle);
+            const tasksGrid = document.createElement("div");
+            tasksGrid.className = "import-tasks-grid";
+            for (const [emp, days] of taskEntries) {
+                const empRow = document.createElement("div");
+                empRow.className = "import-tasks-row";
+                const empName = document.createElement("span");
+                empName.className = "import-tasks-emp";
+                empName.textContent = emp;
+                empRow.appendChild(empName);
+                for (const day of DAYS_PREVIEW) {
+                    const task = days[day];
+                    const cell = document.createElement("span");
+                    let taskColorCls = "";
+                    if (task) {
+                        const { base } = _taskBaseAndSuffix(task);
+                        taskColorCls = " itc-" + _taskColorClass(base).replace("task-", "");
+                    }
+                    cell.className = "import-tasks-cell" + (task ? " has-task" + taskColorCls : "");
+                    cell.textContent = task ? _taskBaseAndSuffix(task).base : "–";
+                    cell.title = task ? `${day}: ${task}` : "";
+                    empRow.appendChild(cell);
+                }
+                tasksGrid.appendChild(empRow);
+            }
+            tasksWrap.appendChild(tasksGrid);
+            card.appendChild(tasksWrap);
+        }
     });
 }
 
@@ -2619,7 +2888,7 @@ async function confirmImportHorarioExcelHistorial() {
             name,
             schedule: d.schedule || {},
             week_dates: d.week_dates,
-            daily_tasks: {},
+            daily_tasks: d.daily_tasks || {},
         });
     }
     if (!items.length) {
@@ -2642,6 +2911,666 @@ async function confirmImportHorarioExcelHistorial() {
         if (st) st.textContent = e.message || String(e);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ENTRADA MANUAL DE SEMANAS
+// ─────────────────────────────────────────────────────────────────────────────
+
+const MANUAL_DAYS = ["Vie", "Sáb", "Dom", "Lun", "Mar", "Mié", "Jue"];
+const MANUAL_CLEANING_TASKS = ["", "Baños", "Tanques", "Oficina + Basureros + Baños"];
+const MANUAL_SHIFTS_OPTIONS = [
+    { code: "OFF",     label: "Libre" },
+    { code: "VAC",     label: "Vacaciones" },
+    { code: "PERM",    label: "Permiso" },
+    { code: "T1_05-13", label: "T1 5am-1pm" },
+    { code: "T2_06-14", label: "T2 6am-2pm" },
+    { code: "T3_07-15", label: "T3 7am-3pm" },
+    { code: "T4_08-16", label: "T4 8am-4pm" },
+    { code: "PM_13-22", label: "PM 1pm-10pm" },
+    { code: "J_06-16",  label: "J 6am-4pm" },
+    { code: "N_22-05",  label: "N 10pm-5am" },
+];
+
+function toggleManualWeekForm() {
+    const form = document.getElementById("importManualWeekForm");
+    const btn = document.getElementById("toggleManualWeekBtn");
+    if (!form) return;
+    const isHidden = form.classList.toggle("hidden");
+    btn.innerHTML = isHidden
+        ? '<i class="fa-solid fa-plus"></i> Agregar semana manualmente'
+        : '<i class="fa-solid fa-minus"></i> Ocultar entrada manual';
+    if (!isHidden) {
+        _buildManualWeekTable();
+    }
+}
+
+function _getManualShiftOptsHTML() {
+    // Usar el catálogo completo cargado desde el backend
+    const base = (SHIFT_OPTIONS && SHIFT_OPTIONS.length)
+        ? SHIFT_OPTIONS.map(o => `<option value="${o.code}">${o.label}</option>`).join("")
+        : MANUAL_SHIFTS_OPTIONS.map(o => `<option value="${o.code}">${o.label}</option>`).join("");
+    return base + `<option value="__OTRO__">⌨ Horario manual…</option>`;
+}
+
+function _getManualTaskOptsHTML() {
+    return MANUAL_CLEANING_TASKS.map(t => `<option value="${t}">${t || "—"}</option>`).join("");
+}
+
+function _buildManualWeekRow(empName, isEditable) {
+    const shiftOptsHTML = _getManualShiftOptsHTML();
+    const taskOptsHTML = _getManualTaskOptsHTML();
+    const tr = document.createElement("tr");
+
+    // Celda de nombre
+    const nameTd = document.createElement("td");
+    nameTd.style.padding = "4px 5px";
+    if (isEditable) {
+        const inp = document.createElement("input");
+        inp.type = "text";
+        inp.placeholder = "Nombre colaborador";
+        inp.className = "form-input manual-emp-name-input";
+        inp.style.cssText = "width:100%;font-size:0.78rem;padding:3px 6px;border-radius:6px;";
+        inp.dataset.empName = "";
+        inp.addEventListener("input", () => { inp.dataset.empName = inp.value.trim(); nameTd.dataset.empName = inp.value.trim(); });
+        nameTd.appendChild(inp);
+    } else {
+        nameTd.textContent = empName;
+        nameTd.dataset.empName = empName;
+        nameTd.style.fontWeight = "500";
+        nameTd.style.fontSize = "0.82rem";
+    }
+    tr.appendChild(nameTd);
+
+    for (const day of MANUAL_DAYS) {
+        const td = document.createElement("td");
+        td.style.padding = "3px 2px";
+
+        const shiftSel = document.createElement("select");
+        shiftSel.className = "manual-shift-sel";
+        shiftSel.dataset.emp = empName;
+        shiftSel.dataset.day = day;
+        shiftSel.innerHTML = shiftOptsHTML;
+        shiftSel.style.cssText = "width:100%;min-width:82px;font-size:0.7rem;padding:2px 3px;border-radius:6px;background:var(--bg-app);border:1px solid var(--border);color:var(--text-main);display:block;";
+
+        const customInp = document.createElement("input");
+        customInp.type = "text";
+        customInp.placeholder = "Ej: 8:00-16:00";
+        customInp.className = "manual-custom-time hidden";
+        customInp.style.cssText = "width:100%;font-size:0.68rem;padding:2px 4px;margin-top:2px;border-radius:5px;background:var(--bg-app);border:1px solid var(--primary,#6366f1);color:var(--text-main);display:none;";
+
+        shiftSel.addEventListener("change", () => {
+            const isOtro = shiftSel.value === "__OTRO__";
+            customInp.style.display = isOtro ? "block" : "none";
+        });
+
+        const taskSel = document.createElement("select");
+        taskSel.className = "manual-task-sel";
+        taskSel.dataset.emp = empName;
+        taskSel.dataset.day = day;
+        taskSel.innerHTML = taskOptsHTML;
+        taskSel.style.cssText = "width:100%;font-size:0.67rem;padding:1px 3px;margin-top:2px;border-radius:5px;background:var(--surface-2);border:1px solid var(--border);color:var(--text-muted);display:block;";
+
+        td.appendChild(shiftSel);
+        td.appendChild(customInp);
+        td.appendChild(taskSel);
+        tr.appendChild(td);
+    }
+
+    // Botón eliminar fila
+    const delTd = document.createElement("td");
+    delTd.style.padding = "4px 3px";
+    const delBtn = document.createElement("button");
+    delBtn.type = "button";
+    delBtn.innerHTML = `<i class="fa-solid fa-xmark"></i>`;
+    delBtn.title = "Eliminar esta fila";
+    delBtn.style.cssText = "background:none;border:none;color:var(--danger,#dc2626);cursor:pointer;font-size:0.9rem;padding:2px 5px;border-radius:4px;";
+    delBtn.addEventListener("click", () => tr.remove());
+    delTd.appendChild(delBtn);
+    tr.appendChild(delTd);
+
+    return tr;
+}
+
+function _buildManualWeekTable() {
+    const tbody = document.getElementById("manualWeekTableBody");
+    if (!tbody) return;
+    tbody.innerHTML = "";
+
+    const activeEmps = employees.filter(e => e.activo !== false && e.activo !== 0);
+
+    for (const emp of activeEmps) {
+        tbody.appendChild(_buildManualWeekRow(emp.name || "", false));
+    }
+
+    if (!activeEmps.length) {
+        _addManualEmptyRow();
+    }
+}
+
+function _addManualEmptyRow() {
+    const tbody = document.getElementById("manualWeekTableBody");
+    if (!tbody) return;
+    const tr = _buildManualWeekRow("", true);
+    tbody.appendChild(tr);
+    // Focus the name input
+    const inp = tr.querySelector(".manual-emp-name-input");
+    if (inp) setTimeout(() => inp.focus(), 50);
+}
+
+function onManualWeekDateChange() {
+    // noop — fechas se calculan al agregar al preview
+}
+
+function _fridayToWeekDates(fridayIso) {
+    const fri = new Date(fridayIso + "T12:00:00");
+    const wd = {};
+    MANUAL_DAYS.forEach((day, i) => {
+        const d = new Date(fri);
+        d.setDate(fri.getDate() + i);
+        const dd = String(d.getDate()).padStart(2, "0");
+        const mm = String(d.getMonth() + 1).padStart(2, "0");
+        const yyyy = d.getFullYear();
+        wd[day] = `${dd}/${mm}/${yyyy}`;
+    });
+    return wd;
+}
+
+function addManualWeekToPreview() {
+    const nameVal = (document.getElementById("manualWeekName")?.value || "").trim();
+    const fridayVal = document.getElementById("manualWeekFridayDate")?.value || "";
+    const statusEl = document.getElementById("manualWeekStatus");
+
+    if (!nameVal) {
+        if (statusEl) statusEl.textContent = "Ingresá un nombre para la semana.";
+        return;
+    }
+    if (!fridayVal) {
+        if (statusEl) statusEl.textContent = "Seleccioná la fecha del Viernes.";
+        return;
+    }
+
+    const weekDates = _fridayToWeekDates(fridayVal);
+
+    // Leer turnos y tareas del formulario
+    const schedule = {};
+    const dailyTasks = {};
+
+    document.querySelectorAll("#manualWeekTableBody tr").forEach(tr => {
+        // Obtener el nombre del empleado (puede venir de data-emp-name en td o del input)
+        const nameTd = tr.querySelector("td[data-emp-name]");
+        const nameInp = tr.querySelector(".manual-emp-name-input");
+        const empName = (nameTd?.dataset?.empName || nameInp?.value || "").trim();
+        if (!empName) return;
+
+        schedule[empName] = {};
+        dailyTasks[empName] = {};
+
+        MANUAL_DAYS.forEach(day => {
+            const shiftSel = tr.querySelector(`.manual-shift-sel[data-day="${day}"]`);
+            const taskSel = tr.querySelector(`.manual-task-sel[data-day="${day}"]`);
+
+            let shiftVal = shiftSel?.value || "OFF";
+            if (shiftVal === "__OTRO__") {
+                // Buscar el input de tiempo libre dentro del mismo td que el select
+                const td = shiftSel?.closest("td");
+                const timeInp = td?.querySelector(".manual-custom-time");
+                const raw = timeInp?.value?.trim() || "";
+                if (typeof normalizeFlexibleShiftInput === 'function') {
+                    shiftVal = normalizeFlexibleShiftInput(raw) || "OFF";
+                } else {
+                    shiftVal = raw ? (raw.startsWith("MANUAL_") ? raw : "MANUAL_" + raw) : "OFF";
+                }
+            }
+            schedule[empName][day] = shiftVal;
+            const tv = taskSel?.value || "";
+            dailyTasks[empName][day] = tv || null;
+        });
+    });
+
+    if (!Object.keys(schedule).length) {
+        if (statusEl) statusEl.textContent = "No hay empleados en la tabla.";
+        return;
+    }
+
+    const draft = {
+        sheet: "Manual",
+        name_sugerido: nameVal,
+        week_dates: weekDates,
+        schedule,
+        daily_tasks: dailyTasks,
+        warnings: [],
+        errors: [],
+        _manual: true,
+    };
+
+    importHorarioExcelHistorialDrafts.push(draft);
+    renderImportHorarioExcelHistorialPreview(importHorarioExcelHistorialDrafts);
+
+    const anyOk = importHorarioExcelHistorialDrafts.some(
+        d => (!d.errors || !d.errors.length) && d.week_dates && MANUAL_DAYS.every(day => day in d.week_dates)
+    );
+    const confirmBtn = document.getElementById("importHorarioExcelConfirmBtn");
+    if (confirmBtn) confirmBtn.disabled = !anyOk;
+
+    if (statusEl) statusEl.textContent = `✓ Semana "${nameVal}" agregada al preview.`;
+}
+
+// =====================================================
+// HORARIO MANUAL — editor completo con guardado al historial
+// =====================================================
+const _manualSchedState = {
+    weekDates: {},
+    specialDays: {},     // { Vie: 'closed' | 'open_holiday' | undefined }
+    holidayDays: {},     // { Vie: { name } }
+    hoursVisible: true,
+    holidayMode: false,
+};
+
+function _manualSchedSetStatus(text, kind = "info") {
+    const el = document.getElementById("manualSchedStatus");
+    if (!el) return;
+    const colors = {
+        info: "var(--text-muted)",
+        success: "var(--success, #10b981)",
+        error: "var(--error, #ef4444)",
+        warn: "var(--warn, #f59e0b)",
+    };
+    el.style.color = colors[kind] || colors.info;
+    el.textContent = text || "";
+}
+
+function _manualSchedDefaultFridayIso() {
+    const today = new Date();
+    const day = today.getDay(); // 0=Sun..6=Sat
+    const diff = (5 - day + 7) % 7; // distancia hasta el próximo viernes (incluye hoy si es viernes)
+    const fri = new Date(today);
+    fri.setDate(today.getDate() + diff - 7); // viernes pasado por defecto
+    const yyyy = fri.getFullYear();
+    const mm = String(fri.getMonth() + 1).padStart(2, "0");
+    const dd = String(fri.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+}
+
+function _manualSchedRefreshHeader() {
+    const fridayIso = document.getElementById("manualSchedFriday")?.value || "";
+    if (fridayIso) {
+        _manualSchedState.weekDates = _fridayToWeekDates(fridayIso);
+    } else {
+        _manualSchedState.weekDates = {};
+    }
+    const headerRow = document.getElementById("manualSchedHeaderRow");
+    if (!headerRow) return;
+    MANUAL_DAYS.forEach(day => {
+        const th = headerRow.querySelector(`th[data-day="${day}"]`);
+        if (!th) return;
+        const dateLabel = _manualSchedState.weekDates[day] || "";
+        const isClosed = _manualSchedState.specialDays[day] === "closed";
+        const holiday = _manualSchedState.holidayDays[day];
+        th.classList.toggle("th-closed", isClosed);
+        th.classList.toggle("th-holiday", !!holiday);
+        th.classList.toggle("manual-sched-day-clickable", _manualSchedState.holidayMode);
+        const closedBadge = isClosed ? `<span class="ms-day-mini-badge closed">CERRADO</span>` : "";
+        const holidayBadge = holiday ? `<span class="ms-day-mini-badge holiday"><i class="fa-solid fa-star"></i></span>` : "";
+        const dateBadge = dateLabel ? `<span class="ms-day-date-badge">${dateLabel}</span>` : "";
+        th.innerHTML = `<span>${day}${closedBadge}${holidayBadge}</span>${dateBadge}`;
+        if (_manualSchedState.holidayMode) {
+            th.onclick = () => _manualSchedToggleDayState(day);
+        } else {
+            th.onclick = null;
+        }
+    });
+}
+
+function manualSchedRefreshHeaderDates() {
+    _manualSchedRefreshHeader();
+}
+
+function _manualSchedToggleDayState(day) {
+    const isClosed = _manualSchedState.specialDays[day] === "closed";
+    const holiday = _manualSchedState.holidayDays[day];
+    if (!isClosed && !holiday) {
+        _manualSchedState.specialDays[day] = "closed";
+    } else if (isClosed && !holiday) {
+        delete _manualSchedState.specialDays[day];
+        _manualSchedState.holidayDays[day] = { name: "Feriado" };
+    } else {
+        delete _manualSchedState.specialDays[day];
+        delete _manualSchedState.holidayDays[day];
+    }
+    _manualSchedRefreshHeader();
+}
+
+function manualSchedToggleHolidayMode() {
+    _manualSchedState.holidayMode = !_manualSchedState.holidayMode;
+    const btn = document.getElementById("manualSchedHolidayBtn");
+    if (btn) {
+        btn.classList.toggle("is-active", _manualSchedState.holidayMode);
+    }
+    _manualSchedRefreshHeader();
+    _manualSchedSetStatus(
+        _manualSchedState.holidayMode
+            ? "Modo feriado/cerrado activo. Click en un día del header para alternar entre normal → cerrado → feriado."
+            : ""
+    );
+}
+
+function manualSchedToggleHours() {
+    _manualSchedState.hoursVisible = !_manualSchedState.hoursVisible;
+    document.querySelectorAll("#manualSchedTable .col-hours, #manualSchedTable .ms-col-hours").forEach(el => {
+        el.classList.toggle("hidden-col", !_manualSchedState.hoursVisible);
+    });
+    const btn = document.getElementById("manualSchedHoursBtn");
+    if (btn) btn.classList.toggle("is-active", _manualSchedState.hoursVisible);
+}
+
+function _manualSchedAvatarInitials(name) {
+    const parts = (name || "").trim().split(/\s+/).filter(Boolean);
+    if (!parts.length) return "?";
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+}
+
+function _manualSchedUpdateRowsCount() {
+    const tbody = document.getElementById("manualSchedTbody");
+    const chip = document.getElementById("manualSchedStatRows");
+    if (chip && tbody) chip.textContent = String(tbody.querySelectorAll("tr").length);
+}
+
+function _manualSchedBuildRow(name, isEditable) {
+    const shiftOptsHTML = _getManualShiftOptsHTML();
+    const taskOptsHTML = _getManualTaskOptsHTML();
+    const tr = document.createElement("tr");
+    tr.dataset.empName = name || "";
+
+    const nameTd = document.createElement("td");
+    nameTd.className = "ms-col-name ms-name-cell";
+    if (isEditable) {
+        const inp = document.createElement("input");
+        inp.type = "text";
+        inp.placeholder = "Nombre colaborador";
+        inp.className = "ms-name-input";
+        inp.value = name || "";
+        inp.addEventListener("input", () => {
+            tr.dataset.empName = inp.value.trim();
+        });
+        nameTd.appendChild(inp);
+    } else {
+        const wrap = document.createElement("span");
+        wrap.className = "ms-name-pill";
+        const avatar = document.createElement("span");
+        avatar.className = "ms-name-avatar";
+        avatar.textContent = _manualSchedAvatarInitials(name);
+        const txt = document.createElement("span");
+        txt.textContent = name;
+        wrap.appendChild(avatar);
+        wrap.appendChild(txt);
+        nameTd.appendChild(wrap);
+    }
+    tr.appendChild(nameTd);
+
+    const updateHours = () => {
+        let total = 0;
+        MANUAL_DAYS.forEach(day => {
+            const sel = tr.querySelector(`.manual-shift-sel[data-day="${day}"]`);
+            if (!sel) return;
+            let val = sel.value;
+            if (val === "__OTRO__") {
+                const ci = tr.querySelector(`.manual-custom-time[data-day="${day}"]`);
+                const raw = (ci?.value || "").trim();
+                if (raw) {
+                    const norm = normalizeFlexibleShiftInput(raw);
+                    if (norm && norm !== "AUTO") val = norm;
+                }
+            }
+            total += getShiftHoursCount(val) || 0;
+        });
+        const hoursTd = tr.querySelector(".manual-sched-hours-cell");
+        if (hoursTd) hoursTd.textContent = total + "h";
+    };
+
+    MANUAL_DAYS.forEach(day => {
+        const td = document.createElement("td");
+        const stack = document.createElement("div");
+        stack.className = "ms-cell-stack";
+
+        const shiftSel = document.createElement("select");
+        shiftSel.className = "manual-shift-sel";
+        shiftSel.dataset.day = day;
+        shiftSel.innerHTML = shiftOptsHTML;
+        shiftSel.value = "OFF";
+
+        const customInp = document.createElement("input");
+        customInp.type = "text";
+        customInp.className = "manual-custom-time";
+        customInp.dataset.day = day;
+        customInp.placeholder = "Ej: 13-22 ó 1pm-10pm";
+        customInp.style.display = "none";
+
+        shiftSel.addEventListener("change", () => {
+            customInp.style.display = shiftSel.value === "__OTRO__" ? "block" : "none";
+            updateHours();
+        });
+        customInp.addEventListener("input", updateHours);
+
+        const taskSel = document.createElement("select");
+        taskSel.className = "manual-task-sel";
+        taskSel.dataset.day = day;
+        taskSel.innerHTML = taskOptsHTML;
+
+        stack.appendChild(shiftSel);
+        stack.appendChild(customInp);
+        stack.appendChild(taskSel);
+        td.appendChild(stack);
+        tr.appendChild(td);
+    });
+
+    const hoursTd = document.createElement("td");
+    hoursTd.className = "ms-col-hours col-hours manual-sched-hours-cell";
+    hoursTd.textContent = "0h";
+    if (!_manualSchedState.hoursVisible) hoursTd.classList.add("hidden-col");
+    tr.appendChild(hoursTd);
+
+    const delTd = document.createElement("td");
+    delTd.className = "ms-col-action";
+    const delBtn = document.createElement("button");
+    delBtn.type = "button";
+    delBtn.className = "manual-row-del";
+    delBtn.title = "Eliminar fila";
+    delBtn.innerHTML = `<i class="fa-solid fa-xmark"></i>`;
+    delBtn.addEventListener("click", () => {
+        tr.remove();
+        _manualSchedUpdateRowsCount();
+    });
+    delTd.appendChild(delBtn);
+    tr.appendChild(delTd);
+
+    return tr;
+}
+
+async function _manualSchedFetchActiveEmployees() {
+    try {
+        const res = await fetch('/api/planillas/empleados');
+        if (!res.ok) return [];
+        const all = await res.json();
+        return all
+            .filter(e => (e.activo === 1 || e.activo === true)
+                && (e.incluir_en_horario === 1 || e.incluir_en_horario === true || e.incluir_en_horario == null))
+            .map(e => e.nombre || "")
+            .filter(Boolean)
+            .sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+    } catch (err) {
+        console.error("No se pudieron cargar empleados:", err);
+        return [];
+    }
+}
+
+window.manualSchedReloadEmployees = async function () {
+    const tbody = document.getElementById("manualSchedTbody");
+    if (!tbody) return;
+    tbody.innerHTML = `<tr><td colspan="10" style="text-align:center; padding:1.25rem; color:var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i> Cargando empleados...</td></tr>`;
+    const names = await _manualSchedFetchActiveEmployees();
+    tbody.innerHTML = "";
+    if (!names.length) {
+        _manualSchedAddRow();
+        _manualSchedSetStatus("No hay empleados activos incluidos en horario. Se agregó una fila vacía.", "warn");
+        _manualSchedUpdateRowsCount();
+        return;
+    }
+    names.forEach(n => tbody.appendChild(_manualSchedBuildRow(n, false)));
+    _manualSchedSetStatus(`${names.length} empleados cargados.`, "info");
+    _manualSchedUpdateRowsCount();
+};
+
+function _manualSchedAddRow() {
+    const tbody = document.getElementById("manualSchedTbody");
+    if (!tbody) return;
+    const tr = _manualSchedBuildRow("", true);
+    tbody.appendChild(tr);
+    _manualSchedUpdateRowsCount();
+    setTimeout(() => tr.querySelector(".ms-name-input")?.focus(), 30);
+}
+
+window.manualSchedAddRow = _manualSchedAddRow;
+
+window.openManualScheduleOverlay = async function () {
+    document.querySelectorAll('.section-overlay').forEach(el => el.classList.add('hidden'));
+    const overlay = document.getElementById('overlay-manual-schedule');
+    if (!overlay) return;
+    overlay.classList.remove('hidden');
+    updateSidebarActive('nav-manual-schedule');
+
+    const fridayInput = document.getElementById('manualSchedFriday');
+    if (fridayInput && !fridayInput.value) {
+        fridayInput.value = _manualSchedDefaultFridayIso();
+    }
+    const nameInput = document.getElementById('manualSchedName');
+    if (nameInput && !nameInput.value && fridayInput?.value) {
+        nameInput.value = `Manual ${fridayInput.value}`;
+    }
+
+    _manualSchedState.specialDays = {};
+    _manualSchedState.holidayDays = {};
+    _manualSchedState.holidayMode = false;
+    _manualSchedRefreshHeader();
+    await window.manualSchedReloadEmployees();
+};
+
+function _manualSchedReadSchedule() {
+    const schedule = {};
+    const dailyTasks = {};
+    const tbody = document.getElementById("manualSchedTbody");
+    if (!tbody) return { schedule, dailyTasks };
+    tbody.querySelectorAll("tr").forEach(tr => {
+        const empName = (tr.dataset.empName || "").trim();
+        if (!empName) return;
+        schedule[empName] = {};
+        dailyTasks[empName] = {};
+        MANUAL_DAYS.forEach(day => {
+            const sel = tr.querySelector(`.manual-shift-sel[data-day="${day}"]`);
+            const ci = tr.querySelector(`.manual-custom-time[data-day="${day}"]`);
+            const taskSel = tr.querySelector(`.manual-task-sel[data-day="${day}"]`);
+            let val = sel?.value || "OFF";
+            if (val === "__OTRO__") {
+                const raw = (ci?.value || "").trim();
+                const norm = raw ? normalizeFlexibleShiftInput(raw) : null;
+                val = (norm && norm !== "AUTO") ? norm : "OFF";
+            }
+            schedule[empName][day] = val;
+            const taskBase = taskSel?.value || "";
+            if (taskBase) {
+                const startHour = getShiftStartHour(val);
+                let suffix = "";
+                if (val !== "OFF" && val !== "VAC" && val !== "PERM") {
+                    suffix = startHour >= 12 ? "↓PM" : "↑AM";
+                }
+                dailyTasks[empName][day] = taskBase + (suffix ? " " + suffix : "");
+            } else {
+                dailyTasks[empName][day] = "";
+            }
+        });
+    });
+    return { schedule, dailyTasks };
+}
+
+window.manualSchedValidate = async function () {
+    const { schedule } = _manualSchedReadSchedule();
+    if (!Object.keys(schedule).length) {
+        _manualSchedSetStatus("Agregá al menos una fila con turnos para validar.", "warn");
+        return;
+    }
+    try {
+        const oldSchedule = currentGeneratedSchedule;
+        const oldRules = validationRules;
+        const oldMeta = currentMetadata;
+        currentGeneratedSchedule = schedule;
+        currentMetadata = {
+            special_days: { ...(_manualSchedState.specialDays || {}) },
+            holiday_days: { ...(_manualSchedState.holidayDays || {}) },
+        };
+        validationRules = await fetchValidationRules(_manualSchedState.specialDays || {});
+        isValidationOn = true;
+        applyValidationUI();
+        currentGeneratedSchedule = oldSchedule;
+        validationRules = oldRules || baseValidationRules;
+        currentMetadata = oldMeta;
+        _manualSchedSetStatus("Validación corrida. Mirá el panel emergente para detalles.", "success");
+    } catch (err) {
+        console.error(err);
+        _manualSchedSetStatus("Error al validar: " + (err.message || err), "error");
+    }
+};
+
+window.manualSchedSave = async function () {
+    const name = (document.getElementById('manualSchedName')?.value || "").trim();
+    const fridayIso = document.getElementById('manualSchedFriday')?.value || "";
+    if (!name) {
+        _manualSchedSetStatus("Ingresá un nombre para la semana.", "error");
+        return;
+    }
+    if (!fridayIso) {
+        _manualSchedSetStatus("Seleccioná la fecha del viernes.", "error");
+        return;
+    }
+    const { schedule, dailyTasks } = _manualSchedReadSchedule();
+    if (!Object.keys(schedule).length) {
+        _manualSchedSetStatus("Agregá al menos una fila con un nombre antes de guardar.", "error");
+        return;
+    }
+
+    const weekDates = _fridayToWeekDates(fridayIso);
+    const payload = {
+        name,
+        schedule,
+        daily_tasks: dailyTasks,
+        week_dates: weekDates,
+        special_days: { ..._manualSchedState.specialDays },
+        metadata: {
+            source: "manual_editor",
+            holiday_days: { ..._manualSchedState.holidayDays },
+        },
+        timestamp: new Date().toISOString(),
+    };
+
+    _manualSchedSetStatus("Guardando...", "info");
+    try {
+        const res = await fetch('/api/history', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        if (!res.ok) {
+            let detail = "No se pudo guardar.";
+            try { detail = (await res.json()).detail || detail; } catch (_) { }
+            throw new Error(detail);
+        }
+        _manualSchedSetStatus(`Guardado al historial: "${name}".`, "success");
+        // Si el overlay del historial está abierto en algún momento, refrescar
+        historyEntriesCache = [];
+    } catch (err) {
+        console.error(err);
+        _manualSchedSetStatus("Error al guardar: " + (err.message || err), "error");
+    }
+};
 
 function toggleHistory(header) {
     const item = header.parentElement;
@@ -2801,17 +3730,170 @@ function handleHistoryCellClick(event, element) {
         return;
     }
 
-    editHistoryShift(
+    openShiftTaskModal(
         element.dataset.employeeName,
         element.dataset.day,
         Number(element.dataset.historyIndex)
     );
 }
 
+// Variables para el modal de turno + tarea
+let shiftTaskModalData = {
+    empName: null,
+    day: null,
+    histIndex: null,
+    currentShift: null,
+    currentTask: null
+};
+
+function _populateShiftTaskLegend() {
+    const el = document.getElementById('shiftTaskLegend');
+    if (!el) return;
+    const rows = [];
+    const codes = Object.keys(SHIFT_HOURS || {})
+        .filter(c => c && !["OFF", "VAC", "PERM"].includes(c))
+        .sort((a, b) => {
+            const ha = (SHIFT_HOURS[a] && SHIFT_HOURS[a].start) || 0;
+            const hb = (SHIFT_HOURS[b] && SHIFT_HOURS[b].start) || 0;
+            return ha - hb;
+        });
+    const friendly = (code) => {
+        const info = (typeof getShiftInfo === "function") ? getShiftInfo(code) : null;
+        return info && info.text ? info.text : code;
+    };
+    rows.push(`<div style="margin-bottom:0.4rem;"><b>Códigos rápidos</b></div>`);
+    if (codes.length) {
+        const items = codes.map(c => `<code style="background:var(--bg-app); padding:1px 5px; border-radius:4px; font-size:0.75rem;">${escapeHtmlAttr(c)}</code> = <span style="color:var(--text-muted);">${escapeHtmlAttr(friendly(c))}</span>`).join('<br/>');
+        rows.push(`<div style="margin-bottom:0.6rem;">${items}</div>`);
+    }
+    rows.push(`<div style="margin-bottom:0.4rem;"><b>Horarios manuales</b></div>`);
+    rows.push(`<div style="margin-bottom:0.6rem; color:var(--text-muted);">
+        Escribí el rango directamente, ejemplos:<br/>
+        <code style="background:var(--bg-app); padding:1px 5px; border-radius:4px; font-size:0.75rem;">13-22</code> · <code style="background:var(--bg-app); padding:1px 5px; border-radius:4px; font-size:0.75rem;">1pm-10pm</code> · <code style="background:var(--bg-app); padding:1px 5px; border-radius:4px; font-size:0.75rem;">5am-11am + 5pm-8pm</code>
+    </div>`);
+    rows.push(`<div style="margin-bottom:0.4rem;"><b>Códigos especiales</b></div>`);
+    rows.push(`<div style="color:var(--text-muted);">
+        <code style="background:var(--bg-app); padding:1px 5px; border-radius:4px; font-size:0.75rem;">OFF</code> = Libre &nbsp;·&nbsp;
+        <code style="background:var(--bg-app); padding:1px 5px; border-radius:4px; font-size:0.75rem;">VAC</code> = Vacaciones &nbsp;·&nbsp;
+        <code style="background:var(--bg-app); padding:1px 5px; border-radius:4px; font-size:0.75rem;">PERM</code> = Permiso
+    </div>`);
+    el.innerHTML = rows.join("");
+}
+
+window.openShiftTaskModal = function(empName, day, histIndex) {
+    const entry = historyEntriesCache[histIndex];
+    if (!entry) return;
+
+    const currentShift = entry.schedule?.[empName]?.[day] || "OFF";
+    const currentTasks = entry.daily_tasks || {};
+    const currentTask = (currentTasks[empName] || {})[day] || "";
+
+    _populateShiftTaskLegend();
+
+    // Guardar datos
+    shiftTaskModalData = { empName, day, histIndex, currentShift, currentTask };
+
+    // Setear título
+    document.getElementById('shiftTaskTitle').textContent = `Editar: ${empName} (${day})`;
+
+    // Setear turno actual
+    const shiftInput = document.getElementById('shiftTaskShiftInput');
+    shiftInput.value = currentShift.startsWith("MANUAL_") ? currentShift.slice(7) : currentShift;
+
+    // Setear tarea actual (separar base de sufijo)
+    const taskSelect = document.getElementById('shiftTaskSelect');
+    const { base } = _taskBaseAndSuffix(currentTask);
+    taskSelect.value = base || "";
+
+    // Inferir AM/PM basado en el turno
+    const hintEl = document.getElementById('shiftTaskAmPmHint');
+    const hintText = document.getElementById('shiftTaskAmPmText');
+    const startHour = getShiftStartHour(currentShift);
+    
+    // Mostrar hint si el turno tiene horario definido
+    if (currentShift && currentShift !== "OFF" && currentShift !== "VAC" && currentShift !== "PERM") {
+        if (startHour >= 12) {
+            hintEl.style.display = 'block';
+            hintText.innerHTML = `Turno PM (empieza a las ${startHour}:00). La tarea se marcará con <b>↓PM</b>.`;
+        } else {
+            hintEl.style.display = 'block';
+            hintText.innerHTML = `Turno AM (empieza a las ${startHour}:00). La tarea se marcará con <b>↑AM</b>.`;
+        }
+    } else {
+        hintEl.style.display = 'none';
+    }
+
+    // Mostrar modal
+    document.getElementById('shiftTaskModal').classList.remove('hidden');
+    shiftInput.focus();
+};
+
+window.closeShiftTaskModal = function() {
+    document.getElementById('shiftTaskModal').classList.add('hidden');
+};
+
+window.confirmShiftTaskEdit = async function() {
+    const { empName, day, histIndex } = shiftTaskModalData;
+    const entry = historyEntriesCache[histIndex];
+    if (!entry) return;
+
+    const newShiftInput = document.getElementById('shiftTaskShiftInput').value.trim();
+    const taskSelect = document.getElementById('shiftTaskSelect');
+    const taskBase = taskSelect.value;
+
+    // Procesar turno
+    let newShift = null;
+    if (newShiftInput && newShiftInput !== "") {
+        const normalized = normalizeFlexibleShiftInput(newShiftInput);
+        if (normalized && normalized !== "AUTO") {
+            newShift = normalized;
+        }
+    }
+
+    // Si el turno queda vacío o es "OFF", borrar el turno
+    if (!newShift || newShift === "OFF") {
+        newShift = "OFF";
+    }
+
+    // Procesar tarea con sufijo AM/PM basado en el turno
+    let newTask = null;
+    if (taskBase) {
+        const startHour = getShiftStartHour(newShift);
+        let suffix = "";
+        if (newShift !== "OFF" && newShift !== "VAC" && newShift !== "PERM") {
+            if (startHour >= 12) {
+                suffix = "↓PM";
+            } else {
+                suffix = "↑AM";
+            }
+        }
+        newTask = taskBase + (suffix ? " " + suffix : "");
+    }
+
+    // Actualizar entrada
+    const nextEntry = cloneHistoryEntry(entry);
+    nextEntry.schedule = nextEntry.schedule || {};
+    nextEntry.schedule[empName] = nextEntry.schedule[empName] || {};
+    nextEntry.daily_tasks = nextEntry.daily_tasks || {};
+    nextEntry.daily_tasks[empName] = nextEntry.daily_tasks[empName] || {};
+    
+    nextEntry.schedule[empName][day] = newShift;
+    nextEntry.daily_tasks[empName][day] = newTask;
+
+    try {
+        await persistHistoryEntry(histIndex, nextEntry);
+        closeShiftTaskModal();
+        renderHistoryEntryTable(histIndex);
+        setStatusMessage(`Actualizado: ${empName} - ${day}`, "success");
+    } catch (err) {
+        console.error(err);
+        setStatusMessage("Error al guardar: " + err.message, "error");
+    }
+};
+
 function buildHistoryShiftPromptMessage(empName, days) {
-    const codes = Object.keys(SHIFT_HOURS);
     const dayLabel = days.length === 1 ? days[0] : days.join(", ");
-    return `Cambiar turno para ${empName} en ${dayLabel}:\n\nOpciones:\n${codes.join(", ")}\n\nTambien puedes escribir un horario manual, por ejemplo:\n13-22\n1pm - 10pm\n5am-11am + 5pm-8pm`;
+    return `Cambiar turno de ${empName} (${dayLabel})`;
 }
 
 function getHistoryPromptDefaultValue(shiftCode) {
@@ -2833,6 +3915,40 @@ function promptHistoryShiftValue(empName, days, currentValue = "") {
         document.getElementById('textEditTitle').textContent = message;
         document.getElementById('textEditLabel').textContent = 'Turno';
         document.getElementById('textEditInput').value = defaultVal;
+        document.getElementById('textEditInput').placeholder = "Ej: 5am-1pm, 13-22, OFF";
+
+        // Mostrar leyenda colapsable con los formatos aceptados (no listamos códigos crudos)
+        const legendWrap = document.getElementById('textEditLegendWrap');
+        const legendBody = document.getElementById('textEditLegend');
+        if (legendWrap && legendBody) {
+            legendWrap.style.display = 'block';
+            const codes = Object.keys(SHIFT_HOURS || {})
+                .filter(c => c && !["OFF", "VAC", "PERM"].includes(c))
+                .sort((a, b) => {
+                    const ha = (SHIFT_HOURS[a] && SHIFT_HOURS[a].start) || 0;
+                    const hb = (SHIFT_HOURS[b] && SHIFT_HOURS[b].start) || 0;
+                    return ha - hb;
+                });
+            const friendly = (code) => {
+                const info = (typeof getShiftInfo === "function") ? getShiftInfo(code) : null;
+                return info && info.text ? info.text : code;
+            };
+            const fastItems = codes.map(c => `<code style="background:var(--bg-app); padding:1px 5px; border-radius:4px; font-size:0.75rem;">${escapeHtmlAttr(c)}</code> = <span style="color:var(--text-muted);">${escapeHtmlAttr(friendly(c))}</span>`).join('<br/>');
+            legendBody.innerHTML = `
+                <div style="margin-bottom:0.4rem;"><b>Códigos rápidos</b></div>
+                <div style="margin-bottom:0.6rem;">${fastItems}</div>
+                <div style="margin-bottom:0.4rem;"><b>Horario manual</b></div>
+                <div style="margin-bottom:0.6rem; color:var(--text-muted);">
+                    Escribí el rango directamente:<br/>
+                    <code style="background:var(--bg-app); padding:1px 5px; border-radius:4px; font-size:0.75rem;">13-22</code> · <code style="background:var(--bg-app); padding:1px 5px; border-radius:4px; font-size:0.75rem;">1pm-10pm</code> · <code style="background:var(--bg-app); padding:1px 5px; border-radius:4px; font-size:0.75rem;">5am-11am + 5pm-8pm</code>
+                </div>
+                <div style="margin-bottom:0.4rem;"><b>Códigos especiales</b></div>
+                <div style="color:var(--text-muted);">
+                    <code style="background:var(--bg-app); padding:1px 5px; border-radius:4px; font-size:0.75rem;">OFF</code> Libre &nbsp;·&nbsp;
+                    <code style="background:var(--bg-app); padding:1px 5px; border-radius:4px; font-size:0.75rem;">VAC</code> Vacaciones &nbsp;·&nbsp;
+                    <code style="background:var(--bg-app); padding:1px 5px; border-radius:4px; font-size:0.75rem;">PERM</code> Permiso
+                </div>`;
+        }
         
         shiftPromptCallback = (input) => {
             if (!input || input.trim() === "") {
@@ -2870,6 +3986,7 @@ async function persistHistoryEntry(index, nextEntry) {
         week_dates: nextEntry.week_dates ?? null,
         special_days: nextEntry.special_days || {},
         timestamp: nextEntry.timestamp || "",
+        metadata: nextEntry.metadata || {},
     };
 
     const entry = historyEntriesCache[index];
@@ -2895,6 +4012,205 @@ async function persistHistoryEntry(index, nextEntry) {
 
     historyEntriesCache[index] = nextEntry;
 }
+
+// =====================================================
+// HISTORY NAME RENAME / LINK MODAL
+// =====================================================
+let _historyNameModalState = {
+    histIndex: null,
+    canonical: null,
+    suggestions: [],
+    selectedCanonical: null,
+};
+
+async function _loadHistoryNameSuggestions() {
+    try {
+        const res = await fetch('/api/planillas/empleados');
+        if (!res.ok) return [];
+        const all = await res.json();
+        return all
+            .filter(e => (e.activo === 1 || e.activo === true)
+                && (e.incluir_en_horario === 1 || e.incluir_en_horario === true || e.incluir_en_horario == null))
+            .map(e => ({ id: e.id, nombre: e.nombre || "" }))
+            .filter(e => e.nombre)
+            .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' }));
+    } catch (err) {
+        console.error("No se pudieron cargar las sugerencias:", err);
+        return [];
+    }
+}
+
+function _renderHistoryNameSuggestions(filterText) {
+    const container = document.getElementById('histNameSuggestions');
+    if (!container) return;
+    const ft = (filterText || "").trim().toLowerCase();
+    const list = _historyNameModalState.suggestions
+        .filter(s => !ft || s.nombre.toLowerCase().includes(ft));
+    if (!list.length) {
+        container.innerHTML = `<div style="padding: 0.5rem; font-size: 0.8rem; color: var(--text-muted);">Sin coincidencias. El nombre se guardará como etiqueta libre.</div>`;
+        return;
+    }
+    container.innerHTML = list.slice(0, 20).map(s => `
+        <div class="hist-name-option" data-name="${escapeHtmlAttr(s.nombre)}"
+             style="padding: 0.45rem 0.6rem; border-radius: 6px; cursor: pointer; font-size: 0.85rem; display: flex; align-items: center; gap: 0.5rem;">
+            <i class="fa-solid fa-user" style="color: var(--text-muted); font-size: 0.75rem;"></i>
+            <span>${escapeHtmlAttr(s.nombre)}</span>
+        </div>
+    `).join("");
+    container.querySelectorAll('.hist-name-option').forEach(el => {
+        el.addEventListener('mouseenter', () => { el.style.background = 'var(--surface-3, rgba(99,102,241,0.12))'; });
+        el.addEventListener('mouseleave', () => { el.style.background = 'transparent'; });
+        el.addEventListener('click', () => {
+            const picked = el.dataset.name;
+            const input = document.getElementById('histNameInput');
+            if (input) input.value = picked;
+            _historyNameModalState.selectedCanonical = picked;
+            _updateHistoryNameLinkBadge();
+        });
+    });
+}
+
+function _updateHistoryNameLinkBadge() {
+    const badge = document.getElementById('histNameLinkBadge');
+    if (!badge) return;
+    const input = document.getElementById('histNameInput');
+    const text = (input?.value || "").trim();
+    const lower = text.toLowerCase();
+    const match = _historyNameModalState.suggestions.find(s => s.nombre.toLowerCase() === lower);
+    if (match) {
+        _historyNameModalState.selectedCanonical = match.nombre;
+        badge.style.display = 'block';
+        badge.style.color = 'var(--success, #10b981)';
+        badge.innerHTML = `<i class="fa-solid fa-link"></i> Vinculado a <b>${escapeHtmlAttr(match.nombre)}</b> — esta semana contará para su rotación.`;
+    } else if (text) {
+        _historyNameModalState.selectedCanonical = null;
+        badge.style.display = 'block';
+        badge.style.color = 'var(--text-muted)';
+        badge.innerHTML = `<i class="fa-solid fa-tag"></i> Etiqueta libre — la fila seguirá vinculada a <b>${escapeHtmlAttr(_historyNameModalState.canonical || "")}</b> en el motor.`;
+    } else {
+        _historyNameModalState.selectedCanonical = null;
+        badge.style.display = 'none';
+    }
+}
+
+window.openHistoryNameModal = async function(histIndex, currentCanonical) {
+    const entry = historyEntriesCache[histIndex];
+    if (!entry) return;
+    const aliases = (entry.metadata && entry.metadata.display_aliases) || {};
+    const currentDisplay = aliases[currentCanonical] || currentCanonical;
+
+    _historyNameModalState = {
+        histIndex,
+        canonical: currentCanonical,
+        suggestions: [],
+        selectedCanonical: null,
+    };
+
+    const errorEl = document.getElementById('histNameError');
+    if (errorEl) errorEl.style.display = 'none';
+
+    const input = document.getElementById('histNameInput');
+    if (input) input.value = currentDisplay || "";
+
+    const container = document.getElementById('histNameSuggestions');
+    if (container) container.innerHTML = `<div style="padding: 0.5rem; font-size: 0.8rem; color: var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i> Cargando...</div>`;
+
+    document.getElementById('historyNameModal').classList.remove('hidden');
+    if (input) input.focus();
+
+    _historyNameModalState.suggestions = await _loadHistoryNameSuggestions();
+    _renderHistoryNameSuggestions(currentDisplay);
+    _updateHistoryNameLinkBadge();
+
+    if (input && !input._histNameBound) {
+        input.addEventListener('input', () => {
+            _renderHistoryNameSuggestions(input.value);
+            _updateHistoryNameLinkBadge();
+        });
+        input._histNameBound = true;
+    }
+};
+
+window.closeHistoryNameModal = function() {
+    document.getElementById('historyNameModal').classList.add('hidden');
+};
+
+window.confirmHistoryNameEdit = async function() {
+    const { histIndex, canonical, suggestions } = _historyNameModalState;
+    const entry = historyEntriesCache[histIndex];
+    if (!entry) {
+        closeHistoryNameModal();
+        return;
+    }
+
+    const input = document.getElementById('histNameInput');
+    const errorEl = document.getElementById('histNameError');
+    const text = (input?.value || "").trim();
+    if (!text) {
+        if (errorEl) {
+            errorEl.style.display = 'block';
+            errorEl.textContent = 'El nombre no puede estar vacío.';
+        }
+        return;
+    }
+
+    const lower = text.toLowerCase();
+    const match = suggestions.find(s => s.nombre.toLowerCase() === lower);
+
+    const nextEntry = cloneHistoryEntry(entry);
+    nextEntry.metadata = nextEntry.metadata || {};
+    nextEntry.metadata.display_aliases = { ...(nextEntry.metadata.display_aliases || {}) };
+
+    let targetKey = canonical;
+    if (match && match.nombre !== canonical) {
+        if (nextEntry.schedule && nextEntry.schedule[match.nombre]) {
+            if (errorEl) {
+                errorEl.style.display = 'block';
+                errorEl.textContent = `Ya existe una fila para "${match.nombre}" en este historial. Eliminala antes de vincular.`;
+            }
+            return;
+        }
+        nextEntry.schedule = nextEntry.schedule || {};
+        if (nextEntry.schedule[canonical]) {
+            nextEntry.schedule[match.nombre] = nextEntry.schedule[canonical];
+            delete nextEntry.schedule[canonical];
+        }
+        if (nextEntry.daily_tasks && nextEntry.daily_tasks[canonical]) {
+            nextEntry.daily_tasks[match.nombre] = nextEntry.daily_tasks[canonical];
+            delete nextEntry.daily_tasks[canonical];
+        }
+        if (nextEntry.metadata.display_aliases[canonical]) {
+            delete nextEntry.metadata.display_aliases[canonical];
+        }
+        targetKey = match.nombre;
+    }
+
+    if (text === targetKey) {
+        delete nextEntry.metadata.display_aliases[targetKey];
+    } else {
+        nextEntry.metadata.display_aliases[targetKey] = text;
+    }
+
+    if (Object.keys(nextEntry.metadata.display_aliases).length === 0) {
+        delete nextEntry.metadata.display_aliases;
+    }
+
+    try {
+        await persistHistoryEntry(histIndex, nextEntry);
+        closeHistoryNameModal();
+        renderHistoryEntryTable(histIndex);
+        const msg = match
+            ? `Vinculado: "${text}" → ${match.nombre}`
+            : `Renombrado: ${canonical} → "${text}"`;
+        setStatusMessage(msg, "success");
+    } catch (err) {
+        console.error(err);
+        if (errorEl) {
+            errorEl.style.display = 'block';
+            errorEl.textContent = err.message || 'Error al guardar.';
+        }
+    }
+};
 
 async function editHistoryShiftBatch(empName, days, histIndex) {
     try {
@@ -2987,6 +4303,9 @@ function openTextEditModal(title, label, defaultValue, callback) {
     document.getElementById('textEditTitle').textContent = title;
     document.getElementById('textEditLabel').textContent = label;
     document.getElementById('textEditInput').value = defaultValue;
+    document.getElementById('textEditInput').placeholder = "";
+    const legendWrap = document.getElementById('textEditLegendWrap');
+    if (legendWrap) legendWrap.style.display = 'none';
     textEditCallback = callback;
     
     document.getElementById('textEditModal').classList.remove('hidden');
@@ -3009,6 +4328,8 @@ function closeTextEditModal() {
     document.getElementById('textEditModal').classList.add('hidden');
     textEditCallback = null;
     shiftPromptCallback = null;
+    const legendWrap = document.getElementById('textEditLegendWrap');
+    if (legendWrap) legendWrap.style.display = 'none';
 }
 
 // Toggle para tarjetas de parámetros colapsables
@@ -3214,13 +4535,17 @@ async function downloadExcel(url) {
         const link = document.createElement("a");
         const contentDisposition = res.headers.get("content-disposition") || "";
         const match = contentDisposition.match(/filename="?([^";]+)"?/i);
+        const exportedFilename = match ? match[1] : "horario.xlsx";
 
         link.href = downloadUrl;
-        link.download = match ? match[1] : "horario.xlsx";
+        link.download = exportedFilename;
         document.body.appendChild(link);
         link.click();
         link.remove();
         window.URL.revokeObjectURL(downloadUrl);
+
+        // Show confirmation modal
+        showExportConfirmationModal(exportedFilename);
 
         if (status) {
             status.innerHTML = '<i class="fa-solid fa-check"></i> Exportación completada';
@@ -3238,6 +4563,67 @@ async function downloadExcel(url) {
             }, 4000);
         }
     }
+}
+
+function showExportConfirmationModal(filename) {
+    // Remove existing modal if any
+    let existing = document.getElementById("exportConfirmModal");
+    if (existing) existing.remove();
+
+    const modal = document.createElement("div");
+    modal.id = "exportConfirmModal";
+    modal.className = "modal-backdrop";
+    modal.innerHTML = `
+        <div class="modal-dialog" style="max-width: 440px; animation: modalSpringUp 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.2) both;">
+            <div class="modal-content" style="text-align: center; padding: 2rem;">
+                <div style="margin-bottom: 1.25rem;">
+                    <div style="width: 64px; height: 64px; border-radius: 50%; background: linear-gradient(135deg, #10b981, #059669); display: flex; align-items: center; justify-content: center; margin: 0 auto 1rem;">
+                        <i class="fa-solid fa-check" style="font-size: 1.75rem; color: white;"></i>
+                    </div>
+                    <h3 style="margin: 0 0 0.5rem; font-size: 1.2rem; color: var(--text-main);">Excel exportado exitosamente</h3>
+                    <p style="margin: 0; color: var(--text-muted); font-size: 0.9rem;">
+                        <i class="fa-solid fa-file-excel" style="color: #10b981; margin-right: 4px;"></i>
+                        ${_escapeHtml(filename)}
+                    </p>
+                </div>
+                <div style="display: flex; gap: 0.75rem; justify-content: center; flex-wrap: wrap;">
+                    <button type="button" onclick="openExportFolder(); closeExportConfirmModal();"
+                        class="action-btn" style="background: linear-gradient(135deg, #3b82f6, #2563eb); color: white; border: none; padding: 0.6rem 1.25rem; border-radius: 8px; cursor: pointer; font-size: 0.9rem; display: inline-flex; align-items: center; gap: 6px;">
+                        <i class="fa-solid fa-folder-open"></i> Abrir carpeta
+                    </button>
+                    <button type="button" onclick="closeExportConfirmModal();"
+                        class="action-btn" style="background: var(--bg-card); color: var(--text-main); border: 1px solid var(--border-color); padding: 0.6rem 1.25rem; border-radius: 8px; cursor: pointer; font-size: 0.9rem;">
+                        Cerrar
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+
+    // Close on backdrop click
+    modal.addEventListener("click", (e) => {
+        if (e.target === modal) closeExportConfirmModal();
+    });
+}
+
+function closeExportConfirmModal() {
+    const modal = document.getElementById("exportConfirmModal");
+    if (modal) modal.remove();
+}
+
+async function openExportFolder() {
+    try {
+        await fetch("/api/open_export_folder", { method: "POST" });
+    } catch (e) {
+        console.error("Error opening export folder:", e);
+    }
+}
+
+function _escapeHtml(text) {
+    const div = document.createElement("div");
+    div.textContent = text;
+    return div.innerHTML;
 }
 
 function exportToExcel() {
@@ -3341,6 +4727,42 @@ function toggleHoursColumn() {
     targets.forEach(el => el.classList.toggle("hidden-col"));
 }
 
+// =====================================================
+// SCHEDULE HEADER ACTIONS DROPDOWN
+// =====================================================
+window.toggleScheduleActionsMenu = function (event) {
+    if (event) event.stopPropagation();
+    const dropdown = document.getElementById("scheduleActionsDropdown");
+    const trigger = document.getElementById("btnScheduleActionsMenu");
+    if (!dropdown) return;
+    const isOpen = !dropdown.classList.contains("hidden");
+    if (isOpen) {
+        dropdown.classList.add("hidden");
+        if (trigger) trigger.setAttribute("aria-expanded", "false");
+    } else {
+        dropdown.classList.remove("hidden");
+        if (trigger) trigger.setAttribute("aria-expanded", "true");
+        // Cerrar al hacer click fuera
+        setTimeout(() => {
+            const handler = (e) => {
+                if (!dropdown.contains(e.target) && e.target !== trigger && !trigger?.contains(e.target)) {
+                    dropdown.classList.add("hidden");
+                    if (trigger) trigger.setAttribute("aria-expanded", "false");
+                    document.removeEventListener("click", handler);
+                }
+            };
+            document.addEventListener("click", handler);
+        }, 0);
+    }
+};
+
+window.closeScheduleActionsMenu = function () {
+    const dropdown = document.getElementById("scheduleActionsDropdown");
+    const trigger = document.getElementById("btnScheduleActionsMenu");
+    if (dropdown) dropdown.classList.add("hidden");
+    if (trigger) trigger.setAttribute("aria-expanded", "false");
+};
+
 async function toggleValidation() {
     isValidationOn = !isValidationOn;
     const btn = document.getElementById("btnToggleValidation");
@@ -3350,11 +4772,12 @@ async function toggleValidation() {
 
         try {
             await refreshScheduleValidationRules(currentMetadata?.special_days || getSpecialDaysPayload());
-            btn.innerHTML = `<i class="fa-solid fa-check"></i> Validando...`;
+            btn.innerHTML = `<i class="fa-solid fa-check"></i> Validación activa`;
         } catch (err) {
             console.error("Error fetching validation rules:", err);
             alert("Error al obtener reglas de validaci\u00f3n del servidor.\n\n\u00bfEst\u00e1 el servidor corriendo?");
             btn.innerHTML = `<i class="fa-solid fa-check-double"></i> Validaci\u00f3n`;
+            btn.classList.remove("primary");
             isValidationOn = false;
             return;
         }
@@ -3377,6 +4800,16 @@ async function toggleValidation() {
         if (coveragePanel) coveragePanel.style.display = "none";
         const restPanel = document.getElementById("restBetweenShiftsPanel");
         if (restPanel) restPanel.style.display = "none";
+        // Cerrar también el overlay (sin pasar por closeValidatorOverlay para evitar
+        // recursión: closeValidatorOverlay llama a toggleValidation cuando está ON).
+        const overlay = document.getElementById("validatorOverlay");
+        if (overlay) {
+            overlay.classList.remove("val-overlay-visible");
+            overlay.classList.add("val-overlay-hidden");
+        }
+        // Asegurar que cualquier pill viejo del DOM no sobreviva.
+        const stale = document.getElementById("validatorReopenBtn");
+        if (stale) stale.remove();
     }
 }
 
@@ -3738,7 +5171,7 @@ function applyValidationUI() {
         <div class="val-overlay-panel">
             <div class="val-overlay-topbar">
                 <span class="val-overlay-title"><i class="fa-solid fa-shield-check"></i> Validacion de reglas y cobertura</span>
-                <button class="val-overlay-close" onclick="closeValidatorOverlay()" title="Minimizar">
+                <button class="val-overlay-close" onclick="closeValidatorOverlay()" title="Cerrar validación">
                     <i class="fa-solid fa-xmark"></i>
                 </button>
             </div>
@@ -3754,33 +5187,36 @@ function applyValidationUI() {
     overlay.classList.add("val-overlay-visible");
 }
 
+// Cierre del overlay = apaga la validación completa.
+// El botón principal "Validación" del header es el único punto de control:
+// no usamos un pill flotante separado, evita duplicidad y se siente más limpio.
 function closeValidatorOverlay() {
     const overlay = document.getElementById("validatorOverlay");
     if (overlay) {
         overlay.classList.remove("val-overlay-visible");
         overlay.classList.add("val-overlay-hidden");
     }
-    // Show/create the floating reopen button
-    let reopenBtn = document.getElementById("validatorReopenBtn");
-    if (!reopenBtn) {
-        reopenBtn = document.createElement("button");
-        reopenBtn.id = "validatorReopenBtn";
-        reopenBtn.className = "validator-reopen-btn";
-        reopenBtn.onclick = reopenValidatorOverlay;
-        reopenBtn.innerHTML = `<i class="fa-solid fa-shield-check"></i> Ver Validación`;
-        document.body.appendChild(reopenBtn);
+    // Si la validación estaba activa, sincronizar el botón principal apagándola.
+    if (typeof isValidationOn !== "undefined" && isValidationOn) {
+        try {
+            toggleValidation();
+        } catch (err) {
+            console.error("Error al apagar validación desde el overlay:", err);
+        }
     }
-    reopenBtn.style.display = "inline-flex";
+    // Por si alguna versión previa dejó pegado el pill flotante en el DOM,
+    // lo removemos para no mostrar dos puntos de control.
+    const stale = document.getElementById("validatorReopenBtn");
+    if (stale) stale.remove();
 }
 
+// Compatibilidad con código existente que pueda invocar reopen.
 function reopenValidatorOverlay() {
     const overlay = document.getElementById("validatorOverlay");
     if (overlay) {
         overlay.classList.remove("val-overlay-hidden");
         overlay.classList.add("val-overlay-visible");
     }
-    const reopenBtn = document.getElementById("validatorReopenBtn");
-    if (reopenBtn) reopenBtn.style.display = "none";
 }
 
 
@@ -3820,6 +5256,256 @@ window.toggleHistoryHours = function (index, event) {
     }
 };
 
+// Modal para marcar días como feriados en el historial
+let holidayModalData = { histIndex: null };
+
+window.toggleDayAsHoliday = function(index, event) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+    
+    const entry = historyEntriesCache[index];
+    if (!entry) return;
+    
+    holidayModalData = { histIndex: index };
+    
+    // Leer días ya marcados como feriado
+    const existingHolidays = entry.metadata?.holiday_days || {};
+    
+    // Construir HTML del modal
+    const modalHtml = `
+        <div id="holidayModal" class="modal-backdrop">
+            <div class="modal-dialog" style="max-width: 400px;">
+                <div class="modal-content">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.75rem;">
+                        <h3 style="margin: 0; font-size: 1.1rem;">Marcar Día como Feriado</h3>
+                        <button type="button" onclick="closeHolidayModal()" style="background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 1.25rem;">
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
+                    </div>
+                    <p class="helper-text" style="margin-bottom: 1rem;">
+                        <i class="fa-solid fa-info-circle"></i> 
+                        Seleccioná el día de la semana para marcarlo como feriado. Esto agregará la fila de feriados en la planilla.
+                    </p>
+                    <div id="holidayDaysContainer" style="display: flex; flex-direction: column; gap: 0.5rem;">
+                        ${DAYS.map(d => {
+                            const isChecked = !!existingHolidays[d];
+                            const holidayName = existingHolidays[d] || "";
+                            return `
+                                <label style="display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem; background: var(--surface-2); border-radius: 8px; cursor: pointer; border: 1px solid ${isChecked ? 'var(--primary)' : 'var(--border-color)'};">
+                                    <input type="checkbox" class="holiday-day-checkbox" data-day="${d}" ${isChecked ? 'checked' : ''} 
+                                        style="width: 18px; height: 18px; accent-color: var(--primary);"
+                                        onchange="toggleHolidayDayInput('${d}', this.checked)">
+                                    <span style="font-weight: 600; min-width: 50px;">${d}</span>
+                                    <input type="text" id="holidayName_${d}" class="custom-input" 
+                                        placeholder="Nombre del feriados (ej: Fiesta Purís)"
+                                        value="${holidayName}"
+                                        style="flex: 1; padding: 0.4rem; font-size: 0.85rem; ${isChecked ? '' : 'display: none;'}"
+                                        ${isChecked ? '' : 'disabled'}>
+                                </label>
+                            `;
+                        }).join('')}
+                    </div>
+                    <div class="modal-actions" style="margin-top: 1rem;">
+                        <button type="button" class="btn-text" onclick="closeHolidayModal()">Cancelar</button>
+                        <button type="button" class="btn-action primary" onclick="saveHolidayDays()">Guardar</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Remover modal existente
+    const existing = document.getElementById('holidayModal');
+    if (existing) existing.remove();
+    
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+    document.getElementById('holidayModal').classList.remove('hidden');
+};
+
+window.toggleHolidayDayInput = function(day, checked) {
+    const input = document.getElementById(`holidayName_${day}`);
+    if (input) {
+        input.style.display = checked ? 'block' : 'none';
+        input.disabled = !checked;
+        if (!checked) input.value = '';
+    }
+};
+
+window.closeHolidayModal = function() {
+    const modal = document.getElementById('holidayModal');
+    if (modal) modal.remove();
+};
+
+function syncHolidayDayModalNameField() {
+    const cb = document.getElementById("holidayDayCheckbox");
+    const inp = document.getElementById("holidayNameInput");
+    if (!cb || !inp) return;
+    const on = cb.checked;
+    inp.disabled = !on;
+    inp.style.display = on ? "block" : "none";
+    if (on) {
+        requestAnimationFrame(() => {
+            void inp.offsetHeight;
+            inp.focus();
+        });
+    }
+}
+
+// Abrir modal para marcar un día específico como feriado (click en columna del día)
+window.openHolidayDayModal = function(day, histIndex) {
+    if (histIndex < 0) return; // Solo para historial
+    
+    const entry = historyEntriesCache[histIndex];
+    if (!entry) return;
+    
+    holidayModalData = { histIndex, day };
+    
+    // Leer días ya marcados como feriado
+    const existingHolidays = entry.metadata?.holiday_days || {};
+    const isChecked = !!existingHolidays[day];
+    const holidayName = existingHolidays[day] || "";
+    
+    // Construir HTML del modal para un solo día
+    const modalHtml = `
+        <div id="holidayModal" class="modal-backdrop">
+            <div class="modal-dialog" style="max-width: 350px;">
+                <div class="modal-content">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.75rem;">
+                        <h3 style="margin: 0; font-size: 1.1rem;">Marcar ${day} como Feriado</h3>
+                        <button type="button" onclick="closeHolidayModal()" style="background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 1.25rem;">
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
+                    </div>
+                    <p class="helper-text" style="margin-bottom: 1rem;">
+                        <i class="fa-solid fa-info-circle"></i> 
+                        Esto agregará la fila de feriados en la planilla para este día.
+                    </p>
+                    <div style="margin-bottom: 1rem;">
+                        <label class="option-card hover-glow holiday-modal-toggle-row" style="padding: 12px 16px; display: flex; align-items: center; gap: 12px; cursor: pointer;">
+                            <div class="toggle-container" style="flex-shrink: 0;">
+                                <input type="checkbox" id="holidayDayCheckbox" ${isChecked ? 'checked' : ''} 
+                                    class="toggle-checkbox"
+                                    onchange="syncHolidayDayModalNameField()">
+                                <div class="toggle-slider"></div>
+                            </div>
+                            <div class="opt-content" style="flex: 1;">
+                                <div class="opt-icon" style="background: rgba(245, 158, 11, 0.1); color: #f59e0b;">
+                                    <i class="fa-solid fa-star"></i>
+                                </div>
+                                <div class="opt-text">
+                                    <strong style="font-size: 0.9rem;">Marcar como feriado</strong>
+                                </div>
+                            </div>
+                        </label>
+                        <input type="text" id="holidayNameInput" class="custom-input holiday-modal-name-input" 
+                            placeholder="Nombre (vacío = Feriado (${day}))"
+                            value="${escapeHtmlAttr(holidayName)}"
+                            style="width: 100%; margin-top: 0.75rem; padding: 0.6rem 0.8rem; ${isChecked ? '' : 'display: none;'}"
+                            ${isChecked ? '' : 'disabled'}>
+                    </div>
+                    <div class="modal-actions" style="margin-top: 1rem;">
+                        <button type="button" class="btn-text" onclick="closeHolidayModal()">Cancelar</button>
+                        <button type="button" class="btn-action primary" onclick="saveSingleHolidayDay()">Guardar</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Remover modal existente
+    const existing = document.getElementById('holidayModal');
+    if (existing) existing.remove();
+    
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+    document.getElementById('holidayModal').classList.remove('hidden');
+    syncHolidayDayModalNameField();
+};
+
+window.saveSingleHolidayDay = async function() {
+    const { histIndex, day } = holidayModalData;
+    const entry = historyEntriesCache[histIndex];
+    if (!entry) {
+        console.error("No entry found for histIndex:", histIndex);
+        return;
+    }
+    
+    const checkbox = document.getElementById('holidayDayCheckbox');
+    const nameInput = document.getElementById('holidayNameInput');
+    
+    const holidayDays = { ...(entry.metadata?.holiday_days || {}) };
+    
+    if (checkbox && checkbox.checked && nameInput) {
+        const raw = nameInput.value.trim();
+        holidayDays[day] = raw || `Feriado (${day})`;
+    } else {
+        delete holidayDays[day];
+    }
+
+    // Actualizar metadata
+    const nextEntry = cloneHistoryEntry(entry);
+    nextEntry.metadata = nextEntry.metadata || {};
+    nextEntry.metadata.holiday_days = holidayDays;
+
+    const savedDbId = nextEntry.db_id ?? historyEntriesCache[histIndex]?.db_id;
+
+    try {
+        await persistHistoryEntry(histIndex, nextEntry);
+
+        await fetchHistoryEntries(true);
+
+        let renderIdx = histIndex;
+        if (savedDbId != null) {
+            const found = historyEntriesCache.findIndex((e) => e.db_id === savedDbId);
+            if (found >= 0) renderIdx = found;
+        }
+
+        closeHolidayModal();
+        renderHistoryEntryTable(renderIdx);
+        setStatusMessage(
+            checkbox && checkbox.checked ? `${day} marcado como feriado.` : `${day}: feriado quitado.`,
+            "success"
+        );
+    } catch (err) {
+        console.error("Error saving holiday:", err);
+        setStatusMessage("Error al guardar: " + err.message, "error");
+    }
+};
+
+window.saveHolidayDays = async function() {
+    const { histIndex } = holidayModalData;
+    const entry = historyEntriesCache[histIndex];
+    if (!entry) return;
+    
+    // Recolectar días marcados
+    const holidayDays = {};
+    DAYS.forEach(d => {
+        const checkbox = document.querySelector(`.holiday-day-checkbox[data-day="${d}"]`);
+        const nameInput = document.getElementById(`holidayName_${d}`);
+        if (checkbox && checkbox.checked && nameInput) {
+            const name = nameInput.value.trim();
+            holidayDays[d] = name || `Feriado (${d})`;
+        }
+    });
+    
+    // Actualizar metadata
+    const nextEntry = cloneHistoryEntry(entry);
+    nextEntry.metadata = nextEntry.metadata || {};
+    nextEntry.metadata.holiday_days = holidayDays;
+    
+    try {
+        await persistHistoryEntry(histIndex, nextEntry);
+        await fetchHistoryEntries(true);
+        closeHolidayModal();
+        renderHistoryList();
+        setStatusMessage("Días feriados actualizados.", "success");
+    } catch (err) {
+        console.error(err);
+        setStatusMessage("Error al guardar: " + err.message, "error");
+    }
+};
+
 window.reassignHistoryTasks = async function (index, event) {
     if (event) {
         event.preventDefault();
@@ -3854,6 +5540,137 @@ window.reassignHistoryTasks = async function (index, event) {
         console.error(err);
         setStatusMessage("No se pudo recalcular la limpieza.", "error");
         alert(err.message || "Error al recalcular limpieza");
+    }
+};
+
+window.editHistoryTasks = async function (index, event) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+    
+    const entry = historyEntriesCache[index];
+    if (!entry) {
+        setStatusMessage("Entrada de historial no encontrada.", "error");
+        return;
+    }
+    
+    const currentTasks = entry.daily_tasks || {};
+    
+    // Construir HTML del modal
+    const modalHtml = `
+        <div id="editTasksModal" class="modal-backdrop">
+            <div class="modal-dialog" style="max-width: 600px; width: 90%;">
+                <div class="modal-header-simple">
+                    <h3>Editar Tareas de Limpieza</h3>
+                    <button class="close-icon" onclick="closeEditTasksModal()"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+                <div class="modal-body-scroll" style="max-height: 60vh; overflow-y: auto;">
+                    <p class="helper-text" style="margin-bottom: 1rem;">
+                        <i class="fa-solid fa-info-circle"></i> 
+                        Edita las tareas de limpieza para este horario. Deja en blanco para eliminar.
+                    </p>
+                    <div id="editTasksContainer"></div>
+                </div>
+                <div class="modal-actions-footer">
+                    <button class="btn-text" onclick="closeEditTasksModal()">Cancelar</button>
+                    <button class="btn-action primary" onclick="saveEditedTasks(${index})">Guardar Cambios</button>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Remover modal existente si hay
+    const existingModal = document.getElementById('editTasksModal');
+    if (existingModal) existingModal.remove();
+    
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+    
+    // Llenar el container con las tareas actuales
+    const container = document.getElementById('editTasksContainer');
+    
+    // Obtener lista de empleados del horario
+    const employees = Object.keys(entry.schedule || {});
+    
+    if (employees.length === 0) {
+        container.innerHTML = '<p class="helper-text">No hay empleados en este horario.</p>';
+        return;
+    }
+    
+    // Días de la semana
+    const dias = ['Vie', 'Sáb', 'Dom', 'Lun', 'Mar', 'Mié', 'Jue'];
+    
+    // Construir tabla de tareas
+    let tableHtml = '<table class="clean-table" style="width: 100%; font-size: 0.85rem;">';
+    tableHtml += '<thead><tr><th>Empleado</th>';
+    dias.forEach(d => { tableHtml += `<th>${d}</th>`; });
+    tableHtml += '</tr></thead><tbody>';
+    
+    employees.forEach(emp => {
+        tableHtml += `<tr><td style="font-weight: 500;">${emp}</td>`;
+        dias.forEach(dia => {
+            const taskKey = `${emp}_${dia}`;
+            const currentTask = currentTasks[taskKey] || '';
+            tableHtml += `<td><input type="text" class="task-input" data-emp="${emp}" data-day="${dia}" 
+                value="${currentTask}" placeholder="Tarea..." 
+                style="width: 100%; padding: 4px 8px; border: 1px solid var(--border-color); border-radius: 4px; 
+                background: var(--surface-2); color: var(--text-main); font-size: 0.8rem;"></td>`;
+        });
+        tableHtml += '</tr>';
+    });
+    tableHtml += '</tbody></table>';
+    
+    container.innerHTML = tableHtml;
+    
+    // Mostrar modal
+    document.getElementById('editTasksModal').classList.remove('hidden');
+};
+
+window.closeEditTasksModal = function() {
+    const modal = document.getElementById('editTasksModal');
+    if (modal) modal.remove();
+};
+
+window.saveEditedTasks = async function(index) {
+    const entry = historyEntriesCache[index];
+    if (!entry) return;
+    
+    // Recolectar tareas del form
+    const nuevosTasks = {};
+    document.querySelectorAll('#editTasksContainer .task-input').forEach(input => {
+        const emp = input.dataset.emp;
+        const dia = input.dataset.day;
+        const taskKey = `${emp}_${dia}`;
+        const valor = input.value.trim();
+        
+        if (valor) {
+            nuevosTasks[taskKey] = valor;
+        }
+    });
+    
+    try {
+        // Si tiene db_id, usar endpoint de API
+        if (entry.db_id) {
+            const res = await fetch(`/api/planillas/horarios/${entry.db_id}/tareas`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(nuevosTasks)
+            });
+            if (!res.ok) {
+                throw new Error('Error al guardar tareas');
+            }
+        }
+        
+        // Actualizar localmente también
+        entry.daily_tasks = nuevosTasks;
+        
+        // Cerrar modal y re-renderizar
+        closeEditTasksModal();
+        renderHistoryEntryTable(index);
+        setStatusMessage("Tareas de limpieza guardadas.", "success");
+    } catch (err) {
+        console.error(err);
+        setStatusMessage("Error al guardar tareas: " + err.message, "error");
     }
 };
 
@@ -3937,6 +5754,86 @@ window.exportHistoryImage = async function (index, event) {
         console.error("Capture failed:", err);
         setStatusMessage("No se pudo exportar la imagen del historial.", "error");
         alert(err.message || "Error al exportar imagen del historial");
+    }
+};
+
+// SWAP HISTORY EMPLOYEES
+window.swapHistoryEmployees = function (index, event) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+
+    const entry = historyEntriesCache[index];
+    if (!entry) return;
+
+    const employees = Object.keys(entry.schedule || {});
+    if (employees.length < 2) {
+        setStatusMessage("Se necesitan al menos 2 empleados para intercambiar.", "error");
+        return;
+    }
+
+    const selA = document.getElementById("swapEmpA");
+    const selB = document.getElementById("swapEmpB");
+    if (!selA || !selB) return;
+
+    selA.innerHTML = "";
+    selB.innerHTML = "";
+    employees.forEach(name => {
+        selA.appendChild(new Option(name, name));
+        selB.appendChild(new Option(name, name));
+    });
+    selB.value = employees[1];
+
+    const modal = document.getElementById("swapEmployeesModal");
+    modal.dataset.historyIndex = String(index);
+    modal.classList.remove("hidden");
+};
+
+window.closeSwapEmployeesModal = function () {
+    const modal = document.getElementById("swapEmployeesModal");
+    if (modal) modal.classList.add("hidden");
+};
+
+window.confirmSwapEmployees = async function () {
+    const modal = document.getElementById("swapEmployeesModal");
+    const index = parseInt(modal.dataset.historyIndex, 10);
+
+    const empA = document.getElementById("swapEmpA").value;
+    const empB = document.getElementById("swapEmpB").value;
+
+    if (!empA || !empB || empA === empB) {
+        setStatusMessage("Seleccioná dos empleados distintos.", "error");
+        return;
+    }
+
+    const entry = historyEntriesCache[index];
+    if (!entry) return;
+
+    try {
+        const nextEntry = cloneHistoryEntry(entry);
+
+        const schedA = nextEntry.schedule[empA];
+        const schedB = nextEntry.schedule[empB];
+        nextEntry.schedule[empA] = schedB;
+        nextEntry.schedule[empB] = schedA;
+
+        if (nextEntry.daily_tasks) {
+            const tasksA = nextEntry.daily_tasks[empA];
+            const tasksB = nextEntry.daily_tasks[empB];
+            nextEntry.daily_tasks[empA] = tasksB ?? {};
+            nextEntry.daily_tasks[empB] = tasksA ?? {};
+        }
+
+        closeSwapEmployeesModal();
+
+        await persistHistoryEntry(index, nextEntry);
+        renderHistoryEntryTable(index);
+        setStatusMessage(`Horarios de ${empA} y ${empB} intercambiados.`, "success");
+    } catch (err) {
+        console.error(err);
+        setStatusMessage("Error al intercambiar horarios.", "error");
+        alert(err.message || "No se pudo guardar el intercambio.");
     }
 };
 
@@ -4181,40 +6078,128 @@ function toggleVacation(day, isChecked) {
     }
 }
 
+function _taskBaseAndSuffix(t) {
+    // Separa el sufijo "↑AM" / "↓PM" del nombre base de la tarea.
+    const m = t.match(/^(.+?)\s*([↑↓]\s*(?:AM|PM))\s*$/i);
+    if (m) return { base: m[1].trim(), suffix: m[2].trim() };
+    return { base: t.trim(), suffix: "" };
+}
+
+function _taskColorClass(base) {
+    if (base === "Baños") return "task-banos";
+    if (base === "Tanques") return "task-tanques";
+    if (base.includes("Oficina")) return "task-oficina";
+    return "task-default";
+}
+
 function getTaskLabelHTML(tasks, name, d) {
     if (!tasks || !tasks[name] || !tasks[name][d]) return "";
-    let t = tasks[name][d];
-    let label = t;
-    let colorClass = "task-default";
+    const t = tasks[name][d];
+    const { base, suffix } = _taskBaseAndSuffix(t);
+    const colorClass = _taskColorClass(base);
 
-    if (t === "Baños") {
-        label = "Limpiar<br>Baños";
-        colorClass = "task-banos";
-    } else if (t === "Tanques") {
-        label = "Medir<br>Tanque";
-        colorClass = "task-tanques";
-    } else if (t.includes("Oficina")) {
-        // Compound label: "Oficina + Basureros + [Other]"
-        // Backend text is "Oficina + Basureros + Baños" or just "Oficina + Basureros"
-        // We want to format it nicely:
-        // "Oficina +"
-        // "Basureros"
-        // "+ Baños" (if any)
-
-        // Remove "Oficina + Basureros" base
-        let extra = t.replace("Oficina + Basureros", "").trim();
-        // Remove leading "+" if present
+    let label;
+    if (base === "Baños") {
+        label = `Limpiar<br>Baños`;
+    } else if (base === "Tanques") {
+        label = `Medir<br>Tanque`;
+    } else if (base.includes("Oficina")) {
+        let extra = base.replace("Oficina + Basureros + Baños", "").trim();
         if (extra.startsWith("+")) extra = extra.substring(1).trim();
-
-        label = `Oficina +<br>Basureros`;
-        if (extra) {
-            label += `<br><span class="task-extra">+ ${extra}</span>`;
-        }
-        colorClass = "task-oficina";
+        label = `Oficina +<br>Basureros + Baños`;
+        if (extra) label += `<br><span class="task-extra">+ ${extra}</span>`;
+    } else {
+        label = base;
     }
 
-    return `<span class="shift-task-label ${colorClass}">${label}</span>`;
+    if (suffix) label += `<br><span class="task-suffix">${suffix}</span>`;
+
+    const isHistory = tasks && tasks._is_history;
+    const editableClass = isHistory ? " history-task-editable" : "";
+    const onclick = isHistory ? `onclick="event.stopPropagation(); editHistoryTask('${escapeHtmlAttr(name)}', '${escapeHtmlAttr(d)}', ${tasks._history_index})"` : "";
+
+    return `<span class="shift-task-label ${colorClass}${editableClass}" ${onclick}>${label}</span>`;
 }
+
+async function editHistoryTask(empName, day, historyIndex) {
+    const entry = historyEntriesCache[historyIndex];
+    if (!entry) return;
+
+    const currentTasks = entry.daily_tasks || {};
+    const currentTask = (currentTasks[empName] || {})[day];
+
+    const options = [
+        { id: "Tanques", label: "Medir Tanques", icon: "fa-faucet", color: "task-tanques" },
+        { id: "Baños", label: "Limpiar Baños", icon: "fa-restroom", color: "task-banos" },
+        { id: "Oficina + Basureros + Baños", label: "Oficina + Basureros + Baños", icon: "fa-broom", color: "task-oficina" },
+        { id: "None", label: "Quitar Tarea", icon: "fa-xmark", color: "" }
+    ];
+
+    const selection = await showTaskSelectorModal(empName, day, currentTask, options);
+    if (selection === undefined) return;
+
+    const taskVal = selection === "None" ? null : selection;
+
+    try {
+        const res = await fetch(`/api/history/entry/${entry.db_id}/task?employee_name=${encodeURIComponent(empName)}&day=${encodeURIComponent(day)}&task=${encodeURIComponent(taskVal || "")}`, {
+            method: 'PATCH'
+        });
+        if (!res.ok) throw new Error("Error al guardar");
+
+        // Update local cache
+        if (!entry.daily_tasks) entry.daily_tasks = {};
+        if (!entry.daily_tasks[empName]) entry.daily_tasks[empName] = {};
+        entry.daily_tasks[empName][day] = taskVal;
+
+        // Refresh table
+        renderHistoryEntryTable(historyIndex);
+        setStatusMessage("Tarea actualizada correctamente", "success");
+    } catch (e) {
+        console.error(e);
+        setStatusMessage("Error al actualizar tarea", "error");
+    }
+}
+
+function showTaskSelectorModal(empName, day, currentTask, options) {
+    return new Promise((resolve) => {
+        const modal = document.getElementById("textEditModal");
+        const title = document.getElementById("textEditTitle");
+        const body = document.querySelector("#textEditModal .modal-body-scroll");
+        const footer = document.querySelector("#textEditModal .modal-actions-footer");
+
+        const originalBodyContent = body.innerHTML;
+        const originalFooterContent = footer.innerHTML;
+
+        title.textContent = `Asignar Tarea: ${empName} (${day})`;
+        body.innerHTML = `
+            <div style="display: flex; flex-direction: column; gap: 8px;">
+                ${options.map(opt => `
+                    <div class="task-option-item ${currentTask === opt.id ? 'selected' : ''}" onclick="window._resolveTaskSelection('${opt.id}')">
+                        <div class="task-option-icon ${opt.color}">
+                            <i class="fa-solid ${opt.icon}"></i>
+                        </div>
+                        <div style="flex: 1;">
+                            <div style="font-weight: 700;">${opt.label}</div>
+                        </div>
+                        ${currentTask === opt.id ? '<i class="fa-solid fa-check" style="color: var(--primary);"></i>' : ''}
+                    </div>
+                `).join('')}
+            </div>
+        `;
+        
+        footer.innerHTML = `<button class="btn-text" onclick="window._resolveTaskSelection(undefined)">Cancelar</button>`;
+
+        window._resolveTaskSelection = (val) => {
+            body.innerHTML = originalBodyContent;
+            footer.innerHTML = originalFooterContent;
+            modal.classList.add("hidden");
+            resolve(val);
+        };
+
+        modal.classList.remove("hidden");
+    });
+}
+
 
 // Inject CSS for task labels
 const styleTask = document.createElement('style');
@@ -4250,6 +6235,68 @@ styleTask.innerHTML = `
         font-size: 0.7rem;
     }
     .dark-mode .task-extra { color: #f472b6; }
+    .task-suffix {
+        font-size: 0.62rem;
+        opacity: 0.75;
+        font-weight: 600;
+        letter-spacing: 0.3px;
+    }
+    .history-task-editable {
+        cursor: pointer;
+        transition: transform 0.15s ease, filter 0.15s ease;
+    }
+    .history-task-editable:hover {
+        transform: scale(1.05);
+        filter: brightness(1.1);
+    }
+    .history-task-empty {
+        width: 20px;
+        height: 6px;
+        background: rgba(0,0,0,0.05);
+        border-radius: 3px;
+        margin: 4px auto 0;
+        cursor: pointer;
+        transition: background 0.2s;
+        opacity: 0;
+    }
+    .history-item.expanded td:hover .history-task-empty {
+        opacity: 1;
+    }
+    .history-task-empty:hover {
+        background: var(--primary-light);
+        opacity: 1 !important;
+    }
+    .dark-mode .history-task-empty {
+        background: rgba(255,255,255,0.1);
+    }
+    .task-option-item {
+        padding: 12px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        margin-bottom: 8px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        transition: background 0.2s, border-color 0.2s;
+    }
+    .task-option-item:hover {
+        background: var(--bg-hover);
+        border-color: var(--primary);
+    }
+    .task-option-item.selected {
+        background: rgba(99, 102, 241, 0.1);
+        border-color: var(--primary);
+    }
+    .task-option-icon {
+        width: 32px;
+        height: 32px;
+        border-radius: 6px;
+        display: flex;
+        align-items: center;
+        justify-content: justify-center;
+        font-size: 1rem;
+    }
 `;
 document.head.appendChild(styleTask);
 
@@ -4364,28 +6411,16 @@ styleCoverage.innerHTML = `
 `;
 document.head.appendChild(styleCoverage);
 
-// Event Listener for Sorting
+// Event Listener for Sorting on main schedule (DOMContentLoaded fallback — also handled inline)
 document.addEventListener('DOMContentLoaded', () => {
     const th = document.getElementById('th-collaborator');
     if (th) {
         th.addEventListener('click', () => {
-            // Toggle Mode
-            currentSortMode = (currentSortMode === 'time') ? 'name' : 'time';
-
-            // Render active schedule if available
-            // Render active schedule if available
+            currentSortMode = (currentSortMode === 'time') ? 'alpha' : 'time';
             if (currentGeneratedSchedule) {
                 renderSchedule(currentGeneratedSchedule, "#scheduleTable", currentDailyTasks);
             }
-
-            // Update Icon
-            // Update Icon
-            const icon = th.querySelector('i');
-            if (icon) {
-                icon.className = (currentSortMode === 'time')
-                    ? "fa-solid fa-clock"
-                    : "fa-solid fa-sort-alpha-down";
-            }
+            // Icon is updated inside renderSchedule via the header rebuild
         });
     }
 });
