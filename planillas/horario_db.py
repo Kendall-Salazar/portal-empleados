@@ -16,143 +16,27 @@ from datetime import datetime, timedelta
 
 import database as db
 
-# ── DEFINICIONES DE TURNOS (copiado de scheduler_engine.py) ─────────────────
-SHIFTS = {
-    "OFF": set(), "VAC": set(), "PERM": set(),
-    "N_22-05": set([22, 23, 24, 25, 26, 27, 28]),
-    "T1_05-13": set(range(5, 13)), "T2_06-14": set(range(6, 14)),
-    "T3_07-15": set(range(7, 15)), "T4_08-16": set(range(8, 16)),
-    "T8_13-20": set(range(13, 20)), "T9_14-21": set(range(14, 21)),
-    "T10_15-22": set(range(15, 22)), "T11_12-20": set(range(12, 20)),
-    "T12_14-22": set(range(14, 22)), "T13_16-22": set(range(16, 22)),
-    "T16_05-14": set(range(5, 14)),
-    "J_06-16": set(range(6, 16)), "J_07-17": set(range(7, 17)),
-    "J_08-18": set(range(8, 18)), "J_09-19": set(range(9, 19)),
-    "J_10-20": set(range(10, 20)),
-    "E1_07-18": set(range(7, 18)), "E2_08-19": set(range(8, 19)),
-    "T17_16-23": set(range(16, 23)),
-    "X_07-19": set(range(7, 19)), "X_08-20": set(range(8, 20)),
-    "D1_05-13": set(range(5, 13)), "D2_14-22": set(range(14, 22)),
-    "D3_15-23": set(range(15, 23)), "D4_13-22": set(range(13, 22)),
-    "R1_07-11": set(range(7, 11)), "R2_16-20": set(range(16, 20)),
-    "Q1_05-11+17-20": set(range(5, 11)) | set(range(17, 20)),
-    "Q2_07-11+17-20": set(range(7, 11)) | set(range(17, 20)),
-    "Q3_05-11+17-22": set(range(5, 11)) | set(range(17, 22)),
-}
+# ── DEFINICIONES DE TURNOS (importado de scheduler_engine.py) ─────────────────
+import sys
+import os
+# Asegurar que el root del proyecto esté en sys.path para importaciones absolutas
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if root_dir not in sys.path:
+    sys.path.insert(0, root_dir)
 
-MANUAL_SHIFT_PREFIX = "MANUAL_"
+from backend.scheduler_engine import (
+    SHIFTS,
+    MANUAL_SHIFT_PREFIX,
+    normalize_manual_shift_code,
+    get_shift_hours_set
+)
+
 DIAS_MAP = {"Vie": 0, "Sáb": 1, "Dom": 2, "Lun": 3, "Mar": 4, "Mié": 5, "Jue": 6}
 DIAS_EXCEL = ["Viernes", "Sabado", "Domingo", "Lunes", "Martes", "Miercoles", "Jueves"]
-
 
 # ═════════════════════════════════════════════════════════════════════════════
 # CLASIFICACIÓN DE HORAS
 # ═════════════════════════════════════════════════════════════════════════════
-
-def _parse_manual_time_token(token):
-    raw = str(token or "").strip().lower().replace(".", "")
-    raw = re.sub(r"\s+", "", raw)
-    if not raw:
-        return None
-
-    match = re.fullmatch(r"(\d{1,2})(?::(\d{2}))?(am|pm)", raw)
-    if match:
-        hour = int(match.group(1))
-        minutes = int(match.group(2) or 0)
-        suffix = match.group(3)
-        if minutes != 0 or hour < 1 or hour > 12:
-            return None
-        if suffix == "am":
-            return 0 if hour == 12 else hour
-        return hour if hour == 12 else hour + 12
-
-    match = re.fullmatch(r"(\d{1,2})(?::(\d{2}))?", raw)
-    if not match:
-        return None
-
-    hour = int(match.group(1))
-    minutes = int(match.group(2) or 0)
-    if minutes != 0 or hour < 0 or hour > 29:
-        return None
-    return hour
-
-
-def _split_manual_range_segment(segment):
-    cleaned = str(segment or "").strip().replace("–", "-").replace("—", "-")
-    if not cleaned:
-        return None
-
-    for pattern in (
-        re.compile(r"\s*-\s*"),
-        re.compile(r"\s+a\s+", re.IGNORECASE),
-        re.compile(r"\s+to\s+", re.IGNORECASE),
-    ):
-        parts = pattern.split(cleaned, maxsplit=1)
-        if len(parts) == 2:
-            return parts[0], parts[1]
-
-    return None
-
-
-def normalize_manual_shift_code(shift_code):
-    if not isinstance(shift_code, str):
-        return None
-
-    raw = shift_code.strip()
-    if not raw:
-        return None
-
-    upper = raw.upper()
-    if upper in SHIFTS:
-        return upper
-    if upper in ("OFF", "LIBRE", "DESCANSO"):
-        return "OFF"
-    if upper in ("VAC", "VACACIONES"):
-        return "VAC"
-    if upper in ("PERM", "PERMISO"):
-        return "PERM"
-
-    candidate = raw
-    if upper.startswith(MANUAL_SHIFT_PREFIX):
-        candidate = raw[len(MANUAL_SHIFT_PREFIX):]
-
-    segments = [seg for seg in re.split(r"\s*(?:\+|/|,)\s*", candidate) if seg]
-    if not segments:
-        return None
-
-    normalized_segments = []
-    for segment in segments:
-        split = _split_manual_range_segment(segment)
-        if not split:
-            return None
-
-        start = _parse_manual_time_token(split[0])
-        end = _parse_manual_time_token(split[1])
-        if start is None or end is None:
-            return None
-
-        normalized_segments.append(f"{start:02d}-{end:02d}")
-
-    return f"{MANUAL_SHIFT_PREFIX}{'+'.join(normalized_segments)}"
-
-
-def get_shift_hours_set(shift_code):
-    normalized = normalize_manual_shift_code(shift_code)
-    if normalized in SHIFTS:
-        return set(SHIFTS[normalized])
-
-    if not normalized or not normalized.startswith(MANUAL_SHIFT_PREFIX):
-        return set()
-
-    horas = set()
-    for segment in normalized[len(MANUAL_SHIFT_PREFIX):].split("+"):
-        start_raw, end_raw = segment.split("-")
-        start = int(start_raw)
-        end = int(end_raw)
-        if end <= start:
-            end += 24
-        horas.update(range(start, end))
-    return horas
 
 
 def clasificar_turno(turno_code):

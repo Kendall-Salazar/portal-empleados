@@ -191,6 +191,9 @@ def load_db():
             "use_pref_plantilla": bool(cfg_row["use_pref_plantilla"])
             if "use_pref_plantilla" in cfg_row.keys()
             else False,
+            "cleaning_tasks": json.loads(cfg_row["cleaning_tasks"])
+            if "cleaning_tasks" in cfg_row.keys() and cfg_row["cleaning_tasks"]
+            else {},
         }
 
     # Historial: todas las filas activas, orden cronológico por id (no se borra al generar).
@@ -283,8 +286,8 @@ def save_db(data):
             (id, night_mode, fixed_night_person, allow_long_shifts, use_refuerzo,
              refuerzo_type, refuerzo_start, refuerzo_end, refuerzo_days_mode, refuerzo_manual_days,
              allow_collision_quebrado, collision_peak_priority, sunday_cycle_index, sunday_rotation_queue, use_history, holidays,
-             jefe_base_shift, use_pref_plantilla)
-            VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             jefe_base_shift, use_pref_plantilla, cleaning_tasks)
+            VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             cfg.get("night_mode", "rotation"),
             cfg.get("fixed_night_person"),
@@ -303,6 +306,7 @@ def save_db(data):
             json.dumps(cfg.get("holidays", [])),
             str(cfg.get("jefe_base_shift", "J_06-16") or "J_06-16"),
             1 if cfg.get("use_pref_plantilla", False) else 0,
+            json.dumps(cfg.get("cleaning_tasks", {})),
         ))
 
     # NOTA: history_log NO se guarda aquí. El historial se maneja exclusivamente
@@ -1409,11 +1413,12 @@ def _reassign_history_tasks_for_row(conn, row_id: int) -> dict:
 
     config_row = conn.execute("SELECT * FROM horario_config WHERE id=1").fetchone()
     config_data = dict(config_row) if config_row else {}
-    # Incorporar la configuración global desde JSON (incluyendo cleaning_tasks)
-    db = load_db()
-    json_config = db.get("config", {})
-    if "cleaning_tasks" in json_config:
-        config_data["cleaning_tasks"] = json_config["cleaning_tasks"]
+    # cleaning_tasks ya viene de la DB (columna TEXT → string), parseamos a dict
+    if "cleaning_tasks" in config_data and isinstance(config_data["cleaning_tasks"], str):
+        try:
+            config_data["cleaning_tasks"] = json.loads(config_data["cleaning_tasks"]) if config_data["cleaning_tasks"] else {}
+        except json.JSONDecodeError:
+            config_data["cleaning_tasks"] = {}
     config_data["use_refuerzo"] = "Refuerzo" in schedule
     existing_meta = json.loads(row["metadata"]) if row["metadata"] else {}
     special_days = _normalize_special_days(existing_meta.get("special_days", {}))

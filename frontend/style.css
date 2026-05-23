@@ -1941,6 +1941,77 @@ select:focus {
     background: rgba(99, 102, 241, 0.1);
 }
 
+/* Custom square checkbox for cleaning tasks table */
+.clean-checkbox {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    cursor: pointer;
+    position: relative;
+}
+
+.clean-checkbox input {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.clean-checkbox span {
+    width: 20px;
+    height: 20px;
+    border: 2px solid var(--border-strong);
+    border-radius: 5px;
+    background: var(--bg-panel);
+    transition: all 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.clean-checkbox span::after {
+    content: '';
+    width: 5px;
+    height: 9px;
+    border: solid #fff;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg) scale(0);
+    opacity: 0;
+    transition: all 0.15s ease;
+    margin-top: -2px;
+}
+
+.clean-checkbox input:checked + span {
+    background: var(--primary);
+    border-color: var(--primary);
+}
+
+.clean-checkbox input:checked + span::after {
+    opacity: 1;
+    transform: rotate(45deg) scale(1);
+}
+
+.clean-checkbox input:focus-visible + span {
+    box-shadow: 0 0 0 3px var(--primary-subtle);
+}
+
+.clean-checkbox:hover span {
+    border-color: var(--primary);
+}
+
+.dark-mode .clean-checkbox span {
+    background: var(--surface);
+    border-color: var(--border-strong);
+}
+
+.dark-mode .clean-checkbox input:checked + span {
+    background: var(--primary);
+    border-color: var(--primary);
+}
+
 /* Modal Overlay */
 .modal-overlay {
     position: fixed;

@@ -6,7 +6,9 @@ import copy
 import json
 from ortools.sat.python import cp_model
 import json
+from ortools.sat.python import cp_model
 import logging
+import re
 
 class SolutionCounter(cp_model.CpSolverSolutionCallback):
     def __init__(self):
@@ -248,6 +250,108 @@ SHIFTS = {
     "Q3_05-11+17-22": set(range(5, 11)) | set(range(17, 22)),  # 5am-11am + 5pm-10pm (11h, covers night)
 }
 SHIFT_NAMES = list(SHIFTS.keys())
+
+def _parse_manual_time_token(token):
+    raw = str(token or "").strip().lower().replace(".", "")
+    raw = re.sub(r"\s+", "", raw)
+    if not raw:
+        return None
+
+    match = re.fullmatch(r"(\d{1,2})(?::(\d{2}))?(am|pm)", raw)
+    if match:
+        hour = int(match.group(1))
+        minutes = int(match.group(2) or 0)
+        suffix = match.group(3)
+        if minutes != 0 or hour < 1 or hour > 12:
+            return None
+        if suffix == "am":
+            return 0 if hour == 12 else hour
+        return hour if hour == 12 else hour + 12
+
+    match = re.fullmatch(r"(\d{1,2})(?::(\d{2}))?", raw)
+    if not match:
+        return None
+
+    hour = int(match.group(1))
+    minutes = int(match.group(2) or 0)
+    if minutes != 0 or hour < 0 or hour > 29:
+        return None
+    return hour
+
+def _split_manual_range_segment(segment):
+    cleaned = str(segment or "").strip().replace("–", "-").replace("—", "-")
+    if not cleaned:
+        return None
+
+    for pattern in (
+        re.compile(r"\s*-\s*"),
+        re.compile(r"\s+a\s+", re.IGNORECASE),
+        re.compile(r"\s+to\s+", re.IGNORECASE),
+    ):
+        parts = pattern.split(cleaned, maxsplit=1)
+        if len(parts) == 2:
+            return parts[0], parts[1]
+
+    return None
+
+def normalize_manual_shift_code(shift_code):
+    if not isinstance(shift_code, str):
+        return None
+
+    raw = shift_code.strip()
+    if not raw:
+        return None
+
+    upper = raw.upper()
+    if upper in SHIFTS:
+        return upper
+    if upper in ("OFF", "LIBRE", "DESCANSO"):
+        return "OFF"
+    if upper in ("VAC", "VACACIONES"):
+        return "VAC"
+    if upper in ("PERM", "PERMISO"):
+        return "PERM"
+
+    candidate = raw
+    if upper.startswith(MANUAL_SHIFT_PREFIX):
+        candidate = raw[len(MANUAL_SHIFT_PREFIX):]
+
+    segments = [seg for seg in re.split(r"\s*(?:\+|/|,)\s*", candidate) if seg]
+    if not segments:
+        return None
+
+    normalized_segments = []
+    for segment in segments:
+        split = _split_manual_range_segment(segment)
+        if not split:
+            return None
+
+        start = _parse_manual_time_token(split[0])
+        end = _parse_manual_time_token(split[1])
+        if start is None or end is None:
+            return None
+
+        normalized_segments.append(f"{start:02d}-{end:02d}")
+
+    return f"{MANUAL_SHIFT_PREFIX}{'+'.join(normalized_segments)}"
+
+def get_shift_hours_set(shift_code):
+    normalized = normalize_manual_shift_code(shift_code)
+    if normalized in SHIFTS:
+        return set(SHIFTS[normalized])
+
+    if not normalized or not normalized.startswith(MANUAL_SHIFT_PREFIX):
+        return set()
+
+    horas = set()
+    for segment in normalized[len(MANUAL_SHIFT_PREFIX):].split("+"):
+        start_raw, end_raw = segment.split("-")
+        start = int(start_raw)
+        end = int(end_raw)
+        if end <= start:
+            end += 24
+        horas.update(range(start, end))
+    return horas
 HOMOGENEITY_MONITORED_SHIFTS = tuple(
     shift_name for shift_name in SHIFT_NAMES
     if shift_name not in {"OFF", "VAC", "PERM", "N_22-05", "R1_07-11", "R2_16-20"}
@@ -898,24 +1002,33 @@ class ShiftScheduler:
         FAIR ROTATION: Uses a weekly task counter to distribute tasks equitably.
         No gender preference. Jefe de Pista only eligible on Sáb.
         Night shift workers (N_22-05), OFF, VAC, and PERM are excluded.
+        Refuerzo with fewer than 3 working days gets no tasks.
         """
-        # Solo procesar empleados que existen en el schedule
         schedule_employees = [e for e in self.employees if e in schedule]
         res_tasks = {e: {d: None for d in DAYS} for e in schedule_employees}
-        task_count = {e: 0 for e in schedule_employees}  # Weekly fairness counter
+        task_count = {e: 0 for e in schedule_employees}
+        
+        # Count Refuerzo working days — skip if < 3
+        refuerzo_days = sum(
+            1 for d in DAYS
+            if schedule.get("Refuerzo", {}).get(d, "OFF") not in ("OFF", "VAC", "PERM")
+        ) if "Refuerzo" in schedule else 0
+        skip_refuerzo = refuerzo_days < 3
         
         for d in DAYS:
             if self.day_modes.get(d) == SPECIAL_DAY_MODE_CLOSED:
                 continue
             available = []
             for e in schedule_employees:
+                if e == "Refuerzo" and skip_refuerzo:
+                    continue
                 shift = schedule[e].get(d, "OFF")
                 if shift in ["OFF", "VAC", "PERM", "N_22-05"]:
                     continue
                 is_jefe = self.emp_data[e].get('is_jefe_pista', False)
                 if is_jefe and not (d == "Sáb" and self.day_modes.get(d) == SPECIAL_DAY_MODE_NORMAL):
                     continue
-                shift_hours = SHIFTS.get(shift, set())
+                shift_hours = get_shift_hours_set(shift)
                 if not shift_hours:
                     continue
                 available.append({
@@ -926,78 +1039,65 @@ class ShiftScheduler:
                     'is_quebrado': shift.startswith('Q'),
                 })
             
-            assigned_today = set()
-            
             def fair_pick(pool):
-                """Pick person with fewest accumulated tasks (fair rotation)."""
                 if not pool: return None
                 pool.sort(key=lambda w: task_count[w['name']])
                 return pool[0]
             
             def q_label(base, worker):
-                # Siempre agregar sufijo AM/PM basado en hora de inicio del turno
                 return f"{base} {'↑AM' if worker['start'] < 12 else '↓PM'}"
             
             def is_task_enabled(task_id, day):
                 ct = self.config.get("cleaning_tasks")
                 if ct and day in ct:
                     return ct[day].get(task_id, True)
-                # Fallback to defaults
                 if day == "Dom" and task_id in ["am_tanques", "pm_tanques"]: return False
                 if day == "Sáb" and task_id == "pm_tanques": return False
                 return True
             
-            # --- AM TANQUES: 5 AM starter (gender-neutral) ---
+            assigned_today = set()
+            # AM pool: only workers who start early enough to do morning tasks.
+            # On Sáb we extend the threshold to 6am (one hour later opening).
+            am_start_threshold = 6 if d == "Sáb" else 5
+            am_pool = [w for w in available if w['start'] <= am_start_threshold]
+            pm_pool = [w for w in available if w['has_pm']]
+
+            def pick_one(pool, exclude=frozenset()):
+                """Pick the worker with fewest tasks this week.
+                A worker already assigned a task today is NEVER re-picked (no fallback).
+                Returns None if no eligible worker is available."""
+                candidates = [w for w in pool if w['name'] not in exclude]
+                return fair_pick(candidates)
+            
+            # --- AM TANQUES ---
             if is_task_enabled("am_tanques", d):
-                pool = [w for w in available if w['start'] == 5 and w['name'] not in assigned_today]
-                pick = fair_pick(pool)
+                pick = pick_one(am_pool, assigned_today)
                 if pick:
                     res_tasks[pick['name']][d] = q_label("Tanques", pick)
                     assigned_today.add(pick['name']); task_count[pick['name']] += 1
             
-            # --- AM BAÑOS: starts ≤ 7 AM (gender-neutral, fair rotation) ---
-            oficina_person = None
+            # --- AM BAÑOS (Lun/Jue → incluye oficina) ---
             if is_task_enabled("am_banos", d):
-                pool = [w for w in available if w['start'] <= 7 and w['has_am'] and w['name'] not in assigned_today]
-                if is_weekday_like_mode(self.day_modes.get(d)) and d in ["Lun", "Jue"]:
-                    ofi_pool = [w for w in pool if w['start'] <= 6 or w['is_quebrado']]
-                    ofi_pick = fair_pick(ofi_pool)
-                    if ofi_pick:
-                        oficina_person = ofi_pick['name']
-                        pool = [w for w in pool if w['name'] == oficina_person] + [w for w in pool if w['name'] != oficina_person]
-                pick = fair_pick(pool) if not oficina_person else (pool[0] if pool else None)
+                pick = pick_one(am_pool, assigned_today)
                 if pick:
-                    if is_weekday_like_mode(self.day_modes.get(d)) and d in ["Lun", "Jue"] and pick['name'] == oficina_person:
-                        res_tasks[pick['name']][d] = q_label("Oficina + Basureros + Baños", pick)
-                    else:
-                        res_tasks[pick['name']][d] = q_label("Baños", pick)
+                    is_oficina_day = is_weekday_like_mode(get_effective_day_mode(d, self.day_modes)) and d in ["Lun", "Jue"]
+                    label = "Oficina + Basureros + Baños" if is_oficina_day else "Baños"
+                    res_tasks[pick['name']][d] = q_label(label, pick)
                     assigned_today.add(pick['name']); task_count[pick['name']] += 1
             
-            # --- PM TANQUES: starts ≥ 12 PM OR quebrado with PM (gender-neutral) ---
+            # --- PM TANQUES ---
             if is_task_enabled("pm_tanques", d):
-                pool = [w for w in available if (w['start'] >= 12 or w['is_quebrado']) and w['has_pm'] and w['name'] not in assigned_today]
-                pick = fair_pick(pool)
+                pick = pick_one(pm_pool, assigned_today)
                 if pick:
                     res_tasks[pick['name']][d] = q_label("Tanques", pick)
                     assigned_today.add(pick['name']); task_count[pick['name']] += 1
             
-            # --- PM BAÑOS: starts ≥ 12 PM OR quebrado with PM (gender-neutral) ---
+            # --- PM BAÑOS ---
             if is_task_enabled("pm_banos", d):
-                pool = [w for w in available if (w['start'] >= 12 or w['is_quebrado']) and w['has_pm'] and w['name'] not in assigned_today]
-                pick = fair_pick(pool)
+                pick = pick_one(pm_pool, assigned_today)
                 if pick:
                     res_tasks[pick['name']][d] = q_label("Baños", pick)
                     assigned_today.add(pick['name']); task_count[pick['name']] += 1
-            
-            # Oficina fallback
-            if is_weekday_like_mode(self.day_modes.get(d)) and d in ["Lun", "Jue"] and oficina_person and oficina_person not in assigned_today:
-                # Encontrar el turno de la oficina_person para determinar AM/PM
-                ofi_shift = schedule[oficina_person].get(d, "OFF")
-                ofi_hours = SHIFTS.get(ofi_shift, set())
-                ofi_start = min(ofi_hours) if ofi_hours else 12
-                ofi_suffix = "↑AM" if ofi_start < 12 else "↓PM"
-                res_tasks[oficina_person][d] = f"Oficina + Basureros + Baños {ofi_suffix}"
-                assigned_today.add(oficina_person); task_count[oficina_person] += 1
         
         return res_tasks
 

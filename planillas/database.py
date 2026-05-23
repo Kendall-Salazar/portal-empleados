@@ -196,7 +196,8 @@ def init_db():
             sunday_cycle_index INTEGER DEFAULT 0,
             sunday_rotation_queue TEXT,
             use_history INTEGER DEFAULT 1,
-            strict_weekly_alternation INTEGER DEFAULT 0
+            strict_weekly_alternation INTEGER DEFAULT 0,
+            cleaning_tasks TEXT DEFAULT '{}'
         );
 
         CREATE TABLE IF NOT EXISTS horarios_generados (
@@ -321,6 +322,9 @@ def init_db():
     ]
     for table, col, col_type in _scheduler_config_migrations:
         _ensure_column(table, col, col_type)
+
+    # Migration: cleaning_tasks config column
+    _ensure_column("horario_config", "cleaning_tasks", "TEXT DEFAULT '{}'")
 
     # Migration: soft delete for history entries (papelera de reciclaje)
     _ensure_column("horarios_generados", "deleted", "INTEGER DEFAULT 0")

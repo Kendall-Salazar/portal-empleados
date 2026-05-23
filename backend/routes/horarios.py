@@ -600,13 +600,43 @@ def reassign_history_tasks(index: int):
 
     # Read employees and config from DB
     employees_rows = conn.execute("SELECT * FROM horario_empleados WHERE activo=1").fetchall()
-    employees_data = [dict(e) for e in employees_rows]
-    employee_names = {emp.get("nombre", "") for emp in employees_data}
+    employees_data = []
+    for e in employees_rows:
+        e = dict(e)
+        try:
+            fixed_shifts = json.loads(e["turnos_fijos"]) if e["turnos_fijos"] else {}
+        except:
+            fixed_shifts = {}
+        employees_data.append({
+            "name": e["nombre"],
+            "gender": e.get("genero", "M"),
+            "can_do_night": bool(e.get("puede_nocturno", 1)),
+            "allow_no_rest": bool(e.get("allow_no_rest", 0)),
+            "forced_libres": bool(e.get("forced_libres", 0)),
+            "forced_quebrado": bool(e.get("forced_quebrado", 0)),
+            "is_jefe_pista": bool(e.get("es_jefe_pista", 0)),
+            "is_practicante": bool(e.get("es_practicante", 0)),
+            "strict_preferences": bool(e.get("strict_preferences", 0)),
+            "fixed_shifts": fixed_shifts
+        })
+    employee_names = {emp["name"] for emp in employees_data}
     for missing_name in sorted(name for name in schedule.keys() if name not in employee_names):
-        employees_data.append({"nombre": missing_name, "genero": "M", "puede_nocturno": 1})
+        employees_data.append({
+            "name": missing_name,
+            "gender": "M",
+            "can_do_night": 1,
+            "is_jefe_pista": 0,
+            "fixed_shifts": {}
+        })
 
     config_row = conn.execute("SELECT * FROM horario_config WHERE id=1").fetchone()
     config_data = dict(config_row) if config_row else {}
+    # cleaning_tasks ya viene de la DB (columna TEXT → string), parseamos a dict
+    if "cleaning_tasks" in config_data and isinstance(config_data["cleaning_tasks"], str):
+        try:
+            config_data["cleaning_tasks"] = json.loads(config_data["cleaning_tasks"]) if config_data["cleaning_tasks"] else {}
+        except json.JSONDecodeError:
+            config_data["cleaning_tasks"] = {}
     config_data["use_refuerzo"] = "Refuerzo" in schedule
     existing_meta = json.loads(row["metadata"]) if row["metadata"] else {}
     special_days = _normalize_special_days(existing_meta.get("special_days", {}))
