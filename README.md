@@ -7,7 +7,7 @@ App de escritorio para gestión de turnos y planillas de pago de una estación d
 - **Backend**: Python 3 + FastAPI (uvicorn)
 - **Frontend**: HTML + JS vanilla + CSS (sin frameworks)
 - **Shell de escritorio**: pywebview (EdgeChromium)
-- **Base de datos de planillas**: SQLite (`planillas/planilla.db`)
+- **Base de datos de planillas**: SQLite (`planillas/cronos.db`)
 - **Datos de horarios**: JSON (`backend/database.json`)
 - **Empaquetado**: PyInstaller
 
@@ -33,7 +33,7 @@ chronos/
 ├── planillas/              # Módulo de planillas de pago
 │   ├── app.py              # App de escritorio standalone (Tkinter/CTk) para planillas
 │   ├── planilla.py         # Lógica de planilla semanal en Excel
-│   ├── database.py         # Capa de acceso a SQLite (planilla.db)
+│   ├── database.py         # Capa de acceso a SQLite (cronos.db)
 │   ├── generador_boletas.py # Generación de boletas de pago como imágenes JPEG
 │   ├── horario_db.py       # Sincronización horario → planilla
 │   ├── prestamo_sync.py    # Sincronización de préstamos con rebajos en planilla
@@ -55,7 +55,7 @@ chronos/
 | Carpeta | Contenido |
 |---|---|
 | `backend/database.json` | Estado de empleados e historial de turnos |
-| `planillas/planilla.db` | Base de datos SQLite de planillas |
+| `planillas/cronos.db` | Base de datos SQLite de planillas |
 | `planillas/Planillas YYYY/` | Archivos Excel de planillas generadas |
 | `export_horarios/` | Exportaciones de horarios (Excel/PNG) |
 | `acciones de empleado/` | Documentos Word generados (préstamos, liquidaciones, etc.) |

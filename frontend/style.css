@@ -3914,7 +3914,7 @@ select:focus {
     display: flex;
     flex-direction: column;
     gap: 1.5rem;
-    min-height: 100%;
+    flex: 1;
 }
 
 .portal-header {
@@ -7959,4 +7959,147 @@ th[id^="th-collaborator"]:hover {
 @keyframes schedActionsFadeIn {
     from { opacity: 0; transform: translateY(-3px); }
     to { opacity: 1; transform: translateY(0); }
+}
+
+/* ═══════════════════════════════════════
+   PARAM GROUP SECTIONS
+   ═══════════════════════════════════════ */
+.param-group {
+    background: var(--bg-panel);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg, 14px);
+    overflow: clip;
+    margin-bottom: 1.25rem;
+    box-shadow: var(--shadow-sm, 0 1px 3px rgba(0,0,0,0.06));
+    transition: box-shadow 0.25s ease, max-height 0.3s ease;
+}
+.param-group:hover { box-shadow: var(--shadow-md, 0 4px 8px rgba(0,0,0,0.1)); }
+.param-group-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.9rem 1.25rem;
+    cursor: pointer;
+    user-select: none;
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--border-color);
+    transition: background 0.2s;
+}
+.param-group-header:hover { background: var(--primary-subtle); }
+.param-group-header-left {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+.param-group-icon {
+    width: 32px; height: 32px;
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.9rem;
+    flex-shrink: 0;
+}
+.param-group-title {
+    font-size: 0.82rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-main);
+}
+.param-group-count {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    background: var(--bg-app);
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-weight: 600;
+}
+.param-group-chevron {
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    transition: transform 0.25s ease;
+}
+.param-group.collapsed .param-group-chevron {
+    transform: rotate(-90deg);
+}
+.param-group-body {
+    padding: 1rem;
+    max-height: 2000px;
+    overflow: visible;
+    transition: max-height 0.4s ease, opacity 0.3s ease, padding 0.3s ease;
+}
+.param-group.collapsed .param-group-body {
+    max-height: 0 !important;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+    opacity: 0;
+    overflow: hidden;
+}
+.param-group-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 1rem;
+}
+.param-group-grid > .full-width {
+    grid-column: 1 / -1;
+}
+
+/* ═══════════════════════════════════════
+   JEFE MATRIX
+   ═══════════════════════════════════════ */
+.jefe-matrix {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+    text-align: center;
+}
+.jefe-matrix th {
+    padding: 0.5rem 0.4rem;
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid var(--border-color);
+}
+.jefe-matrix td {
+    padding: 0.3rem 0.2rem;
+    border-bottom: 1px solid var(--border-color);
+}
+.jefe-col-task {
+    text-align: left;
+    padding: 0.5rem 0.6rem 0.5rem 0 !important;
+    font-weight: 500;
+    color: var(--text-main);
+    white-space: nowrap;
+    font-size: 0.8rem;
+}
+.jefe-cell {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    height: 32px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-dim);
+    background: transparent;
+    transition: all 0.15s ease;
+    border: 1px solid transparent;
+    user-select: none;
+}
+.jefe-cell:hover {
+    background: var(--primary-subtle);
+    border-color: var(--border-color);
+}
+.jefe-cell-active {
+    color: #10b981;
+    background: rgba(16,185,129,0.1);
+    border-color: rgba(16,185,129,0.25);
+}
+.jefe-cell-active:hover {
+    background: rgba(239,68,68,0.08);
+    border-color: rgba(239,68,68,0.3);
+    color: #ef4444;
 }

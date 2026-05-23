@@ -1,5 +1,5 @@
 import sqlite3
-db_path = r'C:/users/kenda/onedrive/escritorio/filtros/planillas/planilla.db'
+db_path = r'C:/users/kenda/onedrive/escritorio/filtros/planillas/cronos.db'
 conn = sqlite3.connect(db_path)
 conn.row_factory = sqlite3.Row
 rows = conn.execute('SELECT id, nombre, timestamp, deleted FROM horarios_generados ORDER BY id ASC').fetchall()

@@ -22,7 +22,7 @@ def _get_planillas_base_dir():
     return os.path.dirname(os.path.abspath(__file__))
 
 
-DB_FILE = os.path.join(_get_planillas_base_dir(), "planilla.db")
+DB_FILE = os.path.join(_get_planillas_base_dir(), "cronos.db")
 
 # Columnas 0/1 que nunca deben pasar por bool() en Python (bool("0") es True).
 _HORARIO_INT_FIELDS = (
@@ -325,6 +325,9 @@ def init_db():
 
     # Migration: cleaning_tasks config column
     _ensure_column("horario_config", "cleaning_tasks", "TEXT DEFAULT '{}'")
+
+    # Migration: jefe_config (control de tareas del jefe de pista)
+    _ensure_column("horario_config", "jefe_config", "TEXT DEFAULT '{}'")
 
     # Migration: soft delete for history entries (papelera de reciclaje)
     _ensure_column("horarios_generados", "deleted", "INTEGER DEFAULT 0")

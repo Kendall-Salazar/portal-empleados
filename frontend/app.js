@@ -1001,7 +1001,7 @@ function renderConfig() {
 
     // Cleaning tasks config
     const ctDays = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
-    const ctTasks = ["am_banos", "pm_banos", "am_tanques", "pm_tanques"];
+    const ctTasks = ["am_banos", "pm_banos", "am_tanques", "pm_tanques", "oficina", "calibracion", "canos", "canos_glp"];
     const cleaningTasks = config.cleaning_tasks || {};
     ctDays.forEach(d => {
         const dayConfig = cleaningTasks[d] || {};
@@ -1016,6 +1016,14 @@ function renderConfig() {
                         cb.checked = false;
                     } else if (d === "Sáb" && t === "pm_tanques") {
                         cb.checked = false;
+                    } else if (t === "calibracion") {
+                        cb.checked = d === "Mar";
+                    } else if (t === "canos") {
+                        cb.checked = d === "Lun";
+                    } else if (t === "canos_glp") {
+                        cb.checked = d === "Jue";
+                    } else if (t === "oficina") {
+                        cb.checked = d === "Lun" || d === "Jue";
                     } else {
                         cb.checked = true;
                     }
@@ -1023,6 +1031,34 @@ function renderConfig() {
             }
         });
     });
+
+    // Jefe config
+    const jc = config.jefe_config || {};
+    document.getElementById("jefeEnabled").checked = jc.enabled ?? false;
+    document.getElementById("jefeExcludeRegular").checked = jc.exclude_regular ?? true;
+    // Render 6×7 matrix
+    let jefeAssignment = jc.assignment;
+    if (!jefeAssignment || Object.keys(jefeAssignment).length === 0) {
+        // First load — read defaults from HTML jefe-cell-active classes
+        jefeAssignment = {};
+        document.querySelectorAll('.jefe-cell.jefe-cell-active').forEach(cell => {
+            const task = cell.dataset.task;
+            const day = cell.dataset.day;
+            if (!task || !day) return;
+            if (!jefeAssignment[task]) jefeAssignment[task] = {};
+            jefeAssignment[task][day] = true;
+        });
+    }
+    document.querySelectorAll('.jefe-cell').forEach(cell => {
+        const task = cell.dataset.task;
+        const day = cell.dataset.day;
+        const valueSpan = cell.querySelector('.jefe-cell-value');
+        if (!task || !day || !valueSpan) return;
+        const isJefe = jefeAssignment[task]?.[day] === true;
+        cell.classList.toggle('jefe-cell-active', isJefe);
+        valueSpan.textContent = isJefe ? 'Jefe' : '—';
+    });
+    toggleJefeConfig();
 
     fillJefeBaseShiftSelectFromRules();
 }
@@ -1072,6 +1108,16 @@ function toggleRefuerzoDaysConfig() {
             manualDaysContainer.classList.add("hidden");
         }
     }
+}
+
+function toggleJefeConfig() {
+    const enabled = document.getElementById("jefeEnabled")?.checked;
+    const body = document.getElementById("jefeConfigBody");
+    if (body) {
+        if (enabled) body.classList.remove("hidden");
+        else body.classList.add("hidden");
+    }
+    updateConfig();
 }
 
 function toggleCollisionConfig() {
@@ -1172,7 +1218,7 @@ async function updateConfig() {
 
     config.cleaning_tasks = {};
     const ctDays = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
-    const ctTasks = ["am_banos", "pm_banos", "am_tanques", "pm_tanques"];
+    const ctTasks = ["am_banos", "pm_banos", "am_tanques", "pm_tanques", "oficina", "calibracion", "canos", "canos_glp"];
     ctDays.forEach(d => {
         config.cleaning_tasks[d] = {};
         ctTasks.forEach(t => {
@@ -1181,6 +1227,20 @@ async function updateConfig() {
                 config.cleaning_tasks[d][t] = cb.checked;
             }
         });
+    });
+
+    // Jefe config
+    config.jefe_config = {
+        enabled: document.getElementById("jefeEnabled").checked,
+        exclude_regular: document.getElementById("jefeExcludeRegular").checked,
+        assignment: {}
+    };
+    document.querySelectorAll('.jefe-cell').forEach(cell => {
+        const task = cell.dataset.task;
+        const day = cell.dataset.day;
+        if (!task || !day) return;
+        if (!config.jefe_config.assignment[task]) config.jefe_config.assignment[task] = {};
+        config.jefe_config.assignment[task][day] = cell.classList.contains('jefe-cell-active');
     });
 
     const jefeBaseSel = document.getElementById("jefeBaseShiftSelect");
@@ -4338,6 +4398,11 @@ function toggleParamCard(header) {
     card.classList.toggle('expanded');
 }
 
+function toggleParamGroup(header) {
+    const group = header.parentElement;
+    group.classList.toggle('collapsed');
+}
+
 function confirmTextEdit() {
     const value = document.getElementById('textEditInput').value;
     
@@ -6089,6 +6154,8 @@ function _taskColorClass(base) {
     if (base === "Baños") return "task-banos";
     if (base === "Tanques") return "task-tanques";
     if (base.includes("Oficina")) return "task-oficina";
+    if (base === "Calibración") return "task-calibracion";
+    if (base === "Caños" || base === "Caños GLP") return "task-canos";
     return "task-default";
 }
 
@@ -6100,14 +6167,20 @@ function getTaskLabelHTML(tasks, name, d) {
 
     let label;
     if (base === "Baños") {
-        label = `Limpiar<br>Baños`;
+        label = `Baños`;
     } else if (base === "Tanques") {
-        label = `Medir<br>Tanque`;
+        label = `Tanques`;
     } else if (base.includes("Oficina")) {
         let extra = base.replace("Oficina + Basureros + Baños", "").trim();
         if (extra.startsWith("+")) extra = extra.substring(1).trim();
         label = `Oficina +<br>Basureros + Baños`;
         if (extra) label += `<br><span class="task-extra">+ ${extra}</span>`;
+    } else if (base === "Calibración") {
+        label = "Calibración";
+    } else if (base === "Caños") {
+        label = "Caños";
+    } else if (base === "Caños GLP") {
+        label = "Caños<br>GLP";
     } else {
         label = base;
     }
@@ -6129,9 +6202,12 @@ async function editHistoryTask(empName, day, historyIndex) {
     const currentTask = (currentTasks[empName] || {})[day];
 
     const options = [
-        { id: "Tanques", label: "Medir Tanques", icon: "fa-faucet", color: "task-tanques" },
-        { id: "Baños", label: "Limpiar Baños", icon: "fa-restroom", color: "task-banos" },
+        { id: "Tanques", label: "Tanques", icon: "fa-faucet", color: "task-tanques" },
+        { id: "Baños", label: "Baños", icon: "fa-restroom", color: "task-banos" },
         { id: "Oficina + Basureros + Baños", label: "Oficina + Basureros + Baños", icon: "fa-broom", color: "task-oficina" },
+        { id: "Calibración", label: "Calibración", icon: "fa-sliders", color: "task-calibracion" },
+        { id: "Caños", label: "Caños", icon: "fa-wrench", color: "task-canos" },
+        { id: "Caños GLP", label: "Caños GLP", icon: "fa-fire", color: "task-canos" },
         { id: "None", label: "Quitar Tarea", icon: "fa-xmark", color: "" }
     ];
 
@@ -6226,9 +6302,13 @@ styleTask.innerHTML = `
         letter-spacing: -0.3px;
         text-shadow: none;
     }
+    .task-calibracion { color: #6b21a8; background: rgba(107, 33, 168, 0.1); border: 1px solid rgba(107, 33, 168, 0.2); }
+    .task-canos { color: #065f46; background: rgba(6, 95, 70, 0.1); border: 1px solid rgba(6, 95, 70, 0.2); }
     .dark-mode .task-banos { color: #fbbf24; background: rgba(251, 191, 36, 0.15); }
     .dark-mode .task-tanques { color: #60a5fa; background: rgba(96, 165, 250, 0.15); }
     .dark-mode .task-oficina { color: #f472b6; background: rgba(244, 114, 182, 0.15); }
+    .dark-mode .task-calibracion { color: #c084fc; background: rgba(192, 132, 252, 0.15); }
+    .dark-mode .task-canos { color: #34d399; background: rgba(52, 211, 153, 0.15); }
     .task-extra {
         color: #be185d;
         font-weight: 800;
@@ -7307,6 +7387,18 @@ async function generatePartialSchedule() {
 async function savePartialSchedule() {
     await PartialGenerator.save();
 }
+
+// Click handler para matrix 6×7 del jefe de pista
+document.addEventListener('click', function(e) {
+    const cell = e.target.closest('.jefe-cell');
+    if (!cell) return;
+    const valueSpan = cell.querySelector('.jefe-cell-value');
+    if (!valueSpan) return;
+    const isJefe = cell.classList.contains('jefe-cell-active');
+    cell.classList.toggle('jefe-cell-active', !isJefe);
+    valueSpan.textContent = isJefe ? '—' : 'Jefe';
+    updateConfig();
+});
 
 // Cerrar el dropdown de búsqueda al hacer click fuera
 document.addEventListener("click", function(e) {

@@ -1,0 +1,1252 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cronos — Parámetros del Motor (Diseño v2)</title>
+    <style>
+        :root {
+            --primary: #4f46e5;
+            --primary-hover: #4338ca;
+            --primary-subtle: rgba(79, 70, 229, 0.1);
+            --accent-blue: #3b82f6;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --bg-app: #f1f5f9;
+            --bg-panel: #ffffff;
+            --surface: #ffffff;
+            --surface-2: #f8fafc;
+            --text-main: #0f172a;
+            --text-muted: #64748b;
+            --text-dim: #94a3b8;
+            --border: rgba(15, 23, 42, 0.09);
+            --border-strong: rgba(15, 23, 42, 0.18);
+            --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.06), 0 1px 2px -1px rgb(0 0 0 / 0.06);
+            --shadow-md: 0 4px 8px -2px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.06);
+            --radius-sm: 6px;
+            --radius-md: 10px;
+            --radius-lg: 14px;
+        }
+        .dark-mode {
+            --bg-app: #0b0f19;
+            --bg-panel: #111827;
+            --surface: #1e293b;
+            --surface-2: #1a2332;
+            --text-main: #f1f5f9;
+            --text-muted: #94a3b8;
+            --text-dim: #64748b;
+            --border: #1e293b;
+            --border-strong: #334155;
+            --primary-subtle: rgba(99, 102, 241, 0.15);
+            --shadow-md: 0 4px 8px -2px rgb(0 0 0 / 0.4);
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: var(--bg-app);
+            color: var(--text-main);
+            padding: 2rem;
+            max-width: 1400px;
+            margin: 0 auto;
+            transition: background 0.3s;
+        }
+
+        /* ═══════ GROUP SECTIONS ═══════ */
+        .param-group {
+            background: var(--bg-panel);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            overflow: hidden;
+            margin-bottom: 1.25rem;
+            box-shadow: var(--shadow-sm);
+            transition: box-shadow 0.25s ease;
+        }
+        .param-group:hover { box-shadow: var(--shadow-md); }
+        .param-group-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.9rem 1.25rem;
+            cursor: pointer;
+            user-select: none;
+            background: var(--surface-2);
+            border-bottom: 1px solid var(--border);
+            transition: background 0.2s;
+        }
+        .param-group-header:hover { background: var(--primary-subtle); }
+        .param-group-header-left {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+        .param-group-icon {
+            width: 32px; height: 32px;
+            border-radius: 8px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 0.9rem;
+            flex-shrink: 0;
+        }
+        .param-group-title {
+            font-size: 0.85rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.6px;
+            color: var(--text-main);
+        }
+        .param-group-count {
+            font-size: 0.7rem;
+            color: var(--text-dim);
+            background: var(--bg-app);
+            padding: 2px 10px;
+            border-radius: 20px;
+            font-weight: 600;
+            margin-left: 0.5rem;
+        }
+        .param-group-chevron {
+            color: var(--text-dim);
+            font-size: 0.8rem;
+            transition: transform 0.25s ease;
+        }
+        .param-group.collapsed .param-group-chevron { transform: rotate(-90deg); }
+        .param-group.collapsed .param-group-body { display: none; }
+        .param-group-body {
+            padding: 1.25rem;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+            gap: 1rem;
+        }
+        .param-group-body > .span-full { grid-column: 1 / -1; }
+
+        /* ═══════ PARAM CARDS ═══════ */
+        .param-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            padding: 1rem 1.15rem;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        .param-card:hover {
+            border-color: var(--primary);
+            box-shadow: 0 2px 8px rgba(79, 70, 229, 0.06);
+        }
+        .param-card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+            user-select: none;
+            gap: 0.5rem;
+        }
+        .param-card-header.no-toggle {
+            cursor: default;
+        }
+        .param-card-header-left {
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+            min-width: 0;
+        }
+        .param-card-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .param-card-title {
+            font-size: 0.88rem;
+            font-weight: 600;
+            color: var(--text-main);
+        }
+        .param-card-badge {
+            font-size: 0.6rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            padding: 2px 8px;
+            border-radius: 4px;
+            background: var(--bg-app);
+            color: var(--text-dim);
+            flex-shrink: 0;
+            line-height: 1.6;
+        }
+        .param-card-badge.warn {
+            background: rgba(245,158,11,0.12);
+            color: var(--warning);
+        }
+        .param-card-chevron {
+            color: var(--text-dim);
+            font-size: 0.75rem;
+            transition: transform 0.25s ease;
+            flex-shrink: 0;
+        }
+        .param-card.collapsed .param-card-chevron { transform: rotate(-90deg); }
+        .param-card.collapsed .param-card-content { display: none; }
+        .param-card-content {
+            margin-top: 0.85rem;
+            animation: fadeSlideIn 0.2s ease;
+        }
+        @keyframes fadeSlideIn {
+            from { opacity: 0; transform: translateY(-4px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+
+        /* ═══════ TOGGLE ═══════ */
+        .toggle-switch {
+            position: relative;
+            width: 38px; height: 20px;
+            flex-shrink: 0;
+        }
+        .toggle-switch input { opacity: 0; width: 0; height: 0; position: absolute; }
+        .toggle-slider {
+            position: absolute; inset: 0;
+            background: var(--danger);
+            border-radius: 20px;
+            cursor: pointer;
+            transition: background 0.25s;
+        }
+        .toggle-slider::before {
+            content: '';
+            position: absolute;
+            width: 14px; height: 14px;
+            border-radius: 50%;
+            background: white;
+            top: 3px; left: 3px;
+            transition: transform 0.25s;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        }
+        .toggle-switch input:checked + .toggle-slider { background: var(--success); }
+        .toggle-switch input:checked + .toggle-slider::before { transform: translateX(18px); }
+
+        .toggle-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.75rem;
+        }
+
+        /* ═══════ MATRIX PANEL ═══════ */
+        .gen-toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0.6rem;
+            padding: 0 0 1rem 0;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 1rem;
+        }
+        .gen-toolbar-left {
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+            flex-wrap: wrap;
+            flex: 1;
+        }
+        .gen-date-input {
+            padding: 0.4rem 0.6rem;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background: var(--bg-app);
+            color: var(--text-main);
+            font-size: 0.8rem;
+            max-width: 150px;
+        }
+        .gen-btn {
+            padding: 0.4rem 0.75rem;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background: var(--surface);
+            color: var(--text-main);
+            font-size: 0.75rem;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            transition: all 0.15s;
+            white-space: nowrap;
+        }
+        .gen-btn:hover {
+            border-color: var(--primary);
+            background: var(--primary-subtle);
+        }
+        .gen-btn.primary {
+            background: var(--primary);
+            color: white;
+            border-color: var(--primary);
+        }
+        .gen-btn.primary:hover { background: var(--primary-hover); }
+        .gen-layout {
+            display: grid;
+            grid-template-columns: 1fr 280px;
+            gap: 1rem;
+        }
+
+        .gen-table-wrap {
+            overflow-x: auto;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+        }
+        .gen-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.78rem;
+        }
+        .gen-table th {
+            background: var(--surface-2);
+            padding: 0.55rem 0.5rem;
+            text-align: center;
+            font-size: 0.65rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+            color: var(--text-muted);
+            border-bottom: 1px solid var(--border-strong);
+            white-space: nowrap;
+            position: sticky;
+            top: 0; z-index: 2;
+        }
+        .gen-table th:first-child {
+            text-align: left;
+            padding-left: 0.75rem;
+            position: sticky;
+            left: 0; z-index: 3;
+            background: var(--surface-2);
+        }
+        .gen-table td {
+            padding: 0.4rem 0.35rem;
+            text-align: center;
+            border-bottom: 1px solid var(--border);
+            vertical-align: middle;
+        }
+        .gen-table td:first-child {
+            text-align: left;
+            padding-left: 0.75rem;
+            font-weight: 600;
+            font-size: 0.8rem;
+            position: sticky;
+            left: 0;
+            background: var(--bg-panel);
+            z-index: 1;
+            white-space: nowrap;
+        }
+        .gen-table tr:hover td { background: var(--primary-subtle); }
+        .gen-table tr:hover td:first-child { background: var(--surface); }
+
+        .cell-toggle {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .cell-toggle input { display: none; }
+        .cell-toggle-slider {
+            width: 28px; height: 16px;
+            background: var(--border-strong);
+            border-radius: 10px;
+            position: relative;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .cell-toggle-slider::after {
+            content: '';
+            position: absolute;
+            width: 12px; height: 12px;
+            border-radius: 50%;
+            background: white;
+            top: 2px; left: 2px;
+            transition: transform 0.2s;
+        }
+        .cell-toggle input:checked + .cell-toggle-slider { background: var(--primary); }
+        .cell-toggle input:checked + .cell-toggle-slider::after { transform: translateX(12px); }
+
+        .cell-select {
+            padding: 0.25rem 0.3rem;
+            border-radius: 4px;
+            border: 1px solid var(--border);
+            background: var(--bg-app);
+            color: var(--text-main);
+            font-size: 0.72rem;
+            max-width: 80px;
+            font-family: 'Courier New', monospace;
+        }
+        .cell-abs {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.2rem;
+            font-size: 0.65rem;
+            padding: 0.15rem 0.4rem;
+            border-radius: 4px;
+            background: rgba(239,68,68,0.08);
+            color: var(--danger);
+            cursor: pointer;
+        }
+        .gen-detail {
+            background: var(--surface-2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 1rem;
+        }
+        .gen-detail-empty {
+            color: var(--text-dim);
+            font-size: 0.78rem;
+            text-align: center;
+            padding: 2rem 0;
+        }
+
+        /* ═══════ SEGMENTED ═══════ */
+        .segmented {
+            display: flex;
+            background: var(--bg-app);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 3px;
+        }
+        .seg-btn {
+            flex: 1;
+            padding: 0.4rem 0.75rem;
+            border: none;
+            background: transparent;
+            color: var(--text-muted);
+            font-weight: 600;
+            font-size: 0.78rem;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .seg-btn.active {
+            background: var(--surface);
+            color: var(--text-main);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        }
+        .seg-btn:hover:not(.active) { color: var(--text-main); }
+
+        /* ═══════ JEFE per-task-per-day ═══════ */
+        .jefe-matrix {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.78rem;
+        }
+        .jefe-matrix th {
+            padding: 0.4rem 0.35rem;
+            text-align: center;
+            font-size: 0.65rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+            color: var(--text-muted);
+            border-bottom: 1px solid var(--border-strong);
+            background: var(--surface-2);
+        }
+        .jefe-matrix th:first-child { text-align: left; padding-left: 0.5rem; }
+        .jefe-matrix td {
+            padding: 0.3rem 0.2rem;
+            text-align: center;
+            border-bottom: 1px solid var(--border);
+        }
+        .jefe-matrix td:first-child {
+            text-align: left;
+            padding-left: 0.5rem;
+            font-size: 0.76rem;
+            font-weight: 500;
+        }
+        .jefe-matrix tr:hover td { background: var(--primary-subtle); }
+
+        .jefe-select {
+            padding: 0.2rem 0.25rem;
+            border-radius: 4px;
+            border: 1px solid var(--border);
+            background: var(--bg-app);
+            color: var(--text-main);
+            font-size: 0.7rem;
+            max-width: 90px;
+            text-align: center;
+        }
+
+        /* ═══════ CLEANING TABLE ═══════ */
+        .clean-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.8rem;
+        }
+        .clean-table th {
+            padding: 0.5rem 0.4rem;
+            text-align: center;
+            color: var(--text-muted);
+            font-weight: 600;
+            font-size: 0.72rem;
+            border-bottom: 1px solid var(--border);
+        }
+        .clean-table th:first-child { text-align: left; }
+        .clean-table td {
+            padding: 0.35rem 0.4rem;
+            text-align: center;
+            border-bottom: 1px solid var(--border);
+            vertical-align: middle;
+        }
+        .clean-table td:first-child { text-align: left; font-weight: 500; }
+        .clean-table tr:hover td { background: var(--primary-subtle); }
+        .clean-checkbox {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 20px; height: 20px;
+            cursor: pointer;
+            position: relative;
+        }
+        .clean-checkbox input { opacity: 0; width: 0; height: 0; position: absolute; }
+        .clean-checkbox span {
+            width: 18px; height: 18px;
+            border: 2px solid var(--border-strong);
+            border-radius: 4px;
+            background: var(--bg-panel);
+            transition: all 0.15s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .clean-checkbox span::after {
+            content: '';
+            width: 4px; height: 8px;
+            border: solid white;
+            border-width: 0 2px 2px 0;
+            transform: rotate(45deg) scale(0);
+            opacity: 0;
+            transition: all 0.12s;
+        }
+        .clean-checkbox input:checked + span {
+            background: var(--primary);
+            border-color: var(--primary);
+        }
+        .clean-checkbox input:checked + span::after {
+            opacity: 1;
+            transform: rotate(45deg) scale(1);
+        }
+
+        /* ═══════ CHIPS ═══════ */
+        .day-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.35rem;
+        }
+        .day-chip {
+            padding: 0.3rem 0.7rem;
+            border-radius: 6px;
+            font-size: 0.72rem;
+            font-weight: 600;
+            cursor: pointer;
+            border: 1px solid var(--border);
+            background: var(--surface);
+            color: var(--text-muted);
+            transition: all 0.15s;
+            line-height: 1.4;
+        }
+        .day-chip.active {
+            border-color: var(--primary);
+            background: var(--primary-subtle);
+            color: var(--primary);
+        }
+        .day-chip.has-special {
+            border-color: var(--warning);
+            background: rgba(245,158,11,0.08);
+            color: var(--warning);
+        }
+
+        /* ═══════ MODE GRID ═══════ */
+        .mode-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 0.6rem;
+        }
+        .mode-card { cursor: pointer; display: block; }
+        .mode-card input { display: none; }
+        .mode-card-body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.3rem;
+            padding: 0.65rem 0.5rem;
+            border-radius: 8px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            transition: all 0.15s;
+            text-align: center;
+        }
+        .mode-card input:checked + .mode-card-body {
+            border-color: var(--primary);
+            background: var(--primary-subtle);
+            box-shadow: 0 0 0 2px rgba(79,70,229,0.15);
+        }
+        .mode-card:hover .mode-card-body { border-color: var(--primary); }
+
+        /* ═══════ UTILITIES ═══════ */
+        .mt-1 { margin-top: 0.5rem; }
+        .mb-1 { margin-bottom: 0.5rem; }
+        .flex { display: flex; }
+        .flex-wrap { flex-wrap: wrap; }
+        .items-center { align-items: center; }
+        .gap-1 { gap: 0.5rem; }
+        .text-muted { color: var(--text-muted); }
+        .text-sm { font-size: 0.75rem; }
+        .text-xs { font-size: 0.68rem; }
+        .param-select {
+            width: 100%;
+            padding: 0.4rem 0.6rem;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background: var(--surface);
+            color: var(--text-main);
+            font-size: 0.8rem;
+        }
+        .param-input {
+            width: 100%;
+            padding: 0.4rem 0.6rem;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background: var(--surface);
+            color: var(--text-main);
+            font-size: 0.8rem;
+        }
+        .holiday-form {
+            display: flex;
+            gap: 0.5rem;
+            align-items: end;
+            margin-bottom: 0.75rem;
+        }
+        .holiday-form .field { flex: 1; }
+        .holiday-form .field label {
+            display: block;
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            margin-bottom: 0.25rem;
+        }
+        .holiday-form .field input {
+            width: 100%;
+            padding: 0.4rem 0.6rem;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background: var(--surface);
+            color: var(--text-main);
+            font-size: 0.8rem;
+        }
+        .holiday-list {
+            max-height: 200px;
+            overflow-y: auto;
+            background: var(--surface-2);
+            border-radius: 8px;
+            padding: 0.4rem;
+        }
+        .holiday-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.35rem 0.5rem;
+            border-bottom: 1px solid var(--border);
+            font-size: 0.8rem;
+        }
+        .holiday-item:last-child { border-bottom: none; }
+
+        .page-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 1.5rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border);
+        }
+        .page-header-left {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+        .page-header-icon {
+            width: 40px; height: 40px;
+            border-radius: 10px;
+            background: var(--primary-subtle);
+            color: var(--primary);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.1rem;
+        }
+        .page-header h2 {
+            font-size: 1.3rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+        }
+        .page-header p {
+            font-size: 0.82rem;
+            color: var(--text-muted);
+            margin-top: 0.1rem;
+        }
+    </style>
+</head>
+<body class="dark-mode">
+
+    <!-- ═══ PAGE HEADER ═══ -->
+    <div class="page-header">
+        <div class="page-header-left">
+            <div class="page-header-icon">⚙</div>
+            <div>
+                <h2>Parámetros del Motor</h2>
+                <p>Configurá las reglas del generador de horarios</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ════════════════════════════════════
+         REGLAS DEL GENERADOR
+         ════════════════════════════════════ -->
+    <div class="param-group">
+        <div class="param-group-header" onclick="this.closest('.param-group').classList.toggle('collapsed')">
+            <div class="param-group-header-left">
+                <div class="param-group-icon" style="background:rgba(99,102,241,0.12); color:#6366f1;">⚡</div>
+                <span class="param-group-title">Reglas del Generador</span>
+                <span class="param-group-count">7</span>
+            </div>
+            <span class="param-group-chevron">▼</span>
+        </div>
+        <div class="param-group-body">
+
+            <!-- ═══ PANEL DE PARÁMETROS (full-width matrix) ═══ -->
+            <div class="param-card span-full" style="padding:0; border: none;">
+                <div class="param-card-header" style="padding:1rem 1.15rem; border-bottom:1px solid var(--border); cursor:pointer;" onclick="this.closest('.param-card').classList.toggle('collapsed')">
+                    <div class="param-card-header-left">
+                        <span class="param-card-dot" style="background:#6366f1;"></span>
+                        <span class="param-card-title" style="font-size:0.95rem;">Panel de Parámetros</span>
+                        <span class="param-card-badge">Matriz</span>
+                    </div>
+                    <span class="param-card-chevron">▼</span>
+                </div>
+                <div class="param-card-content" style="padding:1rem 1.15rem 1rem;">
+                    <div class="gen-toolbar">
+                        <div class="gen-toolbar-left">
+                            <span class="text-sm text-muted">Semana (viernes)</span>
+                            <input type="date" class="gen-date-input" value="2026-05-22" />
+                        </div>
+                        <div style="display:flex; gap:0.4rem; flex-wrap:wrap;">
+                            <button class="gen-btn">🔄</button>
+                            <button class="gen-btn">📥 RR.HH. → turnos</button>
+                            <button class="gen-btn">Todos: quebrado total</button>
+                            <button class="gen-btn">Todos: quebrado parcial</button>
+                            <button class="gen-btn primary">💾 Guardar</button>
+                        </div>
+                    </div>
+                    <div class="gen-layout">
+                        <div class="gen-table-wrap">
+                            <table class="gen-table">
+                                <thead>
+                                    <tr>
+                                        <th style="min-width:140px;">Colaborador</th>
+                                        <th title="Forzar libres">Libres</th>
+                                        <th title="Quebrado total">Q.T</th>
+                                        <th title="Quebrado parcial">Q.P</th>
+                                        <th title="Sin descanso">S/d</th>
+                                        <th title="Estricto">Ext</th>
+                                        <th title="Jefe de pista">Jefe</th>
+                                        <th style="min-width:75px;">Turnos</th>
+                                        <th>Aus.</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td>Carlos Mendoza</td>
+                                        <td><label class="cell-toggle"><input type="checkbox" /><span class="cell-toggle-slider"></span></label></td>
+                                        <td><label class="cell-toggle"><input type="checkbox" /><span class="cell-toggle-slider"></span></label></td>
+                                        <td><label class="cell-toggle"><input type="checkbox" /><span class="cell-toggle-slider"></span></label></td>
+                                        <td><label class="cell-toggle"><input type="checkbox" /><span class="cell-toggle-slider"></span></label></td>
+                                        <td><label class="cell-toggle"><input type="checkbox" checked /><span class="cell-toggle-slider"></span></label></td>
+                                        <td><label class="cell-toggle"><input type="checkbox" checked /><span class="cell-toggle-slider"></span></label></td>
+                                        <td><select class="cell-select"><option>J_06-16</option><option selected>T2_06-14</option><option>T4_08-16</option></select></td>
+                                        <td><span class="cell-abs">➕ 0</span></td>
+                                    </tr>
+                                    <tr>
+                                        <td>María Jiménez</td>
+                                        <td><label class="cell-toggle"><input type="checkbox" /><span class="cell-toggle-slider"></span></label></td>
+                                        <td><label class="cell-toggle"><input type="checkbox" /><span class="cell-toggle-slider"></span></label></td>
+                                        <td><label class="cell-toggle"><input type="checkbox" /><span class="cell-toggle-slider"></span></label></td>
+                                        <td><label class="cell-toggle"><input type="checkbox" /><span class="cell-toggle-slider"></span></label></td>
+                                        <td><label class="cell-toggle"><input type="checkbox" /><span class="cell-toggle-slider"></span></label></td>
+                                        <td><label class="cell-toggle"><input type="checkbox" /><span class="cell-toggle-slider"></span></label></td>
+                                        <td><select class="cell-select"><option selected>T1_05-13</option><option>T2_06-14</option><option>PM</option></select></td>
+                                        <td><span class="cell-abs">➕ 0</span></td>
+                                    </tr>
+                                    <tr>
+                                        <td>Pedro Sánchez</td>
+                                        <td><label class="cell-toggle"><input type="checkbox" /><span class="cell-toggle-slider"></span></label></td>
+                                        <td><label class="cell-toggle"><input type="checkbox" /><span class="cell-toggle-slider"></span></label></td>
+                                        <td><label class="cell-toggle"><input type="checkbox" /><span class="cell-toggle-slider"></span></label></td>
+                                        <td><label class="cell-toggle"><input type="checkbox" /><span class="cell-toggle-slider"></span></label></td>
+                                        <td><label class="cell-toggle"><input type="checkbox" /><span class="cell-toggle-slider"></span></label></td>
+                                        <td><label class="cell-toggle"><input type="checkbox" /><span class="cell-toggle-slider"></span></label></td>
+                                        <td><select class="cell-select"><option selected>T3_07-15</option><option>T4_08-16</option></select></td>
+                                        <td><span class="cell-abs">⚠ 2</span></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="gen-detail">
+                            <div style="font-size:0.8rem; font-weight:700; margin-bottom:0.75rem; display:flex; align-items:center; gap:0.4rem;">
+                                <span>📋</span> Detalle
+                            </div>
+                            <p class="gen-detail-empty">Seleccioná un colaborador en la tabla para ver su configuración detallada.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Cobertura Nocturna -->
+            <div class="param-card">
+                <div class="param-card-header" onclick="this.closest('.param-card').classList.toggle('collapsed')">
+                    <div class="param-card-header-left">
+                        <span class="param-card-dot" style="background:#8b5cf6;"></span>
+                        <span class="param-card-title">Cobertura Nocturna</span>
+                    </div>
+                    <span class="param-card-chevron">▼</span>
+                </div>
+                <div class="param-card-content">
+                    <p class="text-sm text-muted mb-1">¿Cómo se cubre el turno de noche?</p>
+                    <div class="segmented">
+                        <button class="seg-btn active">Rotación</button>
+                        <button class="seg-btn">Fijo a Empleado</button>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-1 mt-1">
+                        <span style="padding:0.3rem 0.7rem; border-radius:20px; border:2px solid var(--primary); background:var(--primary-subtle); color:var(--primary); font-size:0.78rem; font-weight:500; display:flex; align-items:center; gap:0.3rem; cursor:pointer;">
+                            <span style="width:20px; height:20px; border-radius:50%; background:var(--primary); color:white; display:flex; align-items:center; justify-content:center; font-size:0.6rem; font-weight:700;">CM</span>
+                            Carlos Mendoza
+                        </span>
+                        <span style="padding:0.3rem 0.7rem; border-radius:20px; border:2px solid var(--border); background:var(--surface); color:var(--text-muted); font-size:0.78rem; cursor:pointer;">
+                            María Jiménez
+                        </span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Turnos Largos -->
+            <div class="param-card">
+                <div class="param-card-header">
+                    <div class="param-card-header-left">
+                        <span class="param-card-dot" style="background:#10b981;"></span>
+                        <span class="param-card-title">Turnos Largos</span>
+                    </div>
+                    <div class="toggle-switch"><input type="checkbox" checked /><span class="toggle-slider"></span></div>
+                </div>
+                <div class="param-card-content">
+                    <p class="text-sm text-muted">Habilita turnos &gt; 8 horas (Q y T16).</p>
+                </div>
+            </div>
+
+            <!-- Refuerzo Provisional -->
+            <div class="param-card">
+                <div class="param-card-header" onclick="this.closest('.param-card').classList.toggle('collapsed')">
+                    <div class="param-card-header-left">
+                        <span class="param-card-dot" style="background:#f59e0b;"></span>
+                        <span class="param-card-title">Refuerzo Provisional</span>
+                    </div>
+                    <span class="param-card-chevron">▼</span>
+                </div>
+                <div class="param-card-content">
+                    <div class="toggle-row mb-1">
+                        <span style="font-size:0.82rem;">Activar refuerzo</span>
+                        <div class="toggle-switch"><input type="checkbox" /><span class="toggle-slider"></span></div>
+                    </div>
+                    <select class="param-select"><option>Personalizado (Elegir Horas)</option><option>Diurno</option><option>Nocturno</option><option>Automático</option></select>
+                </div>
+            </div>
+
+            <!-- Regla de Colisión -->
+            <div class="param-card">
+                <div class="param-card-header">
+                    <div class="param-card-header-left">
+                        <span class="param-card-dot" style="background:#6366f1;"></span>
+                        <span class="param-card-title">Regla de Colisión</span>
+                    </div>
+                    <div class="toggle-switch"><input type="checkbox" /><span class="toggle-slider"></span></div>
+                </div>
+                <div class="param-card-content">
+                    <p class="text-sm text-muted">Usar turno Quebrado en el día con 2 OFF simultáneos.</p>
+                </div>
+            </div>
+
+            <!-- Rotación Global -->
+            <div class="param-card">
+                <div class="param-card-header">
+                    <div class="param-card-header-left">
+                        <span class="param-card-dot" style="background:#14b8a6;"></span>
+                        <span class="param-card-title">Rotación Global AM/PM</span>
+                    </div>
+                    <div class="toggle-switch"><input type="checkbox" checked /><span class="toggle-slider"></span></div>
+                </div>
+                <div class="param-card-content">
+                    <p class="text-sm text-muted">Rota automáticamente entre mañana y tarde usando el historial.</p>
+                </div>
+            </div>
+
+            <!-- Historial de Rotación -->
+            <div class="param-card">
+                <div class="param-card-header">
+                    <div class="param-card-header-left">
+                        <span class="param-card-dot" style="background:#0ea5e9;"></span>
+                        <span class="param-card-title">Historial de Rotación</span>
+                    </div>
+                    <div class="toggle-switch"><input type="checkbox" checked /><span class="toggle-slider"></span></div>
+                </div>
+                <div class="param-card-content">
+                    <p class="text-sm text-muted">Usa la semana anterior para evitar repetir turnos.</p>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- ════════════════════════════════════
+         CONFIGURACIÓN DE PERSONAL
+         ════════════════════════════════════ -->
+    <div class="param-group">
+        <div class="param-group-header" onclick="this.closest('.param-group').classList.toggle('collapsed')">
+            <div class="param-group-header-left">
+                <div class="param-group-icon" style="background:rgba(236,72,153,0.12); color:#ec4899;">👥</div>
+                <span class="param-group-title">Configuración de Personal</span>
+                <span class="param-group-count">3</span>
+            </div>
+            <span class="param-group-chevron">▼</span>
+        </div>
+        <div class="param-group-body">
+
+            <!-- Alternancia de Turnos -->
+            <div class="param-card">
+                <div class="param-card-header" onclick="this.closest('.param-card').classList.toggle('collapsed')">
+                    <div class="param-card-header-left">
+                        <span class="param-card-dot" style="background:#ec4899;"></span>
+                        <span class="param-card-title">Alternancia de Turnos</span>
+                    </div>
+                    <span class="param-card-chevron">▼</span>
+                </div>
+                <div class="param-card-content">
+                    <div class="toggle-row mb-1">
+                        <div>
+                            <div style="font-size:0.82rem; font-weight:600;">Automático (por género)</div>
+                            <div class="text-xs text-muted">Detecta empleadas y las alterna solas</div>
+                        </div>
+                        <div class="toggle-switch"><input type="checkbox" checked /><span class="toggle-slider"></span></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Turno base del jefe -->
+            <div class="param-card">
+                <div class="param-card-header no-toggle">
+                    <div class="param-card-header-left">
+                        <span class="param-card-dot" style="background:#ca8a04;"></span>
+                        <span class="param-card-title">Turno base del jefe</span>
+                    </div>
+                </div>
+                <div class="param-card-content">
+                    <p class="text-sm text-muted mb-1">Horario lun–vie del jefe de pista:</p>
+                    <select class="param-select"><option>J_06-16 (6am-4pm)</option><option>T2_06-14</option><option>T4_08-16</option></select>
+                </div>
+            </div>
+
+            <!-- Plantillas -->
+            <div class="param-card">
+                <div class="param-card-header" onclick="this.closest('.param-card').classList.toggle('collapsed')">
+                    <div class="param-card-header-left">
+                        <span class="param-card-dot" style="background:#8b5cf6;"></span>
+                        <span class="param-card-title">Plantillas de Preferencias</span>
+                    </div>
+                    <span class="param-card-chevron">▼</span>
+                </div>
+                <div class="param-card-content">
+                    <p class="text-sm text-muted mb-1">Turnos fijos y reglas reutilizables para asignar rápido.</p>
+                    <div style="padding:1rem; text-align:center; background:var(--surface-2); border-radius:8px;">
+                        <span class="text-xs text-muted">Sin plantillas todavía</span>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- ════════════════════════════════════
+         TAREAS (incluye Jefe de Pista)
+         ════════════════════════════════════ -->
+    <div class="param-group">
+        <div class="param-group-header" onclick="this.closest('.param-group').classList.toggle('collapsed')">
+            <div class="param-group-header-left">
+                <div class="param-group-icon" style="background:rgba(16,185,129,0.12); color:#10b981;">🧹</div>
+                <span class="param-group-title">Tareas</span>
+                <span class="param-group-count">2</span>
+            </div>
+            <span class="param-group-chevron">▼</span>
+        </div>
+        <div class="param-group-body">
+
+            <!-- ═══ JEFE DE PISTA (simplificado) ═══ -->
+            <div class="param-card span-full" style="padding:0; border: none;">
+                <div class="param-card-header" style="padding:1rem 1.15rem; border-bottom:1px solid var(--border); cursor:pointer;" onclick="this.closest('.param-card').classList.toggle('collapsed')">
+                    <div class="param-card-header-left">
+                        <span class="param-card-dot" style="background:#6366f1;"></span>
+                        <span class="param-card-title" style="font-size:0.95rem;">Control del Jefe de Pista</span>
+                        <span class="param-card-badge">Asignación</span>
+                    </div>
+                    <span class="param-card-chevron">▼</span>
+                </div>
+                <div class="param-card-content" style="padding:1rem 1.15rem;">
+
+                    <!-- Toggle 1: Activar tareas del jefe (master) -->
+                    <div class="toggle-row mb-1">
+                        <div>
+                            <div style="font-size:0.85rem; font-weight:600;">Activar tareas del jefe</div>
+                            <div class="text-xs text-muted">Desactivar = el jefe no participa en ninguna tarea</div>
+                        </div>
+                        <div class="toggle-switch"><input type="checkbox" checked id="jefeMasterToggle" /><span class="toggle-slider"></span></div>
+                    </div>
+
+                    <div id="jefeBody">
+                        <!-- Toggle 2: Incluir en tareas regulares -->
+                        <div class="toggle-row mb-1" style="padding:0.6rem 0.75rem; background:var(--surface-2); border-radius:8px;">
+                            <div>
+                                <div style="font-size:0.82rem; font-weight:600;">Incluir al jefe en tareas regulares</div>
+                                <div class="text-xs text-muted">Al activarlo, Baños y Tanques se asignan según el horario del jefe (AM/PM). Si está apagado, el jefe solo hace Calibración, Caños y Caños GLP.</div>
+                            </div>
+                            <div class="toggle-switch"><input type="checkbox" id="jefeRegularToggle" /><span class="toggle-slider"></span></div>
+                        </div>
+
+                        <!-- Tabla: 6 tareas, 7 días -->
+                        <p class="text-sm text-muted mb-1">Asignación manual por tarea y día:</p>
+                        <div style="overflow-x:auto;">
+                            <table class="jefe-matrix">
+                                <thead>
+                                    <tr>
+                                        <th style="min-width:110px;">Tarea</th>
+                                        <th>Lun</th><th>Mar</th><th>Mié</th><th>Jue</th>
+                                        <th>Vie</th><th>Sáb</th><th>Dom</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr><td>🧹 Baños <span class="text-xs text-muted">(AM/PM según horario)</span></td>
+                                        <td><select class="jefe-select"><option selected>—</option><option>Jefe</option></select></td>
+                                        <td><select class="jefe-select"><option selected>—</option><option>Jefe</option></select></td>
+                                        <td><select class="jefe-select"><option selected>—</option><option>Jefe</option></select></td>
+                                        <td><select class="jefe-select"><option selected>—</option><option>Jefe</option></select></td>
+                                        <td><select class="jefe-select"><option selected>—</option><option>Jefe</option></select></td>
+                                        <td><select class="jefe-select"><option selected>—</option><option>Jefe</option></select></td>
+                                        <td><select class="jefe-select"><option selected>—</option><option>Jefe</option></select></td>
+                                    </tr>
+                                    <tr><td>⛽ Tanques <span class="text-xs text-muted">(AM/PM según horario)</span></td>
+                                        <td><select class="jefe-select"><option selected>—</option><option>Jefe</option></select></td>
+                                        <td><select class="jefe-select"><option selected>—</option><option>Jefe</option></select></td>
+                                        <td><select class="jefe-select"><option selected>—</option><option>Jefe</option></select></td>
+                                        <td><select class="jefe-select"><option selected>—</option><option>Jefe</option></select></td>
+                                        <td><select class="jefe-select"><option selected>—</option><option>Jefe</option></select></td>
+                                        <td><select class="jefe-select"><option>—</option><option selected>Jefe</option></select></td>
+                                        <td><select class="jefe-select"><option selected>—</option><option>Jefe</option></select></td>
+                                    </tr>
+                                    <tr><td>🗑 Oficina + Basureros</td>
+                                        <td><select class="jefe-select"><option selected>—</option><option>Jefe</option></select></td>
+                                        <td><select class="jefe-select"><option selected>—</option><option>Jefe</option></select></td>
+                                        <td><select class="jefe-select"><option selected>—</option><option>Jefe</option></select></td>
+                                        <td><select class="jefe-select"><option selected>—</option><option>Jefe</option></select></td>
+                                        <td><select class="jefe-select"><option selected>—</option><option>Jefe</option></select></td>
+                                        <td><select class="jefe-select"><option selected>—</option><option>Jefe</option></select></td>
+                                        <td><select class="jefe-select"><option selected>—</option><option>Jefe</option></select></td>
+                                    </tr>
+                                    <tr><td>📊 Calibración</td>
+                                        <td><select class="jefe-select"><option selected>—</option><option>Jefe</option></select></td>
+                                        <td><select class="jefe-select"><option>—</option><option selected>Jefe</option></select></td>
+                                        <td><select class="jefe-select"><option selected>—</option><option>Jefe</option></select></td>
+                                        <td><select class="jefe-select"><option selected>—</option><option>Jefe</option></select></td>
+                                        <td><select class="jefe-select"><option selected>—</option><option>Jefe</option></select></td>
+                                        <td><select class="jefe-select"><option selected>—</option><option>Jefe</option></select></td>
+                                        <td><select class="jefe-select"><option selected>—</option><option>Jefe</option></select></td>
+                                    </tr>
+                                    <tr><td>🔧 Caños</td>
+                                        <td><select class="jefe-select"><option>—</option><option selected>Jefe</option></select></td>
+                                        <td><select class="jefe-select"><option selected>—</option><option>Jefe</option></select></td>
+                                        <td><select class="jefe-select"><option selected>—</option><option>Jefe</option></select></td>
+                                        <td><select class="jefe-select"><option selected>—</option><option>Jefe</option></select></td>
+                                        <td><select class="jefe-select"><option selected>—</option><option>Jefe</option></select></td>
+                                        <td><select class="jefe-select"><option selected>—</option><option>Jefe</option></select></td>
+                                        <td><select class="jefe-select"><option selected>—</option><option>Jefe</option></select></td>
+                                    </tr>
+                                    <tr><td>🔥 Caños GLP</td>
+                                        <td><select class="jefe-select"><option selected>—</option><option>Jefe</option></select></td>
+                                        <td><select class="jefe-select"><option selected>—</option><option>Jefe</option></select></td>
+                                        <td><select class="jefe-select"><option selected>—</option><option>Jefe</option></select></td>
+                                        <td><select class="jefe-select"><option>—</option><option selected>Jefe</option></select></td>
+                                        <td><select class="jefe-select"><option selected>—</option><option>Jefe</option></select></td>
+                                        <td><select class="jefe-select"><option selected>—</option><option>Jefe</option></select></td>
+                                        <td><select class="jefe-select"><option selected>—</option><option>Jefe</option></select></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="text-xs text-muted mt-1">
+                            <strong>Jefe</strong> = asignado · <strong>—</strong> = no se asigna
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tareas de Limpieza -->
+            <div class="param-card span-full">
+                <div class="param-card-header" onclick="this.closest('.param-card').classList.toggle('collapsed')">
+                    <div class="param-card-header-left">
+                        <span class="param-card-dot" style="background:#10b981;"></span>
+                        <span class="param-card-title">Tareas de Limpieza</span>
+                        <span class="param-card-badge">8 tareas × 7 días</span>
+                    </div>
+                    <span class="param-card-chevron">▼</span>
+                </div>
+                <div class="param-card-content">
+                    <p class="text-sm text-muted mb-1">Seleccioná qué tareas se generan cada día.</p>
+                    <div style="overflow-x:auto;">
+                        <table class="clean-table">
+                            <thead>
+                                <tr><th>Tarea</th><th>Lun</th><th>Mar</th><th>Mié</th><th>Jue</th><th>Vie</th><th>Sáb</th><th>Dom</th></tr>
+                            </thead>
+                            <tbody>
+                                <tr><td>🧹 Baños AM</td>
+                                    <td><label class="clean-checkbox"><input type="checkbox" checked /><span></span></label></td>
+                                    <td><label class="clean-checkbox"><input type="checkbox" checked /><span></span></label></td>
+                                    <td><label class="clean-checkbox"><input type="checkbox" checked /><span></span></label></td>
+                                    <td><label class="clean-checkbox"><input type="checkbox" checked /><span></span></label></td>
+                                    <td><label class="clean-checkbox"><input type="checkbox" checked /><span></span></label></td>
+                                    <td><label class="clean-checkbox"><input type="checkbox" checked /><span></span></label></td>
+                                    <td><label class="clean-checkbox"><input type="checkbox" checked /><span></span></label></td>
+                                </tr>
+                                <tr><td>🧹 Baños PM</td>
+                                    <td><label class="clean-checkbox"><input type="checkbox" checked /><span></span></label></td>
+                                    <td><label class="clean-checkbox"><input type="checkbox" checked /><span></span></label></td>
+                                    <td><label class="clean-checkbox"><input type="checkbox" checked /><span></span></label></td>
+                                    <td><label class="clean-checkbox"><input type="checkbox" checked /><span></span></label></td>
+                                    <td><label class="clean-checkbox"><input type="checkbox" checked /><span></span></label></td>
+                                    <td><label class="clean-checkbox"><input type="checkbox" checked /><span></span></label></td>
+                                    <td><label class="clean-checkbox"><input type="checkbox" checked /><span></span></label></td>
+                                </tr>
+                                <tr><td>⛽ Tanques AM</td>
+                                    <td><label class="clean-checkbox"><input type="checkbox" checked /><span></span></label></td>
+                                    <td><label class="clean-checkbox"><input type="checkbox" checked /><span></span></label></td>
+                                    <td><label class="clean-checkbox"><input type="checkbox" checked /><span></span></label></td>
+                                    <td><label class="clean-checkbox"><input type="checkbox" checked /><span></span></label></td>
+                                    <td><label class="clean-checkbox"><input type="checkbox" checked /><span></span></label></td>
+                                    <td><label class="clean-checkbox"><input type="checkbox" /><span></span></label></td>
+                                    <td><label class="clean-checkbox"><input type="checkbox" /><span></span></label></td>
+                                </tr>
+                                <tr><td style="color:var(--text-muted);">🗑 Oficina + Basureros</td>
+                                    <td><label class="clean-checkbox"><input type="checkbox" checked /><span></span></label></td>
+                                    <td><label class="clean-checkbox"><input type="checkbox" /><span></span></label></td>
+                                    <td><label class="clean-checkbox"><input type="checkbox" /><span></span></label></td>
+                                    <td><label class="clean-checkbox"><input type="checkbox" checked /><span></span></label></td>
+                                    <td><label class="clean-checkbox"><input type="checkbox" /><span></span></label></td>
+                                    <td><label class="clean-checkbox"><input type="checkbox" /><span></span></label></td>
+                                    <td><label class="clean-checkbox"><input type="checkbox" /><span></span></label></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- ════════════════════════════════════
+         CALENDARIO
+         ════════════════════════════════════ -->
+    <div class="param-group">
+        <div class="param-group-header" onclick="this.closest('.param-group').classList.toggle('collapsed')">
+            <div class="param-group-header-left">
+                <div class="param-group-icon" style="background:rgba(245,158,11,0.12); color:#f59e0b;">📅</div>
+                <span class="param-group-title">Calendario</span>
+                <span class="param-group-count">2</span>
+            </div>
+            <span class="param-group-chevron">▼</span>
+        </div>
+        <div class="param-group-body">
+            <div class="param-card">
+                <div class="param-card-header" onclick="this.closest('.param-card').classList.toggle('collapsed')">
+                    <div class="param-card-header-left">
+                        <span class="param-card-dot" style="background:#f59e0b;"></span>
+                        <span class="param-card-title">Excepciones Semanales</span>
+                    </div>
+                    <span class="param-card-chevron">▼</span>
+                </div>
+                <div class="param-card-content">
+                    <p class="text-sm text-muted mb-1">Días especiales (feriados, cerrado, como domingo).</p>
+                    <div class="day-chips">
+                        <span class="day-chip">Vie</span>
+                        <span class="day-chip">Sáb</span>
+                        <span class="day-chip">Dom</span>
+                        <span class="day-chip">Lun</span>
+                        <span class="day-chip">Mar</span>
+                        <span class="day-chip has-special">Mié</span>
+                        <span class="day-chip">Jue</span>
+                    </div>
+                </div>
+            </div>
+            <div class="param-card">
+                <div class="param-card-header" onclick="this.closest('.param-card').classList.toggle('collapsed')">
+                    <div class="param-card-header-left">
+                        <span class="param-card-dot" style="background:#f59e0b;"></span>
+                        <span class="param-card-title">Días Festivos</span>
+                        <span class="param-card-badge">CR</span>
+                    </div>
+                    <span class="param-card-chevron">▼</span>
+                </div>
+                <div class="param-card-content">
+                    <div class="holiday-form">
+                        <div class="field"><label>Fecha</label><input type="date" /></div>
+                        <div class="field" style="flex:2;"><label>Nombre</label><input type="text" placeholder="ej: Día de la Independencia" /></div>
+                        <button class="gen-btn" style="margin-bottom:0;">➕</button>
+                    </div>
+                    <div class="holiday-list">
+                        <div class="holiday-item"><span>🎉 Año Nuevo</span><span class="text-xs text-muted">01/01/2026</span></div>
+                        <div class="holiday-item"><span>🎉 Juan Santamaría</span><span class="text-xs text-muted">11/04/2026</span></div>
+                        <div class="holiday-item"><span>🎉 Día del Trabajador</span><span class="text-xs text-muted">01/05/2026</span></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ════════════════════════════════════
+         AVANZADO
+         ════════════════════════════════════ -->
+    <div class="param-group">
+        <div class="param-group-header" onclick="this.closest('.param-group').classList.toggle('collapsed')">
+            <div class="param-group-header-left">
+                <div class="param-group-icon" style="background:rgba(245,158,11,0.12); color:#f59e0b;">⚙</div>
+                <span class="param-group-title">Avanzado</span>
+                <span class="param-group-count">1</span>
+            </div>
+            <span class="param-group-chevron">▼</span>
+        </div>
+        <div class="param-group-body">
+            <div class="param-card" style="border-color:#f59e0b;">
+                <div class="param-card-header" onclick="this.closest('.param-card').classList.toggle('collapsed')">
+                    <div class="param-card-header-left">
+                        <span class="param-card-dot" style="background:#f59e0b;"></span>
+                        <span class="param-card-title">Turnos Personalizados</span>
+                        <span class="param-card-badge warn">Avanzado</span>
+                    </div>
+                    <span class="param-card-chevron">▼</span>
+                </div>
+                <div class="param-card-content">
+                    <p class="text-sm text-muted mb-1">Agregá turnos con horario específico y prioridad.</p>
+                    <div style="display:grid; grid-template-columns:1fr 1fr 1fr auto; gap:0.4rem; align-items:end;">
+                        <div><label class="text-xs text-muted">Nombre</label><input type="text" class="param-input" placeholder="MiTurno" /></div>
+                        <div><label class="text-xs text-muted">Inicio</label><input type="number" class="param-input" placeholder="5" /></div>
+                        <div><label class="text-xs text-muted">Fin</label><input type="number" class="param-input" placeholder="13" /></div>
+                        <button class="gen-btn" style="margin-bottom:0;">➕</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <hr style="border:none; border-top:1px solid var(--border); margin:2rem 0;" />
+    <p style="text-align:center; color:var(--text-dim); font-size:0.78rem;">
+        Prototipo v2 — Cronos · Open Design
+    </p>
+
+
+</body>
+</html>

@@ -49,7 +49,7 @@ def _all_off():
 
 
 def _patch_test_db(tmp_path, monkeypatch):
-    """SQLite en archivo + tarifas fijas; no toca planilla.db del proyecto."""
+    """SQLite en archivo + tarifas fijas; no toca cronos.db del proyecto."""
     import database as db_mod
 
     db_path = tmp_path / "planilla_fixture.db"

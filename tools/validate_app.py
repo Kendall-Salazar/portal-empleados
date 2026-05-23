@@ -225,7 +225,7 @@ def prepare_workspace(profile: Profile) -> tuple[Path, Path]:
     (app_root / "export_horarios").mkdir(parents=True, exist_ok=True)
     (app_root / "acciones de empleado").mkdir(parents=True, exist_ok=True)
 
-    db_file = app_root / "planillas" / "planilla.db"
+    db_file = app_root / "planillas" / "cronos.db"
     if db_file.exists():
         db_file.unlink()
 

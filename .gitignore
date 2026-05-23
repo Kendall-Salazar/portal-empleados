@@ -154,7 +154,7 @@ cython_debug/
 # Datos en tiempo de ejecución y archivos sensibles
 database.json
 backend/database.json
-planillas/planilla.db
+planillas/cronos.db
 CORAZON/
 .webview_data/
 .vscode/

@@ -1,15 +1,15 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="es">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chronos OrganizaT</title>
-    <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <!-- Icons -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <!-- Google Fonts (local) -->
+    <link rel="stylesheet" href="vendor/fonts.css">
+    <!-- Icons (local) -->
+    <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css">
+    <script src="vendor/html2canvas.min.js"></script>
     <link rel="stylesheet" href="style.css?v=2">
 </head>
 
@@ -374,647 +374,912 @@
                         </div>
                     </div>
 
-                    <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap:1.5rem;">
-
-                        <!-- Panel Parámetros del Generador: matriz colaboradores -->
-                        <div class="vac-emp-card param-card gen-param-panel" style="padding:0; grid-column: 1 / -1; overflow:hidden;">
-                            <div class="gen-param-panel-header">
-                                <div>
-                                    <h3 class="gen-param-panel-title">
-                                        <i class="fa-solid fa-table" style="color:#6366f1;"></i>
-                                        Panel de Parámetros del Generador
-                                    </h3>
-                                    <p class="helper-text-sm" style="margin:0.35rem 0 0 0;">Matriz rápida: libres, quebrado, sin descanso, estricto, jefe, turnos y ausencias por semana. El motor usa <strong>turnos fijos resueltos</strong>; RR.HH. se muestra solo como aviso si no coincide.</p>
-                                </div>
-                                <div class="gen-param-toolbar">
-                                    <label class="gen-param-week-label">Semana (viernes)</label>
-                                    <input type="date" id="genPanelWeekStart" class="gen-param-date" title="Fecha del viernes que inicia la semana laboral">
-                                    <button type="button" class="btn-action" style="padding:0.45rem 0.85rem; font-size:0.8rem;" onclick="refreshGeneratorParamsPanel()"><i class="fa-solid fa-rotate"></i></button>
-                                    <button type="button" class="btn-action" style="padding:0.45rem 0.85rem; font-size:0.8rem;" onclick="genPanelSyncRrhh()" title="Copiar vacaciones/permisos de RR.HH. a turnos fijos de la semana"><i class="fa-solid fa-cloud-arrow-down"></i> RR.HH. → turnos</button>
-                                    <button type="button" class="btn-action" style="padding:0.45rem 0.85rem; font-size:0.8rem;" onclick="genPanelBatchForcedQuebrado(true)" title="Activa forzar quebrado TOTAL en todos los colaboradores (toda la semana en Q)">Todos: quebrado total</button>
-                                    <button type="button" class="btn-action" style="padding:0.45rem 0.85rem; font-size:0.8rem;" onclick="genPanelBatchForcedQuebradoPartial(true)" title="Activa quebrado PARCIAL en todos: Q solo cuando la cobertura lo requiera">Todos: quebrado parcial</button>
-                                    <button type="button" class="btn-action primary" style="padding:0.45rem 0.85rem; font-size:0.8rem;" onclick="saveGeneratorParamsPanel()"><i class="fa-solid fa-floppy-disk"></i> Guardar todo</button>
-                                </div>
+                    <!-- ═══════════ REGLAS DEL GENERADOR ═══════════ -->
+                    <div class="param-group collapsed" id="paramGroupGenerador">
+                        <div class="param-group-header" onclick="toggleParamGroup(this)">
+                            <div class="param-group-header-left">
+                                <span class="param-group-icon" style="background:rgba(99,102,241,0.12); color:#6366f1;">
+                                    <i class="fa-solid fa-gears"></i>
+                                </span>
+                                <span class="param-group-title">Reglas del Generador</span>
+                                <span class="param-group-count">7</span>
                             </div>
-                            <div class="gen-param-panel-body">
-                                <div class="gen-param-table-wrap">
-                                    <table class="gen-param-table" id="genPanelTable" aria-label="Parámetros por colaborador">
-                                        <thead>
-                                            <tr>
-                                                <th class="gen-col-name">Colaborador</th>
-                                                <th class="gen-col-toggle" title="Forzar libres">Libres</th>
-                                                <th class="gen-col-toggle" title="Forzar quebrado total (toda la semana en Q)">Qbr.T</th>
-                                                <th class="gen-col-toggle" title="Forzar quebrado parcial (Q solo cuando la cobertura lo requiera)">Qbr.P</th>
-                                                <th class="gen-col-toggle" title="Sin descanso estándar">S/desc</th>
-                                                <th class="gen-col-toggle" title="Preferencias estrictas">Estr.</th>
-                                                <th class="gen-col-toggle" title="Jefe de pista">Jefe</th>
-                                                <th class="gen-col-shift">Turnos</th>
-                                                <th class="gen-col-abs">Aus.</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody id="genPanelTbody"></tbody>
-                                    </table>
-                                    <p id="genPanelEmpty" class="helper-text-sm hidden" style="padding:1rem;">No hay datos. Verificá la API o agregá colaboradores.</p>
-                                </div>
-                                <aside class="gen-param-detail" id="genPanelDetail" aria-live="polite">
-                                    <h4 class="gen-param-detail-title">Detalle</h4>
-                                    <p id="genPanelDetailPlaceholder" class="helper-text-sm">Seleccioná un colaborador en la tabla.</p>
-                                    <div id="genPanelDetailContent" class="hidden"></div>
-                                </aside>
-                            </div>
+                            <i class="fa-solid fa-chevron-down param-group-chevron"></i>
                         </div>
+                        <div class="param-group-body">
+                            <div class="param-group-grid">
 
-                        <div class="vac-emp-card param-card gen-jefe-base-card" style="grid-column: 1 / -1;">
-                            <h4><i class="fa-solid fa-star" style="color:#ca8a04;"></i> Turno base del jefe de pista</h4>
-                            <p class="helper-text-sm" style="margin:0 0 0.65rem 0;">Valor guardado en configuración. Se escribe en <strong>turnos fijos</strong> del colaborador marcado como jefe; el generador respeta esas celdas (no las sobrescribe en base de datos).</p>
-                            <div style="display:flex; flex-wrap:wrap; align-items:center; gap:0.6rem;">
-                                <label for="jefeBaseShiftSelect" class="helper-text-sm" style="margin:0;">Horario lun–vie:</label>
-                                <select id="jefeBaseShiftSelect" class="gen-detail-day-shift" style="min-width:160px; max-width:240px;" onchange="updateConfig()" aria-label="Turno base lun a viernes para el jefe de pista"></select>
-                                <button type="button" class="btn-action primary" style="padding:0.45rem 0.85rem; font-size:0.8rem;" onclick="genPanelApplyJefeBaseFromConfig()"><i class="fa-solid fa-user-tie"></i> Aplicar al jefe actual</button>
-                            </div>
-                        </div>
-
-                        <!-- Plantillas preferencias horario (ancho completo) -->
-                        <div class="vac-emp-card param-card hidden-pref-plantillas-section" style="padding:1.5rem; grid-column: 1 / -1;">
-                            <div style="display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:1rem; margin-bottom:0.75rem;">
-                                <div>
-                                    <h3 style="color:var(--text-main); margin:0; font-size:1.05rem; display:flex; align-items:center; gap:0.5rem;">
-                                        <i class="fa-solid fa-layer-group" style="color:#6366f1;"></i>
-                                        Plantillas de preferencias de horario
-                                    </h3>
-                                    <p class="helper-text-sm" style="margin:0.35rem 0 0 0;">Define turnos fijos y reglas reutilizables. Asigná la plantilla a cada colaborador en el <strong>Panel de Parámetros del Generador</strong> (detalle del colaborador).</p>
-                                </div>
-                                <button type="button" class="btn-action primary" onclick="openPrefPlantillaModal(null)" style="border-radius:8px; padding:0.5rem 1rem; font-size:0.85rem;">
-                                    <i class="fa-solid fa-plus"></i> Nueva plantilla
-                                </button>
-                            </div>
-                            <div id="prefPlantillasList" style="min-height:2rem;"></div>
-                        </div>
-
-                        <!-- Cobertura Nocturna (collapsible) -->
-                        <div class="vac-emp-card param-card" style="padding:1.5rem;">
-                            <div class="param-card-header" onclick="toggleParamCard(this)">
-                                <h3 style="color:var(--text-main); margin:0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
-                                    <span style="background:rgba(139,92,246,0.12); color:#8b5cf6; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
-                                        <i class="fa-solid fa-moon" style="font-size:0.85rem;"></i>
-                                    </span>
-                                    Cobertura Nocturna
-                                </h3>
-                                <i class="fa-solid fa-chevron-down chevron"></i>
-                            </div>
-                            <div class="param-card-content">
-                                <p class="helper-text-sm" style="margin-bottom: 10px;">¿Cómo se cubre el turno de noche?</p>
-                                <input type="hidden" id="nightModeConfig" value="rotation">
-                                <div class="segmented-control" id="nightModeSegmented" style="margin-bottom: 0.8rem;">
-                                    <button type="button" class="seg-btn active" onclick="setNightMode('rotation', this)">Rotación</button>
-                                    <button type="button" class="seg-btn" onclick="setNightMode('fixed_person', this)">Fijo a Empleado</button>
-                                </div>
-                                <div id="fixedNightContainer" class="hidden fade-in" style="margin-top: 0.5rem;">
-                                    <p class="helper-text-sm" style="margin-bottom: 10px;">Selecciona quién cubrirá el turno nocturno:</p>
-                                    <input type="hidden" id="nightPersonSelect" value="">
-                                    <div id="nightPersonPills" class="night-person-selector" style="display: flex; flex-wrap: wrap; gap: 0.5rem; flex-direction: row;"></div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Turnos Largos (collapsible) -->
-                        <div class="vac-emp-card param-card" style="padding:1.5rem;">
-                            <div class="param-card-header" onclick="toggleParamCard(this)">
-                                <h3 style="color:var(--text-main); margin:0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
-                                    <span style="background:rgba(16,185,129,0.12); color:#10b981; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
-                                        <i class="fa-solid fa-clock" style="font-size:0.85rem;"></i>
-                                    </span>
-                                    Turnos Largos
-                                </h3>
-                                <i class="fa-solid fa-chevron-down chevron"></i>
-                            </div>
-                            <div class="param-card-content">
-                                <p class="helper-text-sm" style="margin-bottom: 0.6rem;">Habilita turnos que superan las 8 horas (Q y T16).</p>
-                                <label class="option-card hover-glow" style="margin-bottom: 0; padding: 0.8rem;">
-                                    <div class="opt-content">
-                                        <div class="opt-icon" style="background: rgba(16, 185, 129, 0.1); color: #10b981; width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
-                                            <i class="fa-solid fa-hourglass-end"></i>
+                                <!-- Panel de Parámetros del Generador -->
+                                <div class="vac-emp-card param-card gen-param-panel full-width" style="padding:0; overflow:hidden;">
+                                    <div class="gen-param-panel-header">
+                                        <div>
+                                            <h3 class="gen-param-panel-title">
+                                                <i class="fa-solid fa-table" style="color:#6366f1;"></i>
+                                                Panel de Parámetros del Generador
+                                            </h3>
+                                            <p class="helper-text-sm" style="margin:0.35rem 0 0 0;">Matriz rápida: libres, quebrado, sin descanso, estricto, jefe, turnos y ausencias por semana. El motor usa <strong>turnos fijos resueltos</strong>; RR.HH. se muestra solo como aviso si no coincide.</p>
                                         </div>
-                                        <div class="opt-text">
-                                            <strong style="font-size: 0.85rem;">Habilitar Q y T16</strong>
-                                            <small style="font-size: 0.7rem;">Permite asignar turnos &gt; 8 hrs</small>
+                                        <div class="gen-param-toolbar">
+                                            <label class="gen-param-week-label">Semana (viernes)</label>
+                                            <input type="date" id="genPanelWeekStart" class="gen-param-date" title="Fecha del viernes que inicia la semana laboral">
+                                            <button type="button" class="btn-action" style="padding:0.45rem 0.85rem; font-size:0.8rem;" onclick="refreshGeneratorParamsPanel()"><i class="fa-solid fa-rotate"></i></button>
+                                            <button type="button" class="btn-action" style="padding:0.45rem 0.85rem; font-size:0.8rem;" onclick="genPanelSyncRrhh()" title="Copiar vacaciones/permisos de RR.HH. a turnos fijos de la semana"><i class="fa-solid fa-cloud-arrow-down"></i> RR.HH. → turnos</button>
+                                            <button type="button" class="btn-action" style="padding:0.45rem 0.85rem; font-size:0.8rem;" onclick="genPanelBatchForcedQuebrado(true)" title="Activa forzar quebrado TOTAL en todos los colaboradores (toda la semana en Q)">Todos: quebrado total</button>
+                                            <button type="button" class="btn-action" style="padding:0.45rem 0.85rem; font-size:0.8rem;" onclick="genPanelBatchForcedQuebradoPartial(true)" title="Activa quebrado PARCIAL en todos: Q solo cuando la cobertura lo requiera">Todos: quebrado parcial</button>
+                                            <button type="button" class="btn-action primary" style="padding:0.45rem 0.85rem; font-size:0.8rem;" onclick="saveGeneratorParamsPanel()"><i class="fa-solid fa-floppy-disk"></i> Guardar todo</button>
                                         </div>
                                     </div>
-                                    <div class="toggle-container">
-                                        <input type="checkbox" id="allowLongShifts" class="toggle-checkbox" onchange="updateConfig()">
-                                        <div class="toggle-slider"></div>
+                                    <div class="gen-param-panel-body">
+                                        <div class="gen-param-table-wrap">
+                                            <table class="gen-param-table" id="genPanelTable" aria-label="Parámetros por colaborador">
+                                                <thead>
+                                                    <tr>
+                                                        <th class="gen-col-name">Colaborador</th>
+                                                        <th class="gen-col-toggle" title="Forzar libres">Libres</th>
+                                                        <th class="gen-col-toggle" title="Forzar quebrado total (toda la semana en Q)">Qbr.T</th>
+                                                        <th class="gen-col-toggle" title="Forzar quebrado parcial (Q solo cuando la cobertura lo requiera)">Qbr.P</th>
+                                                        <th class="gen-col-toggle" title="Sin descanso estándar">S/desc</th>
+                                                        <th class="gen-col-toggle" title="Preferencias estrictas">Estr.</th>
+                                                        <th class="gen-col-toggle" title="Jefe de pista">Jefe</th>
+                                                        <th class="gen-col-shift">Turnos</th>
+                                                        <th class="gen-col-abs">Aus.</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody id="genPanelTbody"></tbody>
+                                            </table>
+                                            <p id="genPanelEmpty" class="helper-text-sm hidden" style="padding:1rem;">No hay datos. Verificá la API o agregá colaboradores.</p>
+                                        </div>
+                                        <aside class="gen-param-detail" id="genPanelDetail" aria-live="polite">
+                                            <h4 class="gen-param-detail-title">Detalle</h4>
+                                            <p id="genPanelDetailPlaceholder" class="helper-text-sm">Seleccioná un colaborador en la tabla.</p>
+                                            <div id="genPanelDetailContent" class="hidden"></div>
+                                        </aside>
                                     </div>
-                                </label>
-                            </div>
-                        </div>
+                                </div>
 
-                        <!-- Refuerzo Provisional (collapsible) -->
-                        <div class="vac-emp-card param-card" style="padding:1.5rem;">
-                            <div class="param-card-header" onclick="toggleParamCard(this)">
-                                <h3 style="color:var(--text-main); margin:0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
-                                    <span style="background:rgba(245,158,11,0.12); color:#f59e0b; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
-                                        <i class="fa-solid fa-user-shield" style="font-size:0.85rem;"></i>
-                                    </span>
-                                    Refuerzo Provisional
-                                </h3>
-                                <i class="fa-solid fa-chevron-down chevron"></i>
-                            </div>
-                            <div class="param-card-content">
-                                <label class="option-card hover-glow" style="margin-bottom: 0.5rem; padding: 0.8rem;">
-                                    <div class="opt-content">
-                                        <div class="opt-icon" style="background: rgba(245, 158, 11, 0.1); color: #f59e0b; width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
-                                            <i class="fa-solid fa-user-plus"></i>
+                                <!-- Cobertura Nocturna -->
+                                <div class="vac-emp-card param-card" style="padding:1.5rem;">
+                                    <div class="param-card-header" onclick="toggleParamCard(this)">
+                                        <h3 style="color:var(--text-main); margin:0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
+                                            <span style="background:rgba(139,92,246,0.12); color:#8b5cf6; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
+                                                <i class="fa-solid fa-moon" style="font-size:0.85rem;"></i>
+                                            </span>
+                                            Cobertura Nocturna
+                                        </h3>
+                                        <i class="fa-solid fa-chevron-down chevron"></i>
+                                    </div>
+                                    <div class="param-card-content">
+                                        <p class="helper-text-sm" style="margin-bottom: 10px;">¿Cómo se cubre el turno de noche?</p>
+                                        <input type="hidden" id="nightModeConfig" value="rotation">
+                                        <div class="segmented-control" id="nightModeSegmented" style="margin-bottom: 0.8rem;">
+                                            <button type="button" class="seg-btn active" onclick="setNightMode('rotation', this)">Rotación</button>
+                                            <button type="button" class="seg-btn" onclick="setNightMode('fixed_person', this)">Fijo a Empleado</button>
                                         </div>
-                                        <div class="opt-text">
-                                            <strong style="font-size: 0.85rem;">Activar Refuerzo</strong>
-                                            <small style="font-size: 0.7rem;">Agrega un apoyo extra si es necesario</small>
+                                        <div id="fixedNightContainer" class="hidden fade-in" style="margin-top: 0.5rem;">
+                                            <p class="helper-text-sm" style="margin-bottom: 10px;">Selecciona quién cubrirá el turno nocturno:</p>
+                                            <input type="hidden" id="nightPersonSelect" value="">
+                                            <div id="nightPersonPills" class="night-person-selector" style="display: flex; flex-wrap: wrap; gap: 0.5rem; flex-direction: row;"></div>
                                         </div>
                                     </div>
-                                    <div class="toggle-container">
-                                        <input type="checkbox" id="useRefuerzo" class="toggle-checkbox" onchange="toggleRefuerzoConfig()">
-                                        <div class="toggle-slider"></div>
+                                </div>
+
+                                <!-- Turnos Largos -->
+                                <div class="vac-emp-card param-card" style="padding:1.5rem;">
+                                    <div class="param-card-header" onclick="toggleParamCard(this)">
+                                        <h3 style="color:var(--text-main); margin:0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
+                                            <span style="background:rgba(16,185,129,0.12); color:#10b981; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
+                                                <i class="fa-solid fa-clock" style="font-size:0.85rem;"></i>
+                                            </span>
+                                            Turnos Largos
+                                        </h3>
+                                        <i class="fa-solid fa-chevron-down chevron"></i>
                                     </div>
-                                </label>
-                                <div id="refuerzoTypeContainer" class="select-wrapper hidden fade-in">
-                                <label style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem; display: block;">Tipo de cobertura</label>
-                                <select id="refuerzoTypeSelect" onchange="updateConfig()" style="width: 100%; padding: 0.5rem; border-radius: 8px; border: 1px solid var(--border-color); background: var(--surface-2); color: var(--text-main); font-size: 0.85rem;">
-                                    <option value="personalizado">Personalizado (Elegir Horas)</option>
-                                    <option value="diurno">Diurno (Cubre Mañana)</option>
-                                    <option value="nocturno">Nocturno (Cubre Tarde/Noche)</option>
-                                    <option value="automatico">Automático (Mejor Opción)</option>
-                                    <option value="sabado">Solo Sábado</option>
-                                </select>
-                                <div id="refuerzoCustomTimeContainer" class="fade-in" style="margin-top: 0.85rem;">
-                                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
-                                        <div class="input-group">
-                                            <label style="font-size: 0.8rem; color: var(--text-muted);">Hora inicio</label>
-                                            <input type="time" id="refuerzoStartTime" step="3600" value="07:00" onchange="updateConfig()">
-                                        </div>
-                                        <div class="input-group">
-                                            <label style="font-size: 0.8rem; color: var(--text-muted);">Hora final</label>
-                                            <input type="time" id="refuerzoEndTime" step="3600" value="12:00" onchange="updateConfig()">
-                                        </div>
+                                    <div class="param-card-content">
+                                        <p class="helper-text-sm" style="margin-bottom: 0.6rem;">Habilita turnos que superan las 8 horas (Q y T16).</p>
+                                        <label class="option-card hover-glow" style="margin-bottom: 0; padding: 0.8rem;">
+                                            <div class="opt-content">
+                                                <div class="opt-icon" style="background: rgba(16, 185, 129, 0.1); color: #10b981; width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
+                                                    <i class="fa-solid fa-hourglass-end"></i>
+                                                </div>
+                                                <div class="opt-text">
+                                                    <strong style="font-size: 0.85rem;">Habilitar Q y T16</strong>
+                                                    <small style="font-size: 0.7rem;">Permite asignar turnos &gt; 8 hrs</small>
+                                                </div>
+                                            </div>
+                                            <div class="toggle-container">
+                                                <input type="checkbox" id="allowLongShifts" class="toggle-checkbox" onchange="updateConfig()">
+                                                <div class="toggle-slider"></div>
+                                            </div>
+                                        </label>
                                     </div>
-                                    <small style="display:block; margin-top: 0.45rem; font-size: 0.72rem; color: var(--text-muted);">Rango en que el refuerzo estará disponible.</small>
-                                    
-                                    <!-- Modo de días del refuerzo -->
-                                    <div style="margin-top: 1rem; padding-top: 0.85rem; border-top: 1px solid var(--border-color);">
-                                        <label style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.5rem; display: block;">Modo de días</label>
-                                        <select id="refuerzoDaysMode" onchange="toggleRefuerzoDaysConfig(); updateConfig()" style="width: 100%; padding: 0.5rem; border-radius: 8px; border: 1px solid var(--border-color); background: var(--surface-2); color: var(--text-main); font-size: 0.85rem;">
-                                            <option value="auto">Automático (Solver decide)</option>
-                                            <option value="manual">Manual (Elegir días)</option>
+                                </div>
+
+                                <!-- Refuerzo Provisional -->
+                                <div class="vac-emp-card param-card" style="padding:1.5rem;">
+                                    <div class="param-card-header" onclick="toggleParamCard(this)">
+                                        <h3 style="color:var(--text-main); margin:0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
+                                            <span style="background:rgba(245,158,11,0.12); color:#f59e0b; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
+                                                <i class="fa-solid fa-user-shield" style="font-size:0.85rem;"></i>
+                                            </span>
+                                            Refuerzo Provisional
+                                        </h3>
+                                        <i class="fa-solid fa-chevron-down chevron"></i>
+                                    </div>
+                                    <div class="param-card-content">
+                                        <label class="option-card hover-glow" style="margin-bottom: 0.5rem; padding: 0.8rem;">
+                                            <div class="opt-content">
+                                                <div class="opt-icon" style="background: rgba(245, 158, 11, 0.1); color: #f59e0b; width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
+                                                    <i class="fa-solid fa-user-plus"></i>
+                                                </div>
+                                                <div class="opt-text">
+                                                    <strong style="font-size: 0.85rem;">Activar Refuerzo</strong>
+                                                    <small style="font-size: 0.7rem;">Agrega un apoyo extra si es necesario</small>
+                                                </div>
+                                            </div>
+                                            <div class="toggle-container">
+                                                <input type="checkbox" id="useRefuerzo" class="toggle-checkbox" onchange="toggleRefuerzoConfig()">
+                                                <div class="toggle-slider"></div>
+                                            </div>
+                                        </label>
+                                        <div id="refuerzoTypeContainer" class="select-wrapper hidden fade-in">
+                                        <label style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem; display: block;">Tipo de cobertura</label>
+                                        <select id="refuerzoTypeSelect" onchange="updateConfig()" style="width: 100%; padding: 0.5rem; border-radius: 8px; border: 1px solid var(--border-color); background: var(--surface-2); color: var(--text-main); font-size: 0.85rem;">
+                                            <option value="personalizado">Personalizado (Elegir Horas)</option>
+                                            <option value="diurno">Diurno (Cubre Mañana)</option>
+                                            <option value="nocturno">Nocturno (Cubre Tarde/Noche)</option>
+                                            <option value="automatico">Automático (Mejor Opción)</option>
+                                            <option value="sabado">Solo Sábado</option>
                                         </select>
-                                    </div>
-                                    
-                                    <!-- Días manuales del refuerzo -->
-                                    <div id="refuerzoManualDaysContainer" class="hidden fade-in" style="margin-top: 0.85rem;">
-                                        <label style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.5rem; display: block;">Días de trabajo del refuerzo</label>
-                                        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-                                            <label class="day-checkbox" style="cursor: pointer;">
-                                                <input type="checkbox" id="refuerzoDayLun" value="Lun" onchange="updateConfig()" style="display: none;">
-                                                <span class="day-checkbox-label" style="padding: 0.4rem 0.8rem; border-radius: 6px; border: 1px solid var(--border-color); font-size: 0.8rem; display: inline-block;">Lun</span>
-                                            </label>
-                                            <label class="day-checkbox" style="cursor: pointer;">
-                                                <input type="checkbox" id="refuerzoDayMar" value="Mar" onchange="updateConfig()" style="display: none;">
-                                                <span class="day-checkbox-label" style="padding: 0.4rem 0.8rem; border-radius: 6px; border: 1px solid var(--border-color); font-size: 0.8rem; display: inline-block;">Mar</span>
-                                            </label>
-                                            <label class="day-checkbox" style="cursor: pointer;">
-                                                <input type="checkbox" id="refuerzoDayMié" value="Mié" onchange="updateConfig()" style="display: none;">
-                                                <span class="day-checkbox-label" style="padding: 0.4rem 0.8rem; border-radius: 6px; border: 1px solid var(--border-color); font-size: 0.8rem; display: inline-block;">Mié</span>
-                                            </label>
-                                            <label class="day-checkbox" style="cursor: pointer;">
-                                                <input type="checkbox" id="refuerzoDayJue" value="Jue" onchange="updateConfig()" style="display: none;">
-                                                <span class="day-checkbox-label" style="padding: 0.4rem 0.8rem; border-radius: 6px; border: 1px solid var(--border-color); font-size: 0.8rem; display: inline-block;">Jue</span>
-                                            </label>
-                                            <label class="day-checkbox" style="cursor: pointer;">
-                                                <input type="checkbox" id="refuerzoDayVie" value="Vie" onchange="updateConfig()" style="display: none;">
-                                                <span class="day-checkbox-label" style="padding: 0.4rem 0.8rem; border-radius: 6px; border: 1px solid var(--border-color); font-size: 0.8rem; display: inline-block;">Vie</span>
-                                            </label>
-                                            <label class="day-checkbox" style="cursor: pointer;">
-                                                <input type="checkbox" id="refuerzoDaySáb" value="Sáb" onchange="updateConfig()" style="display: none;">
-                                                <span class="day-checkbox-label" style="padding: 0.4rem 0.8rem; border-radius: 6px; border: 1px solid var(--border-color); font-size: 0.8rem; display: inline-block;">Sáb</span>
-                                            </label>
-                                            <label class="day-checkbox" style="cursor: pointer;">
-                                                <input type="checkbox" id="refuerzoDayDom" value="Dom" onchange="updateConfig()" style="display: none;">
-                                                <span class="day-checkbox-label" style="padding: 0.4rem 0.8rem; border-radius: 6px; border: 1px solid var(--border-color); font-size: 0.8rem; display: inline-block;">Dom</span>
-                                            </label>
+                                        <div id="refuerzoCustomTimeContainer" class="fade-in" style="margin-top: 0.85rem;">
+                                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+                                                <div class="input-group">
+                                                    <label style="font-size: 0.8rem; color: var(--text-muted);">Hora inicio</label>
+                                                    <input type="time" id="refuerzoStartTime" step="3600" value="07:00" onchange="updateConfig()">
+                                                </div>
+                                                <div class="input-group">
+                                                    <label style="font-size: 0.8rem; color: var(--text-muted);">Hora final</label>
+                                                    <input type="time" id="refuerzoEndTime" step="3600" value="12:00" onchange="updateConfig()">
+                                                </div>
+                                            </div>
+                                            <small style="display:block; margin-top: 0.45rem; font-size: 0.72rem; color: var(--text-muted);">Rango en que el refuerzo estará disponible.</small>
+
+                                            <!-- Modo de días del refuerzo -->
+                                            <div style="margin-top: 1rem; padding-top: 0.85rem; border-top: 1px solid var(--border-color);">
+                                                <label style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.5rem; display: block;">Modo de días</label>
+                                                <select id="refuerzoDaysMode" onchange="toggleRefuerzoDaysConfig(); updateConfig()" style="width: 100%; padding: 0.5rem; border-radius: 8px; border: 1px solid var(--border-color); background: var(--surface-2); color: var(--text-main); font-size: 0.85rem;">
+                                                    <option value="auto">Automático (Solver decide)</option>
+                                                    <option value="manual">Manual (Elegir días)</option>
+                                                </select>
+                                            </div>
+
+                                            <!-- Días manuales del refuerzo -->
+                                            <div id="refuerzoManualDaysContainer" class="hidden fade-in" style="margin-top: 0.85rem;">
+                                                <label style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.5rem; display: block;">Días de trabajo del refuerzo</label>
+                                                <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                                                    <label class="day-checkbox" style="cursor: pointer;">
+                                                        <input type="checkbox" id="refuerzoDayLun" value="Lun" onchange="updateConfig()" style="display: none;">
+                                                        <span class="day-checkbox-label" style="padding: 0.4rem 0.8rem; border-radius: 6px; border: 1px solid var(--border-color); font-size: 0.8rem; display: inline-block;">Lun</span>
+                                                    </label>
+                                                    <label class="day-checkbox" style="cursor: pointer;">
+                                                        <input type="checkbox" id="refuerzoDayMar" value="Mar" onchange="updateConfig()" style="display: none;">
+                                                        <span class="day-checkbox-label" style="padding: 0.4rem 0.8rem; border-radius: 6px; border: 1px solid var(--border-color); font-size: 0.8rem; display: inline-block;">Mar</span>
+                                                    </label>
+                                                    <label class="day-checkbox" style="cursor: pointer;">
+                                                        <input type="checkbox" id="refuerzoDayMié" value="Mié" onchange="updateConfig()" style="display: none;">
+                                                        <span class="day-checkbox-label" style="padding: 0.4rem 0.8rem; border-radius: 6px; border: 1px solid var(--border-color); font-size: 0.8rem; display: inline-block;">Mié</span>
+                                                    </label>
+                                                    <label class="day-checkbox" style="cursor: pointer;">
+                                                        <input type="checkbox" id="refuerzoDayJue" value="Jue" onchange="updateConfig()" style="display: none;">
+                                                        <span class="day-checkbox-label" style="padding: 0.4rem 0.8rem; border-radius: 6px; border: 1px solid var(--border-color); font-size: 0.8rem; display: inline-block;">Jue</span>
+                                                    </label>
+                                                    <label class="day-checkbox" style="cursor: pointer;">
+                                                        <input type="checkbox" id="refuerzoDayVie" value="Vie" onchange="updateConfig()" style="display: none;">
+                                                        <span class="day-checkbox-label" style="padding: 0.4rem 0.8rem; border-radius: 6px; border: 1px solid var(--border-color); font-size: 0.8rem; display: inline-block;">Vie</span>
+                                                    </label>
+                                                    <label class="day-checkbox" style="cursor: pointer;">
+                                                        <input type="checkbox" id="refuerzoDaySáb" value="Sáb" onchange="updateConfig()" style="display: none;">
+                                                        <span class="day-checkbox-label" style="padding: 0.4rem 0.8rem; border-radius: 6px; border: 1px solid var(--border-color); font-size: 0.8rem; display: inline-block;">Sáb</span>
+                                                    </label>
+                                                    <label class="day-checkbox" style="cursor: pointer;">
+                                                        <input type="checkbox" id="refuerzoDayDom" value="Dom" onchange="updateConfig()" style="display: none;">
+                                                        <span class="day-checkbox-label" style="padding: 0.4rem 0.8rem; border-radius: 6px; border: 1px solid var(--border-color); font-size: 0.8rem; display: inline-block;">Dom</span>
+                                                    </label>
+                                                </div>
+                                                <small style="display:block; margin-top: 0.45rem; font-size: 0.72rem; color: var(--text-muted);">Selecciona los días específicos donde trabaja el refuerzo.</small>
+                                            </div>
                                         </div>
-                                        <small style="display:block; margin-top: 0.45rem; font-size: 0.72rem; color: var(--text-muted);">Selecciona los días específicos donde trabaja el refuerzo.</small>
+                                    </div>
                                     </div>
                                 </div>
-                            </div>
-                            </div>
-                        </div>
 
-                        <!-- Regla de Colisión (collapsible) -->
-                        <div class="vac-emp-card param-card" style="padding:1.5rem;">
-                            <div class="param-card-header" onclick="toggleParamCard(this)">
-                                <h3 style="color:var(--text-main); margin:0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
-                                    <span style="background:rgba(99,102,241,0.12); color:#6366f1; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
-                                        <i class="fa-solid fa-puzzle-piece" style="font-size:0.85rem;"></i>
-                                    </span>
-                                    Regla de Colisión
-                                </h3>
-                                <i class="fa-solid fa-chevron-down chevron"></i>
-                            </div>
-                            <div class="param-card-content">
-                                <p class="helper-text-sm" style="margin-bottom: 0.6rem;">Cómo manejar la semana con 2 días libres simultáneos.</p>
-                                <label class="option-card hover-glow" style="margin-bottom: 0.5rem; padding: 0.8rem; display: block;">
-                                    <div class="opt-content">
-                                        <div class="opt-icon" style="background: rgba(99, 102, 241, 0.1); color: #6366f1; width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
-                                            <i class="fa-solid fa-puzzle-piece"></i>
-                                        </div>
-                                        <div class="opt-text">
-                                            <strong style="font-size: 0.85rem;">Usar turno Quebrado</strong>
-                                            <small style="font-size: 0.7rem;">Turno Q solo en el día con 2 OFF</small>
+                                <!-- Regla de Colisión -->
+                                <div class="vac-emp-card param-card" style="padding:1.5rem;">
+                                    <div class="param-card-header" onclick="toggleParamCard(this)">
+                                        <h3 style="color:var(--text-main); margin:0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
+                                            <span style="background:rgba(99,102,241,0.12); color:#6366f1; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
+                                                <i class="fa-solid fa-puzzle-piece" style="font-size:0.85rem;"></i>
+                                            </span>
+                                            Regla de Colisión
+                                        </h3>
+                                        <i class="fa-solid fa-chevron-down chevron"></i>
+                                    </div>
+                                    <div class="param-card-content">
+                                        <p class="helper-text-sm" style="margin-bottom: 0.6rem;">Cómo manejar la semana con 2 días libres simultáneos.</p>
+                                        <label class="option-card hover-glow" style="margin-bottom: 0.5rem; padding: 0.8rem; display: block;">
+                                            <div class="opt-content">
+                                                <div class="opt-icon" style="background: rgba(99, 102, 241, 0.1); color: #6366f1; width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
+                                                    <i class="fa-solid fa-puzzle-piece"></i>
+                                                </div>
+                                                <div class="opt-text">
+                                                    <strong style="font-size: 0.85rem;">Usar turno Quebrado</strong>
+                                                    <small style="font-size: 0.7rem;">Turno Q solo en el día con 2 OFF</small>
+                                                </div>
+                                            </div>
+                                            <div class="toggle-container">
+                                                <input type="checkbox" id="allowCollisionQuebrado" class="toggle-checkbox" onchange="toggleCollisionConfig()">
+                                                <div class="toggle-slider"></div>
+                                            </div>
+                                        </label>
+                                        <div id="collisionPriorityContainer" class="select-wrapper" style="margin-top: 0.75rem;">
+                                            <label style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem; display: block;">Distribución por día pico</label>
+                                            <select id="collisionPeakPriority" onchange="updateConfig()" style="width: 100%; padding: 0.5rem; border-radius: 8px; border: 1px solid var(--border-color); background: var(--surface-2); color: var(--text-main); font-size: 0.85rem;">
+                                                <option value="pm">4 Tarde + 3 Mañana (Recomendado)</option>
+                                                <option value="am">4 Mañana + 3 Tarde</option>
+                                            </select>
                                         </div>
                                     </div>
-                                    <div class="toggle-container">
-                                        <input type="checkbox" id="allowCollisionQuebrado" class="toggle-checkbox" onchange="toggleCollisionConfig()">
-                                        <div class="toggle-slider"></div>
-                                    </div>
-                                </label>
-                                <div id="collisionPriorityContainer" class="select-wrapper" style="margin-top: 0.75rem;">
-                                    <label style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem; display: block;">Distribución por día pico</label>
-                                    <select id="collisionPeakPriority" onchange="updateConfig()" style="width: 100%; padding: 0.5rem; border-radius: 8px; border: 1px solid var(--border-color); background: var(--surface-2); color: var(--text-main); font-size: 0.85rem;">
-                                        <option value="pm">4 Tarde + 3 Mañana (Recomendado)</option>
-                                        <option value="am">4 Mañana + 3 Tarde</option>
-                                    </select>
                                 </div>
-                            </div>
-                        </div>
 
-                        <!-- Historial de Rotación (collapsible) -->
-                        <div class="vac-emp-card param-card" style="padding:1.5rem;">
-                            <div class="param-card-header" onclick="toggleParamCard(this)">
-                                <h3 style="color:var(--text-main); margin:0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
-                                    <span style="background:rgba(14,165,233,0.12); color:#0ea5e9; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
-                                        <i class="fa-solid fa-clock-rotate-left" style="font-size:0.85rem;"></i>
-                                    </span>
-                                    Historial de Rotación
-                                </h3>
-                                <i class="fa-solid fa-chevron-down chevron"></i>
-                            </div>
-                            <div class="param-card-content">
-                                <label class="option-card hover-glow" style="margin-bottom: 0; padding: 0.8rem; display: block;">
-                                    <div class="opt-content">
-                                        <div class="opt-icon" style="background: rgba(14, 165, 233, 0.12); color: #0ea5e9; width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
-                                            <i class="fa-solid fa-timeline"></i>
-                                        </div>
-                                        <div class="opt-text">
-                                            <strong style="font-size: 0.85rem;">Usar semana anterior</strong>
-                                            <small style="font-size: 0.7rem;">Evita repetir turnos y guía la rotación</small>
-                                        </div>
+                                <!-- Historial de Rotación -->
+                                <div class="vac-emp-card param-card" style="padding:1.5rem;">
+                                    <div class="param-card-header" onclick="toggleParamCard(this)">
+                                        <h3 style="color:var(--text-main); margin:0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
+                                            <span style="background:rgba(14,165,233,0.12); color:#0ea5e9; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
+                                                <i class="fa-solid fa-clock-rotate-left" style="font-size:0.85rem;"></i>
+                                            </span>
+                                            Historial de Rotación
+                                        </h3>
+                                        <i class="fa-solid fa-chevron-down chevron"></i>
                                     </div>
-                                    <div class="toggle-container">
-                                        <input type="checkbox" id="useHistoryContext" class="toggle-checkbox" checked onchange="updateConfig()">
-                                        <div class="toggle-slider"></div>
-                                    </div>
-                                </label>
-                            </div>
-                        </div>
-
-                        <!-- Excepciones Semanales (collapsible) -->
-                        <div class="vac-emp-card param-card" style="padding:1.5rem;">
-                            <div class="param-card-header" onclick="toggleParamCard(this)">
-                                <h3 style="color:var(--text-main); margin:0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
-                                    <span style="background:rgba(245,158,11,0.12); color:#f59e0b; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
-                                        <i class="fa-solid fa-wand-magic-sparkles" style="font-size:0.85rem;"></i>
-                                    </span>
-                                    Excepciones Semanales
-                                </h3>
-                                <i class="fa-solid fa-chevron-down chevron"></i>
-                            </div>
-                            <div class="param-card-content">
-                                <p class="helper-text-sm" style="margin-bottom: 0.75rem;">El domingo usa siempre reglas de domingo. <strong>Como domingo</strong> es una excepción para otros días (festivos, etc.).</p>
-                                
-                                <!-- Day selector chips -->
-                                <div id="specialDaysChips" style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem;">
-                                </div>
-                                
-                                <!-- Selected day options -->
-                                <div id="specialDayOptions" style="display: none; padding: 0; border: none; background: transparent;">
-                                    <p id="selectedDayLabel" style="font-weight: 600; margin: 0 0 0.75rem 0; color: var(--text-main); font-size: 0.9rem;"></p>
-                                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0.75rem;">
-                                        <label class="special-mode-option" id="specialModeNormal">
-                                            <input type="radio" name="specialDayMode" value="normal" onchange="setSpecialDayMode(this.value)">
-                                            <div class="mode-content">
-                                                <i class="fa-solid fa-calendar-day" style="color: #6b7280;"></i>
-                                                <span class="special-mode-title">Normal</span>
-                                                <small class="special-mode-desc" style="display: block; color: var(--text-muted); font-size: 0.7rem;">Cobertura estándar</small>
+                                    <div class="param-card-content">
+                                        <label class="option-card hover-glow" style="margin-bottom: 0; padding: 0.8rem; display: block;">
+                                            <div class="opt-content">
+                                                <div class="opt-icon" style="background: rgba(14, 165, 233, 0.12); color: #0ea5e9; width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
+                                                    <i class="fa-solid fa-timeline"></i>
+                                                </div>
+                                                <div class="opt-text">
+                                                    <strong style="font-size: 0.85rem;">Usar semana anterior</strong>
+                                                    <small style="font-size: 0.7rem;">Evita repetir turnos y guía la rotación</small>
+                                                </div>
                                             </div>
-                                        </label>
-                                        <label class="special-mode-option" id="specialModeSundayLike">
-                                            <input type="radio" name="specialDayMode" value="sunday_like" onchange="setSpecialDayMode(this.value)">
-                                            <div class="mode-content">
-                                                <i class="fa-solid fa-sun" style="color: #f59e0b;"></i>
-                                                <span>Como Domingo</span>
-                                                <small style="display: block; color: var(--text-muted); font-size: 0.7rem;">Excepción: otro día con cobertura tipo domingo</small>
-                                            </div>
-                                        </label>
-                                        <label class="special-mode-option" id="specialModeHolyThursday">
-                                            <input type="radio" name="specialDayMode" value="holy_thursday" onchange="setSpecialDayMode(this.value)">
-                                            <div class="mode-content">
-                                                <i class="fa-solid fa-users" style="color: #8b5cf6;"></i>
-                                                <span>2-4-3-2</span>
-                                                <small style="display: block; color: var(--text-muted); font-size: 0.7rem;">2 · 4 · 3 · 2 personas</small>
-                                            </div>
-                                        </label>
-                                        <label class="special-mode-option" id="specialModeClosed">
-                                            <input type="radio" name="specialDayMode" value="closed" onchange="setSpecialDayMode(this.value)">
-                                            <div class="mode-content">
-                                                <i class="fa-solid fa-lock" style="color: #ef4444;"></i>
-                                                <span>Cerrado</span>
-                                                <small style="display: block; color: var(--text-muted); font-size: 0.7rem;">Sin operaciones</small>
+                                            <div class="toggle-container">
+                                                <input type="checkbox" id="useHistoryContext" class="toggle-checkbox" checked onchange="updateConfig()">
+                                                <div class="toggle-slider"></div>
                                             </div>
                                         </label>
                                     </div>
                                 </div>
-                                
-                                <!-- Legacy grid (hidden but functional) -->
-                                <div id="weekSpecialDaysSection" class="hidden" style="display: none;">
-                                    <div id="weekSpecialDaysGrid"></div>
-                                </div>
-                            </div>
-                        </div>
 
-                        <!-- Tareas de Limpieza (collapsible) -->
-                        <div class="vac-emp-card param-card" style="padding:1.5rem; grid-column: 1 / -1;">
-                            <div class="param-card-header" onclick="toggleParamCard(this)">
-                                <h3 style="color:var(--text-main); margin:0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
-                                    <span style="background:rgba(16,185,129,0.12); color:#10b981; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
-                                        <i class="fa-solid fa-broom" style="font-size:0.85rem;"></i>
-                                    </span>
-                                    Tareas de Limpieza
-                                </h3>
-                                <i class="fa-solid fa-chevron-down chevron"></i>
-                            </div>
-                            <div class="param-card-content">
-                                <p class="helper-text-sm" style="margin-bottom: 0.8rem;">Seleccioná qué tareas se generan cada día. Oficina + Basureros se asigna automáticamente al encargado de Baños AM los Lunes y Jueves.</p>
-                                <div style="overflow-x: auto;">
-                                    <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem; text-align: center;">
-                                        <thead>
-                                            <tr style="border-bottom: 1px solid var(--border-color);">
-                                                <th style="text-align: left; padding: 0.5rem; color: var(--text-muted); font-weight: 500;">Tarea</th>
-                                                <th style="padding: 0.5rem; color: var(--text-muted); font-weight: 500;">Lun</th>
-                                                <th style="padding: 0.5rem; color: var(--text-muted); font-weight: 500;">Mar</th>
-                                                <th style="padding: 0.5rem; color: var(--text-muted); font-weight: 500;">Mié</th>
-                                                <th style="padding: 0.5rem; color: var(--text-muted); font-weight: 500;">Jue</th>
-                                                <th style="padding: 0.5rem; color: var(--text-muted); font-weight: 500;">Vie</th>
-                                                <th style="padding: 0.5rem; color: var(--text-muted); font-weight: 500;">Sáb</th>
-                                                <th style="padding: 0.5rem; color: var(--text-muted); font-weight: 500;">Dom</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            <tr style="border-bottom: 1px solid var(--border-color);">
-                                                <td style="text-align: left; padding: 0.5rem; font-weight: 500; color: var(--text-main);"><i class="fa-solid fa-restroom" style="color:#6366f1; width:16px; text-align:center; margin-right:4px;"></i> Baños AM</td>
-                                                <td><label class="clean-checkbox"><input type="checkbox" id="clean_am_banos_Lun" checked onchange="updateConfig()"><span></span></label></td>
-                                                <td><label class="clean-checkbox"><input type="checkbox" id="clean_am_banos_Mar" checked onchange="updateConfig()"><span></span></label></td>
-                                                <td><label class="clean-checkbox"><input type="checkbox" id="clean_am_banos_Mié" checked onchange="updateConfig()"><span></span></label></td>
-                                                <td><label class="clean-checkbox"><input type="checkbox" id="clean_am_banos_Jue" checked onchange="updateConfig()"><span></span></label></td>
-                                                <td><label class="clean-checkbox"><input type="checkbox" id="clean_am_banos_Vie" checked onchange="updateConfig()"><span></span></label></td>
-                                                <td><label class="clean-checkbox"><input type="checkbox" id="clean_am_banos_Sáb" checked onchange="updateConfig()"><span></span></label></td>
-                                                <td><label class="clean-checkbox"><input type="checkbox" id="clean_am_banos_Dom" checked onchange="updateConfig()"><span></span></label></td>
-                                            </tr>
-                                            <tr style="border-bottom: 1px solid var(--border-color);">
-                                                <td style="text-align: left; padding: 0.5rem; font-weight: 500; color: var(--text-main);"><i class="fa-solid fa-restroom" style="color:#6366f1; width:16px; text-align:center; margin-right:4px;"></i> Baños PM</td>
-                                                <td><label class="clean-checkbox"><input type="checkbox" id="clean_pm_banos_Lun" checked onchange="updateConfig()"><span></span></label></td>
-                                                <td><label class="clean-checkbox"><input type="checkbox" id="clean_pm_banos_Mar" checked onchange="updateConfig()"><span></span></label></td>
-                                                <td><label class="clean-checkbox"><input type="checkbox" id="clean_pm_banos_Mié" checked onchange="updateConfig()"><span></span></label></td>
-                                                <td><label class="clean-checkbox"><input type="checkbox" id="clean_pm_banos_Jue" checked onchange="updateConfig()"><span></span></label></td>
-                                                <td><label class="clean-checkbox"><input type="checkbox" id="clean_pm_banos_Vie" checked onchange="updateConfig()"><span></span></label></td>
-                                                <td><label class="clean-checkbox"><input type="checkbox" id="clean_pm_banos_Sáb" checked onchange="updateConfig()"><span></span></label></td>
-                                                <td><label class="clean-checkbox"><input type="checkbox" id="clean_pm_banos_Dom" checked onchange="updateConfig()"><span></span></label></td>
-                                            </tr>
-                                            <tr style="border-bottom: 1px solid var(--border-color);">
-                                                <td style="text-align: left; padding: 0.5rem; font-weight: 500; color: var(--text-main);"><i class="fa-solid fa-gas-pump" style="color:#f59e0b; width:16px; text-align:center; margin-right:4px;"></i> Tanques AM</td>
-                                                <td><label class="clean-checkbox"><input type="checkbox" id="clean_am_tanques_Lun" checked onchange="updateConfig()"><span></span></label></td>
-                                                <td><label class="clean-checkbox"><input type="checkbox" id="clean_am_tanques_Mar" checked onchange="updateConfig()"><span></span></label></td>
-                                                <td><label class="clean-checkbox"><input type="checkbox" id="clean_am_tanques_Mié" checked onchange="updateConfig()"><span></span></label></td>
-                                                <td><label class="clean-checkbox"><input type="checkbox" id="clean_am_tanques_Jue" checked onchange="updateConfig()"><span></span></label></td>
-                                                <td><label class="clean-checkbox"><input type="checkbox" id="clean_am_tanques_Vie" checked onchange="updateConfig()"><span></span></label></td>
-                                                <td><label class="clean-checkbox"><input type="checkbox" id="clean_am_tanques_Sáb" checked onchange="updateConfig()"><span></span></label></td>
-                                                <td><label class="clean-checkbox"><input type="checkbox" id="clean_am_tanques_Dom" onchange="updateConfig()"><span></span></label></td>
-                                            </tr>
-                                            <tr>
-                                                <td style="text-align: left; padding: 0.5rem; font-weight: 500; color: var(--text-main);"><i class="fa-solid fa-gas-pump" style="color:#f59e0b; width:16px; text-align:center; margin-right:4px;"></i> Tanques PM</td>
-                                                <td><label class="clean-checkbox"><input type="checkbox" id="clean_pm_tanques_Lun" checked onchange="updateConfig()"><span></span></label></td>
-                                                <td><label class="clean-checkbox"><input type="checkbox" id="clean_pm_tanques_Mar" checked onchange="updateConfig()"><span></span></label></td>
-                                                <td><label class="clean-checkbox"><input type="checkbox" id="clean_pm_tanques_Mié" checked onchange="updateConfig()"><span></span></label></td>
-                                                <td><label class="clean-checkbox"><input type="checkbox" id="clean_pm_tanques_Jue" checked onchange="updateConfig()"><span></span></label></td>
-                                                <td><label class="clean-checkbox"><input type="checkbox" id="clean_pm_tanques_Vie" checked onchange="updateConfig()"><span></span></label></td>
-                                                <td><label class="clean-checkbox"><input type="checkbox" id="clean_pm_tanques_Sáb" onchange="updateConfig()"><span></span></label></td>
-                                                <td><label class="clean-checkbox"><input type="checkbox" id="clean_pm_tanques_Dom" onchange="updateConfig()"><span></span></label></td>
-                                            </tr>
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Alternancia de Turnos (collapsible) -->
-                        <div class="vac-emp-card param-card" style="padding:1.5rem;">
-                            <div class="param-card-header" onclick="toggleParamCard(this)">
-                                <h3 style="color:var(--text-main); margin:0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
-                                    <span style="background:rgba(236,72,153,0.12); color:#ec4899; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
-                                        <i class="fa-solid fa-right-left" style="font-size:0.85rem;"></i>
-                                    </span>
-                                    Alternancia de Turnos
-                                </h3>
-                                <i class="fa-solid fa-chevron-down chevron"></i>
-                            </div>
-                            <div class="param-card-content">
-                                <p class="helper-text-sm" style="margin-bottom: 0.8rem;">Empleados que siempre deben tener turnos opuestos (AM ↔ PM) entre sí.</p>
-                                <label class="option-card hover-glow" style="margin-bottom: 0.75rem; padding: 0.8rem;">
-                                    <div class="opt-content">
-                                        <div class="opt-icon" style="background: rgba(236, 72, 153, 0.1); color: #ec4899; width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
-                                            <i class="fa-solid fa-wand-sparkles"></i>
+                                <!-- Rotación Global AM/PM -->
+                                <div class="vac-emp-card param-card" style="padding:1.5rem;">
+                                    <div class="param-card-header" onclick="toggleParamCard(this)">
+                                        <h3 style="color:var(--text-main); margin:0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
+                                            <span style="background:rgba(20,184,166,0.12); color:#14b8a6; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
+                                                <i class="fa-solid fa-rotate" style="font-size:0.85rem;"></i>
+                                            </span>
+                                            Rotación Global AM/PM
+                                        </h3>
+                                        <i class="fa-solid fa-chevron-down chevron"></i>
+                                    </div>
+                                    <div class="param-card-content">
+                                        <p class="helper-text-sm" style="margin-bottom: 0.8rem;">
+                                        Usa el historial para rotar automáticamente entre turnos de mañana y tarde. <strong>No es estricto</strong>: si no hay suficientes empleados, el sistema adapta la asignación.
+                                        </p>
+                                        <label class="option-card hover-glow" style="margin-bottom: 0; padding: 0.8rem;">
+                                        <div class="opt-content">
+                                            <div class="opt-icon" style="background: rgba(20, 184, 166, 0.1); color: #14b8a6; width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
+                                                <i class="fa-solid fa-arrows-spin"></i>
+                                            </div>
+                                            <div class="opt-text">
+                                                <strong style="font-size: 0.85rem;">Activar rotación</strong>
+                                                <small style="font-size: 0.7rem;">Usa historial si está habilitado</small>
+                                            </div>
                                         </div>
-                                        <div class="opt-text">
-                                            <strong style="font-size: 0.85rem;">Automático (por género)</strong>
-                                            <small style="font-size: 0.7rem;">Detecta empleadas y las alterna solas</small>
+                                        <div class="toggle-container">
+                                            <input type="checkbox" id="rotationEnabled" class="toggle-checkbox" checked onchange="updateConfig()">
+                                            <div class="toggle-slider"></div>
                                         </div>
+                                    </label>
                                     </div>
-                                    <div class="toggle-container">
-                                        <input type="checkbox" id="alternatingAutoMode" class="toggle-checkbox" checked onchange="toggleAlternatingMode()">
-                                        <div class="toggle-slider"></div>
-                                    </div>
-                                </label>
-                                <div id="alternatingPairsContainer" class="hidden fade-in">
-                                    <div id="alternatingPairsList"></div>
-                                    <button class="btn-action" onclick="addAlternatingPair()" style="width:100%; margin-top:0.6rem; border-radius:8px; padding:0.5rem; font-size:0.82rem;">
-                                        <i class="fa-solid fa-plus"></i> Agregar par
-                                    </button>
                                 </div>
-                                
-                                <!-- Alternancia Semanal Estricta -->
-                                <label class="option-card hover-glow" style="margin-top: 0.8rem; padding: 0.8rem; border: 1px solid var(--border-color); border-radius: 8px;">
-                                    <div class="opt-content">
-                                        <div class="opt-icon" style="background: rgba(239,68,68,0.1); color: #ef4444; width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
-                                            <i class="fa-solid fa-lock"></i>
-                                        </div>
-                                        <div class="opt-text">
-                                            <strong style="font-size: 0.85rem;">Alternancia Semanal Estricta</strong>
-                                            <small style="font-size: 0.7rem;">Mantiene mismo turno (AM o PM) toda la semana</small>
-                                        </div>
-                                    </div>
-                                    <div class="toggle-container">
-                                        <input type="checkbox" id="strictWeeklyAlternation" class="toggle-checkbox" onchange="updateConfig()">
-                                        <div class="toggle-slider"></div>
-                                    </div>
-                                </label>
-                            </div>
-                        </div>
 
-                        <!-- Días Festivos (collapsible) -->
-                        <div class="vac-emp-card param-card" style="padding:1.5rem;">
-                            <div class="param-card-header" onclick="toggleParamCard(this)">
-                                <h3 style="color:var(--text-main); margin:0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
-                                    <span style="background:rgba(245,158,11,0.12); color:#f59e0b; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
-                                        <i class="fa-solid fa-calendar-days" style="font-size:0.85rem;"></i>
-                                    </span>
-                                    Días Festivos
-                                </h3>
-                                <i class="fa-solid fa-chevron-down chevron"></i>
-                            </div>
-                            <div class="param-card-content">
-                                <p class="helper-text-sm" style="margin-bottom: 0.75rem;">Feriados de Costa Rica (pago obligatorio). El generador marcará visualmente las columnas que coincidan.</p>
-                                
-                                <!-- Add holiday form -->
-                                <div style="display: flex; gap: 0.5rem; align-items: end; margin-bottom: 1rem;">
-                                    <div class="input-group" style="flex:1; margin-bottom:0;">
-                                        <label style="font-size: 0.75rem; color: var(--text-muted);">Fecha</label>
-                                        <input type="date" id="holidayDateInput" style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-panel); color: var(--text-main); font-size: 0.85rem;">
-                                    </div>
-                                    <div class="input-group" style="flex:2; margin-bottom:0;">
-                                        <label style="font-size: 0.75rem; color: var(--text-muted);">Nombre</label>
-                                        <input type="text" id="holidayNameInput" placeholder="ej: Día de la Independencia" style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-panel); color: var(--text-main); font-size: 0.85rem;">
-                                    </div>
-                                    <button type="button" class="btn-action" onclick="addHoliday()" style="border-radius: 6px; padding: 0.5rem 0.75rem; flex-shrink:0;">
-                                        <i class="fa-solid fa-plus"></i>
-                                    </button>
-                                </div>
-                                
-                                <!-- Holidays list -->
-                                <div id="holidaysList" style="max-height: 220px; overflow-y: auto; background: var(--surface-2); border-radius: 8px; padding: 0.5rem;">
-                                    <p style="margin: 0; color: var(--text-muted); font-size: 0.8rem; text-align: center; padding: 1rem;">Sin días festivos configurados</p>
-                                </div>
-                                
-                                <div style="margin-top: 0.75rem; display: flex; gap: 0.5rem;">
-                                    <button type="button" class="btn-action" onclick="loadDefaultCRHolidays()" style="font-size: 0.75rem; padding: 0.4rem 0.7rem; border-radius: 6px;">
-                                        <i class="fa-solid fa-flag"></i> Cargar feriados CR
-                                    </button>
-                                    <button type="button" class="btn-action" onclick="clearAllHolidays()" style="font-size: 0.75rem; padding: 0.4rem 0.7rem; border-radius: 6px; color: var(--danger);">
-                                        <i class="fa-solid fa-trash"></i> Limpiar todo
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Rotación Global AM/PM (collapsible) -->
-                        <div class="vac-emp-card param-card" style="padding:1.5rem;">
-                            <div class="param-card-header" onclick="toggleParamCard(this)">
-                                <h3 style="color:var(--text-main); margin:0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
-                                    <span style="background:rgba(20,184,166,0.12); color:#14b8a6; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
-                                        <i class="fa-solid fa-rotate" style="font-size:0.85rem;"></i>
-                                    </span>
-                                    Rotación Global AM/PM
-                                </h3>
-                                <i class="fa-solid fa-chevron-down chevron"></i>
-                            </div>
-                            <div class="param-card-content">
-                                <p class="helper-text-sm" style="margin-bottom: 0.8rem;">
-                                Usa el historial para rotar automáticamente entre turnos de mañana y tarde. <strong>No es estricto</strong>: si no hay suficientes empleados, el sistema adapta la asignación.
-                                </p>
-                                <label class="option-card hover-glow" style="margin-bottom: 0; padding: 0.8rem;">
-                                <div class="opt-content">
-                                    <div class="opt-icon" style="background: rgba(20, 184, 166, 0.1); color: #14b8a6; width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
-                                        <i class="fa-solid fa-arrows-spin"></i>
-                                    </div>
-                                    <div class="opt-text">
-                                        <strong style="font-size: 0.85rem;">Activar rotación</strong>
-                                        <small style="font-size: 0.7rem;">Usa historial si está habilitado</small>
-                                    </div>
-                                </div>
-                                <div class="toggle-container">
-                                    <input type="checkbox" id="rotationEnabled" class="toggle-checkbox" checked onchange="updateConfig()">
-                                    <div class="toggle-slider"></div>
-                                </div>
-                            </label>
-                            </div>
-                        </div>
-
-                        <!-- Turnos Personalizados (AVANZADO) -->
-                        <div class="vac-emp-card param-card" style="padding:1.5rem; border: 2px solid #f59e0b;">
-                    <div class="param-card-header" onclick="toggleParamCard(this)">
-                        <h3 style="color:var(--text-main); margin:0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
-                            <span style="background:rgba(245,158,11,0.12); color:#f59e0b; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
-                                <i class="fa-solid fa-clock" style="font-size:0.85rem;"></i>
-                            </span>
-                            Turnos Personalizados
-                            <span style="background: #f59e0b; color: white; font-size: 0.65rem; padding: 2px 6px; border-radius: 4px; margin-left: 0.5rem;">AVANZADO</span>
-                        </h3>
-                        <i class="fa-solid fa-chevron-down chevron"></i>
-                    </div>
-                    <div class="param-card-content">
-                        <p class="helper-text-sm" style="margin-bottom: 0.75rem;">Agregá turnos personalizados con horario específico. Cada turno tiene una prioridad que indica al generador cuánto usarlo.</p>
-                        
-                        <!-- Add new shift form -->
-                        <div style="background: var(--surface-2); padding: 1rem; border-radius: 10px; margin-bottom: 1rem;">
-                            <p style="margin: 0 0 0.75rem 0; font-weight: 600; color: var(--text-main); font-size: 0.9rem;">➕ Agregar Turno</p>
-                            
-                            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 0.5rem; align-items: end;">
-                                <div class="input-group">
-                                    <label style="font-size: 0.75rem; color: var(--text-muted);">Nombre</label>
-                                    <input type="text" id="customShiftName" placeholder="ej: MiTurno" style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-panel); color: var(--text-main); font-size: 0.85rem;">
-                                </div>
-                                <div class="input-group">
-                                    <label style="font-size: 0.75rem; color: var(--text-muted);">Hora inicio</label>
-                                    <input type="number" id="customShiftStart" min="0" max="23" placeholder="5" style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-panel); color: var(--text-main); font-size: 0.85rem;">
-                                </div>
-                                <div class="input-group">
-                                    <label style="font-size: 0.75rem; color: var(--text-muted);">Hora fin</label>
-                                    <input type="number" id="customShiftEnd" min="0" max="23" placeholder="13" style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-panel); color: var(--text-main); font-size: 0.85rem;">
-                                </div>
-                                <button type="button" class="btn-action" onclick="addCustomShift()" style="border-radius: 6px; padding: 0.5rem;">
-                                    <i class="fa-solid fa-plus"></i>
-                                </button>
-                            </div>
-                            
-                            <!-- Priority -->
-                            <div style="margin-top: 0.75rem;">
-                                <label style="font-size: 0.75rem; color: var(--text-muted); margin-right: 0.5rem;">Prioridad:</label>
-                                <select id="customShiftPriority" style="padding: 0.35rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-panel); color: var(--text-main); font-size: 0.8rem;">
-                                    <option value="100">🔴 Alta (usar mucho)</option>
-                                    <option value="50" selected>🟡 Media (normal)</option>
-                                    <option value="10">🟢 Baja (usar poco)</option>
-                                </select>
-                            </div>
-                        </div>
-                        
-                        <!-- Custom shifts list -->
-                        <div>
-                            <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem;">Turnos configurados:</p>
-                            <div id="customShiftsList" style="max-height: 200px; overflow-y: auto; background: var(--surface-2); border-radius: 8px; padding: 0.5rem;">
-                                <p style="margin: 0; color: var(--text-muted); font-size: 0.8rem; text-align: center; padding: 1rem;">Sin turnos personalizados</p>
-                            </div>
-                        </div>
-                        
-                        <!-- Info about existing shifts -->
-                        <div style="margin-top: 1rem; padding: 0.75rem; background: var(--bg-app); border-radius: 8px;">
-                            <p style="margin: 0 0 0.5rem 0; font-size: 0.8rem; color: var(--text-muted);">
-                                <i class="fa-solid fa-info-circle"></i> 
-                                <strong>Turnos estándar disponibles:</strong>
-                            </p>
-                            <div id="standardShiftsList" style="display: flex; flex-wrap: wrap; gap: 0.35rem;">
-                                <!-- Populated by JS -->
                             </div>
                         </div>
                     </div>
+
+                    <!-- ═══════════ CONFIGURACIÓN DE PERSONAL ═══════════ -->
+                    <div class="param-group collapsed" id="paramGroupPersonal">
+                        <div class="param-group-header" onclick="toggleParamGroup(this)">
+                            <div class="param-group-header-left">
+                                <span class="param-group-icon" style="background:rgba(14,165,233,0.12); color:#0ea5e9;">
+                                    <i class="fa-solid fa-users-gear"></i>
+                                </span>
+                                <span class="param-group-title">Configuración de Personal</span>
+                                <span class="param-group-count">3</span>
+                            </div>
+                            <i class="fa-solid fa-chevron-down param-group-chevron"></i>
+                        </div>
+                        <div class="param-group-body">
+                            <div class="param-group-grid">
+
+                                <!-- Turno base del jefe de pista -->
+                                <div class="vac-emp-card param-card gen-jefe-base-card full-width" style="">
+                                    <h4><i class="fa-solid fa-star" style="color:#ca8a04;"></i> Turno base del jefe de pista</h4>
+                                    <p class="helper-text-sm" style="margin:0 0 0.65rem 0;">Valor guardado en configuración. Se escribe en <strong>turnos fijos</strong> del colaborador marcado como jefe; el generador respeta esas celdas (no las sobrescribe en base de datos).</p>
+                                    <div style="display:flex; flex-wrap:wrap; align-items:center; gap:0.6rem;">
+                                        <label for="jefeBaseShiftSelect" class="helper-text-sm" style="margin:0;">Horario lun–vie:</label>
+                                        <select id="jefeBaseShiftSelect" class="gen-detail-day-shift" style="min-width:160px; max-width:240px;" onchange="updateConfig()" aria-label="Turno base lun a viernes para el jefe de pista"></select>
+                                        <button type="button" class="btn-action primary" style="padding:0.45rem 0.85rem; font-size:0.8rem;" onclick="genPanelApplyJefeBaseFromConfig()"><i class="fa-solid fa-user-tie"></i> Aplicar al jefe actual</button>
+                                    </div>
+                                </div>
+
+                                <!-- Plantillas preferencias horario -->
+                                <div class="vac-emp-card param-card hidden-pref-plantillas-section full-width" style="padding:1.5rem;">
+                                    <div style="display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:1rem; margin-bottom:0.75rem;">
+                                        <div>
+                                            <h3 style="color:var(--text-main); margin:0; font-size:1.05rem; display:flex; align-items:center; gap:0.5rem;">
+                                                <i class="fa-solid fa-layer-group" style="color:#6366f1;"></i>
+                                                Plantillas de preferencias de horario
+                                            </h3>
+                                            <p class="helper-text-sm" style="margin:0.35rem 0 0 0;">Define turnos fijos y reglas reutilizables. Asigná la plantilla a cada colaborador en el <strong>Panel de Parámetros del Generador</strong> (detalle del colaborador).</p>
+                                        </div>
+                                        <button type="button" class="btn-action primary" onclick="openPrefPlantillaModal(null)" style="border-radius:8px; padding:0.5rem 1rem; font-size:0.85rem;">
+                                            <i class="fa-solid fa-plus"></i> Nueva plantilla
+                                        </button>
+                                    </div>
+                                    <div id="prefPlantillasList" style="min-height:2rem;"></div>
+                                </div>
+
+                                <!-- Alternancia de Turnos -->
+                                <div class="vac-emp-card param-card" style="padding:1.5rem;">
+                                    <div class="param-card-header" onclick="toggleParamCard(this)">
+                                        <h3 style="color:var(--text-main); margin:0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
+                                            <span style="background:rgba(236,72,153,0.12); color:#ec4899; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
+                                                <i class="fa-solid fa-right-left" style="font-size:0.85rem;"></i>
+                                            </span>
+                                            Alternancia de Turnos
+                                        </h3>
+                                        <i class="fa-solid fa-chevron-down chevron"></i>
+                                    </div>
+                                    <div class="param-card-content">
+                                        <p class="helper-text-sm" style="margin-bottom: 0.8rem;">Empleados que siempre deben tener turnos opuestos (AM ↔ PM) entre sí.</p>
+                                        <label class="option-card hover-glow" style="margin-bottom: 0.75rem; padding: 0.8rem;">
+                                            <div class="opt-content">
+                                                <div class="opt-icon" style="background: rgba(236, 72, 153, 0.1); color: #ec4899; width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
+                                                    <i class="fa-solid fa-wand-sparkles"></i>
+                                                </div>
+                                                <div class="opt-text">
+                                                    <strong style="font-size: 0.85rem;">Automático (por género)</strong>
+                                                    <small style="font-size: 0.7rem;">Detecta empleadas y las alterna solas</small>
+                                                </div>
+                                            </div>
+                                            <div class="toggle-container">
+                                                <input type="checkbox" id="alternatingAutoMode" class="toggle-checkbox" checked onchange="toggleAlternatingMode()">
+                                                <div class="toggle-slider"></div>
+                                            </div>
+                                        </label>
+                                        <div id="alternatingPairsContainer" class="hidden fade-in">
+                                            <div id="alternatingPairsList"></div>
+                                            <button class="btn-action" onclick="addAlternatingPair()" style="width:100%; margin-top:0.6rem; border-radius:8px; padding:0.5rem; font-size:0.82rem;">
+                                                <i class="fa-solid fa-plus"></i> Agregar par
+                                            </button>
+                                        </div>
+
+                                        <!-- Alternancia Semanal Estricta -->
+                                        <label class="option-card hover-glow" style="margin-top: 0.8rem; padding: 0.8rem; border: 1px solid var(--border-color); border-radius: 8px;">
+                                            <div class="opt-content">
+                                                <div class="opt-icon" style="background: rgba(239,68,68,0.1); color: #ef4444; width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
+                                                    <i class="fa-solid fa-lock"></i>
+                                                </div>
+                                                <div class="opt-text">
+                                                    <strong style="font-size: 0.85rem;">Alternancia Semanal Estricta</strong>
+                                                    <small style="font-size: 0.7rem;">Mantiene mismo turno (AM o PM) toda la semana</small>
+                                                </div>
+                                            </div>
+                                            <div class="toggle-container">
+                                                <input type="checkbox" id="strictWeeklyAlternation" class="toggle-checkbox" onchange="updateConfig()">
+                                                <div class="toggle-slider"></div>
+                                            </div>
+                                        </label>
+                                    </div>
+                                </div>
+
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ═══════════ TAREAS ═══════════ -->
+                    <div class="param-group collapsed" id="paramGroupTareas">
+                        <div class="param-group-header" onclick="toggleParamGroup(this)">
+                            <div class="param-group-header-left">
+                                <span class="param-group-icon" style="background:rgba(16,185,129,0.12); color:#10b981;">
+                                    <i class="fa-solid fa-list-check"></i>
+                                </span>
+                                <span class="param-group-title">Tareas</span>
+                                <span class="param-group-count">2</span>
+                            </div>
+                            <i class="fa-solid fa-chevron-down param-group-chevron"></i>
+                        </div>
+                        <div class="param-group-body">
+                            <div class="param-group-grid">
+
+                                <!-- Jefe de Pista -->
+                                <div class="vac-emp-card param-card full-width" style="padding:1.5rem;">
+                                    <div class="param-card-header" onclick="toggleParamCard(this)">
+                                        <h3 style="color:var(--text-main); margin:0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
+                                            <span style="background:rgba(16,185,129,0.12); color:#10b981; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
+                                                <i class="fa-solid fa-user-tie" style="font-size:0.85rem;"></i>
+                                            </span>
+                                            Jefe de Pista
+                                        </h3>
+                                        <i class="fa-solid fa-chevron-down chevron"></i>
+                                    </div>
+                                    <div class="param-card-content">
+                                        <!-- Master toggle -->
+                                        <label class="option-card hover-glow" style="margin-bottom:0.75rem; padding:0.8rem;">
+                                            <div class="opt-content">
+                                                <div class="opt-icon" style="background:rgba(99,102,241,0.1); color:#6366f1; width:32px; height:32px; border-radius:8px; display:flex; align-items:center; justify-content:center;">
+                                                    <i class="fa-solid fa-toggle-on"></i>
+                                                </div>
+                                                <div class="opt-text">
+                                                    <strong style="font-size:0.85rem;">Activar tareas del jefe</strong>
+                                                    <small style="font-size:0.7rem;">Al activarlo, las tareas marcadas abajo se asignan al jefe los días indicados</small>
+                                                </div>
+                                            </div>
+                                            <div class="toggle-container">
+                                                <input type="checkbox" id="jefeEnabled" class="toggle-checkbox" onchange="toggleJefeConfig()">
+                                                <div class="toggle-slider"></div>
+                                            </div>
+                                        </label>
+
+                                        <div id="jefeConfigBody" class="hidden fade-in">
+                                            <!-- Include jefe in regular tasks toggle -->
+                                            <label class="option-card hover-glow" style="margin-bottom:1rem; padding:0.8rem;">
+                                                <div class="opt-content">
+                                                    <div class="opt-icon" style="background:rgba(239,68,68,0.1); color:#ef4444; width:32px; height:32px; border-radius:8px; display:flex; align-items:center; justify-content:center;">
+                                                        <i class="fa-solid fa-ban"></i>
+                                                    </div>
+                                                    <div class="opt-text">
+                                                        <strong style="font-size:0.85rem;">Incluir al jefe en tareas regulares</strong>
+                                                        <small style="font-size:0.7rem;">OFF → solo Calibración / Caños / Caños GLP. ON → también Baños y Tanques (AM/PM según horario del jefe)</small>
+                                                    </div>
+                                                </div>
+                                                <div class="toggle-container">
+                                                    <input type="checkbox" id="jefeExcludeRegular" class="toggle-checkbox" checked onchange="updateConfig()">
+                                                    <div class="toggle-slider"></div>
+                                                </div>
+                                            </label>
+
+                                            <!-- 6x7 matrix -->
+                                            <p class="helper-text-sm" style="margin-bottom:0.5rem;">Asignación manual de tareas del jefe por día:</p>
+                                            <div style="overflow-x:auto;">
+                                                <table class="jefe-matrix" id="jefeMatrixTable">
+                                                    <thead>
+                                                        <tr>
+                                                            <th class="jefe-col-task">Tarea</th>
+                                                            <th>Lun</th>
+                                                            <th>Mar</th>
+                                                            <th>Mié</th>
+                                                            <th>Jue</th>
+                                                            <th>Vie</th>
+                                                            <th>Sáb</th>
+                                                            <th>Dom</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        <tr>
+                                                            <td class="jefe-col-task"><i class="fa-solid fa-restroom" style="color:#6366f1;width:14px;text-align:center;"></i> Baños</td>
+                                                            <td><div class="jefe-cell" data-task="banos" data-day="Lun"><span class="jefe-cell-value">—</span></div></td>
+                                                            <td><div class="jefe-cell" data-task="banos" data-day="Mar"><span class="jefe-cell-value">—</span></div></td>
+                                                            <td><div class="jefe-cell" data-task="banos" data-day="Mié"><span class="jefe-cell-value">—</span></div></td>
+                                                            <td><div class="jefe-cell" data-task="banos" data-day="Jue"><span class="jefe-cell-value">—</span></div></td>
+                                                            <td><div class="jefe-cell" data-task="banos" data-day="Vie"><span class="jefe-cell-value">—</span></div></td>
+                                                            <td><div class="jefe-cell" data-task="banos" data-day="Sáb"><span class="jefe-cell-value">—</span></div></td>
+                                                            <td><div class="jefe-cell" data-task="banos" data-day="Dom"><span class="jefe-cell-value">—</span></div></td>
+                                                        </tr>
+                                                        <tr>
+                                                            <td class="jefe-col-task"><i class="fa-solid fa-gas-pump" style="color:#f59e0b;width:14px;text-align:center;"></i> Tanques</td>
+                                                            <td><div class="jefe-cell" data-task="tanques" data-day="Lun"><span class="jefe-cell-value">—</span></div></td>
+                                                            <td><div class="jefe-cell" data-task="tanques" data-day="Mar"><span class="jefe-cell-value">—</span></div></td>
+                                                            <td><div class="jefe-cell" data-task="tanques" data-day="Mié"><span class="jefe-cell-value">—</span></div></td>
+                                                            <td><div class="jefe-cell" data-task="tanques" data-day="Jue"><span class="jefe-cell-value">—</span></div></td>
+                                                            <td><div class="jefe-cell" data-task="tanques" data-day="Vie"><span class="jefe-cell-value">—</span></div></td>
+                                                            <td><div class="jefe-cell jefe-cell-active" data-task="tanques" data-day="Sáb"><span class="jefe-cell-value">Jefe</span></div></td>
+                                                            <td><div class="jefe-cell" data-task="tanques" data-day="Dom"><span class="jefe-cell-value">—</span></div></td>
+                                                        </tr>
+                                                        <tr>
+                                                            <td class="jefe-col-task"><i class="fa-solid fa-broom" style="color:#be185d;width:14px;text-align:center;"></i> Oficina</td>
+                                                            <td><div class="jefe-cell" data-task="oficina" data-day="Lun"><span class="jefe-cell-value">—</span></div></td>
+                                                            <td><div class="jefe-cell" data-task="oficina" data-day="Mar"><span class="jefe-cell-value">—</span></div></td>
+                                                            <td><div class="jefe-cell" data-task="oficina" data-day="Mié"><span class="jefe-cell-value">—</span></div></td>
+                                                            <td><div class="jefe-cell" data-task="oficina" data-day="Jue"><span class="jefe-cell-value">—</span></div></td>
+                                                            <td><div class="jefe-cell" data-task="oficina" data-day="Vie"><span class="jefe-cell-value">—</span></div></td>
+                                                            <td><div class="jefe-cell" data-task="oficina" data-day="Sáb"><span class="jefe-cell-value">—</span></div></td>
+                                                            <td><div class="jefe-cell" data-task="oficina" data-day="Dom"><span class="jefe-cell-value">—</span></div></td>
+                                                        </tr>
+                                                        <tr>
+                                                            <td class="jefe-col-task"><i class="fa-solid fa-sliders" style="color:#6b21a8;width:14px;text-align:center;"></i> Calibración</td>
+                                                            <td><div class="jefe-cell" data-task="calibracion" data-day="Lun"><span class="jefe-cell-value">—</span></div></td>
+                                                            <td><div class="jefe-cell jefe-cell-active" data-task="calibracion" data-day="Mar"><span class="jefe-cell-value">Jefe</span></div></td>
+                                                            <td><div class="jefe-cell" data-task="calibracion" data-day="Mié"><span class="jefe-cell-value">—</span></div></td>
+                                                            <td><div class="jefe-cell" data-task="calibracion" data-day="Jue"><span class="jefe-cell-value">—</span></div></td>
+                                                            <td><div class="jefe-cell" data-task="calibracion" data-day="Vie"><span class="jefe-cell-value">—</span></div></td>
+                                                            <td><div class="jefe-cell" data-task="calibracion" data-day="Sáb"><span class="jefe-cell-value">—</span></div></td>
+                                                            <td><div class="jefe-cell" data-task="calibracion" data-day="Dom"><span class="jefe-cell-value">—</span></div></td>
+                                                        </tr>
+                                                        <tr>
+                                                            <td class="jefe-col-task"><i class="fa-solid fa-wrench" style="color:#065f46;width:14px;text-align:center;"></i> Caños</td>
+                                                            <td><div class="jefe-cell jefe-cell-active" data-task="canos" data-day="Lun"><span class="jefe-cell-value">Jefe</span></div></td>
+                                                            <td><div class="jefe-cell" data-task="canos" data-day="Mar"><span class="jefe-cell-value">—</span></div></td>
+                                                            <td><div class="jefe-cell" data-task="canos" data-day="Mié"><span class="jefe-cell-value">—</span></div></td>
+                                                            <td><div class="jefe-cell" data-task="canos" data-day="Jue"><span class="jefe-cell-value">—</span></div></td>
+                                                            <td><div class="jefe-cell" data-task="canos" data-day="Vie"><span class="jefe-cell-value">—</span></div></td>
+                                                            <td><div class="jefe-cell" data-task="canos" data-day="Sáb"><span class="jefe-cell-value">—</span></div></td>
+                                                            <td><div class="jefe-cell" data-task="canos" data-day="Dom"><span class="jefe-cell-value">—</span></div></td>
+                                                        </tr>
+                                                        <tr>
+                                                            <td class="jefe-col-task"><i class="fa-solid fa-fire" style="color:#065f46;width:14px;text-align:center;"></i> Caños GLP</td>
+                                                            <td><div class="jefe-cell" data-task="canos_glp" data-day="Lun"><span class="jefe-cell-value">—</span></div></td>
+                                                            <td><div class="jefe-cell" data-task="canos_glp" data-day="Mar"><span class="jefe-cell-value">—</span></div></td>
+                                                            <td><div class="jefe-cell" data-task="canos_glp" data-day="Mié"><span class="jefe-cell-value">—</span></div></td>
+                                                            <td><div class="jefe-cell jefe-cell-active" data-task="canos_glp" data-day="Jue"><span class="jefe-cell-value">Jefe</span></div></td>
+                                                            <td><div class="jefe-cell" data-task="canos_glp" data-day="Vie"><span class="jefe-cell-value">—</span></div></td>
+                                                            <td><div class="jefe-cell" data-task="canos_glp" data-day="Sáb"><span class="jefe-cell-value">—</span></div></td>
+                                                            <td><div class="jefe-cell" data-task="canos_glp" data-day="Dom"><span class="jefe-cell-value">—</span></div></td>
+                                                        </tr>
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                            <p class="helper-text-sm" style="margin-top:0.5rem; margin-bottom:0;"><i class="fa-solid fa-info-circle"></i> Hacé clic en una celda para alternar entre Jefe / —. Baños y Tanques se usan solo si "Incluir en tareas regulares" está activo. El sistema detecta AM/PM según el horario del jefe.</p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Tareas de Limpieza -->
+                                <div class="vac-emp-card param-card full-width" style="padding:1.5rem;">
+                                    <div class="param-card-header" onclick="toggleParamCard(this)">
+                                        <h3 style="color:var(--text-main); margin:0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
+                                            <span style="background:rgba(16,185,129,0.12); color:#10b981; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
+                                                <i class="fa-solid fa-broom" style="font-size:0.85rem;"></i>
+                                            </span>
+                                            Tareas de Limpieza
+                                        </h3>
+                                        <i class="fa-solid fa-chevron-down chevron"></i>
+                                    </div>
+                                    <div class="param-card-content">
+                                        <p class="helper-text-sm" style="margin-bottom: 0.8rem;">Seleccioná qué tareas se generan cada día. Oficina + Basureros se asigna automáticamente al encargado de Baños AM los Lunes y Jueves.</p>
+                                        <div style="overflow-x: auto;">
+                                            <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem; text-align: center;">
+                                                <thead>
+                                                    <tr style="border-bottom: 1px solid var(--border-color);">
+                                                        <th style="text-align: left; padding: 0.5rem; color: var(--text-muted); font-weight: 500;">Tarea</th>
+                                                        <th style="padding: 0.5rem; color: var(--text-muted); font-weight: 500;">Lun</th>
+                                                        <th style="padding: 0.5rem; color: var(--text-muted); font-weight: 500;">Mar</th>
+                                                        <th style="padding: 0.5rem; color: var(--text-muted); font-weight: 500;">Mié</th>
+                                                        <th style="padding: 0.5rem; color: var(--text-muted); font-weight: 500;">Jue</th>
+                                                        <th style="padding: 0.5rem; color: var(--text-muted); font-weight: 500;">Vie</th>
+                                                        <th style="padding: 0.5rem; color: var(--text-muted); font-weight: 500;">Sáb</th>
+                                                        <th style="padding: 0.5rem; color: var(--text-muted); font-weight: 500;">Dom</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    <tr style="border-bottom: 1px solid var(--border-color);">
+                                                        <td style="text-align: left; padding: 0.5rem; font-weight: 500; color: var(--text-main);"><i class="fa-solid fa-restroom" style="color:#6366f1; width:16px; text-align:center; margin-right:4px;"></i> Baños AM</td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_am_banos_Lun" checked onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_am_banos_Mar" checked onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_am_banos_Mié" checked onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_am_banos_Jue" checked onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_am_banos_Vie" checked onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_am_banos_Sáb" checked onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_am_banos_Dom" checked onchange="updateConfig()"><span></span></label></td>
+                                                    </tr>
+                                                    <tr style="border-bottom: 1px solid var(--border-color);">
+                                                        <td style="text-align: left; padding: 0.5rem; font-weight: 500; color: var(--text-main);"><i class="fa-solid fa-restroom" style="color:#6366f1; width:16px; text-align:center; margin-right:4px;"></i> Baños PM</td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_pm_banos_Lun" checked onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_pm_banos_Mar" checked onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_pm_banos_Mié" checked onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_pm_banos_Jue" checked onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_pm_banos_Vie" checked onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_pm_banos_Sáb" checked onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_pm_banos_Dom" checked onchange="updateConfig()"><span></span></label></td>
+                                                    </tr>
+                                                    <tr style="border-bottom: 1px solid var(--border-color);">
+                                                        <td style="text-align: left; padding: 0.5rem; font-weight: 500; color: var(--text-main);"><i class="fa-solid fa-gas-pump" style="color:#f59e0b; width:16px; text-align:center; margin-right:4px;"></i> Tanques AM</td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_am_tanques_Lun" checked onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_am_tanques_Mar" checked onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_am_tanques_Mié" checked onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_am_tanques_Jue" checked onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_am_tanques_Vie" checked onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_am_tanques_Sáb" checked onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_am_tanques_Dom" onchange="updateConfig()"><span></span></label></td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td style="text-align: left; padding: 0.5rem; font-weight: 500; color: var(--text-main);"><i class="fa-solid fa-gas-pump" style="color:#f59e0b; width:16px; text-align:center; margin-right:4px;"></i> Tanques PM</td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_pm_tanques_Lun" checked onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_pm_tanques_Mar" checked onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_pm_tanques_Mié" checked onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_pm_tanques_Jue" checked onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_pm_tanques_Vie" checked onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_pm_tanques_Sáb" onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_pm_tanques_Dom" onchange="updateConfig()"><span></span></label></td>
+                                                    </tr>
+                                                    <tr style="border-bottom: 1px solid var(--border-color); background: rgba(190,24,93,0.04);">
+                                                        <td style="text-align: left; padding: 0.5rem; font-weight: 500; color: var(--text-main);"><i class="fa-solid fa-broom" style="color:#be185d; width:16px; text-align:center; margin-right:4px;"></i> Oficina + Basureros + Baños <span style="font-size:0.7rem; color:var(--text-muted); font-weight:400;">(modifica Baños AM)</span></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_oficina_Lun" checked onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_oficina_Mar" onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_oficina_Mié" onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_oficina_Jue" checked onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_oficina_Vie" onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_oficina_Sáb" onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_oficina_Dom" onchange="updateConfig()"><span></span></label></td>
+                                                    </tr>
+                                                    <tr style="border-bottom: 1px solid var(--border-color);">
+                                                        <td style="text-align: left; padding: 0.5rem; font-weight: 500; color: var(--text-main);"><i class="fa-solid fa-sliders" style="color:#6b21a8; width:16px; text-align:center; margin-right:4px;"></i> Calibración <span style="font-size:0.7rem; color:var(--text-muted); font-weight:400;">(Jefe)</span></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_calibracion_Lun" onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_calibracion_Mar" checked onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_calibracion_Mié" onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_calibracion_Jue" onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_calibracion_Vie" onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_calibracion_Sáb" onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_calibracion_Dom" onchange="updateConfig()"><span></span></label></td>
+                                                    </tr>
+                                                    <tr style="border-bottom: 1px solid var(--border-color);">
+                                                        <td style="text-align: left; padding: 0.5rem; font-weight: 500; color: var(--text-main);"><i class="fa-solid fa-wrench" style="color:#065f46; width:16px; text-align:center; margin-right:4px;"></i> Caños <span style="font-size:0.7rem; color:var(--text-muted); font-weight:400;">(Jefe)</span></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_canos_Lun" checked onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_canos_Mar" onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_canos_Mié" onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_canos_Jue" onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_canos_Vie" onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_canos_Sáb" onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_canos_Dom" onchange="updateConfig()"><span></span></label></td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td style="text-align: left; padding: 0.5rem; font-weight: 500; color: var(--text-main);"><i class="fa-solid fa-fire" style="color:#065f46; width:16px; text-align:center; margin-right:4px;"></i> Caños GLP <span style="font-size:0.7rem; color:var(--text-muted); font-weight:400;">(Jefe)</span></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_canos_glp_Lun" onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_canos_glp_Mar" onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_canos_glp_Mié" onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_canos_glp_Jue" checked onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_canos_glp_Vie" onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_canos_glp_Sáb" onchange="updateConfig()"><span></span></label></td>
+                                                        <td><label class="clean-checkbox"><input type="checkbox" id="clean_canos_glp_Dom" onchange="updateConfig()"><span></span></label></td>
+                                                    </tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ═══════════ CALENDARIO ═══════════ -->
+                    <div class="param-group collapsed" id="paramGroupCalendario">
+                        <div class="param-group-header" onclick="toggleParamGroup(this)">
+                            <div class="param-group-header-left">
+                                <span class="param-group-icon" style="background:rgba(245,158,11,0.12); color:#f59e0b;">
+                                    <i class="fa-solid fa-calendar"></i>
+                                </span>
+                                <span class="param-group-title">Calendario</span>
+                                <span class="param-group-count">2</span>
+                            </div>
+                            <i class="fa-solid fa-chevron-down param-group-chevron"></i>
+                        </div>
+                        <div class="param-group-body">
+                            <div class="param-group-grid">
+
+                                <!-- Excepciones Semanales -->
+                                <div class="vac-emp-card param-card" style="padding:1.5rem;">
+                                    <div class="param-card-header" onclick="toggleParamCard(this)">
+                                        <h3 style="color:var(--text-main); margin:0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
+                                            <span style="background:rgba(245,158,11,0.12); color:#f59e0b; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
+                                                <i class="fa-solid fa-wand-magic-sparkles" style="font-size:0.85rem;"></i>
+                                            </span>
+                                            Excepciones Semanales
+                                        </h3>
+                                        <i class="fa-solid fa-chevron-down chevron"></i>
+                                    </div>
+                                    <div class="param-card-content">
+                                        <p class="helper-text-sm" style="margin-bottom: 0.75rem;">El domingo usa siempre reglas de domingo. <strong>Como domingo</strong> es una excepción para otros días (festivos, etc.).</p>
+
+                                        <!-- Day selector chips -->
+                                        <div id="specialDaysChips" style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem;">
+                                        </div>
+
+                                        <!-- Selected day options -->
+                                        <div id="specialDayOptions" style="display: none; padding: 0; border: none; background: transparent;">
+                                            <p id="selectedDayLabel" style="font-weight: 600; margin: 0 0 0.75rem 0; color: var(--text-main); font-size: 0.9rem;"></p>
+                                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0.75rem;">
+                                                <label class="special-mode-option" id="specialModeNormal">
+                                                    <input type="radio" name="specialDayMode" value="normal" onchange="setSpecialDayMode(this.value)">
+                                                    <div class="mode-content">
+                                                        <i class="fa-solid fa-calendar-day" style="color: #6b7280;"></i>
+                                                        <span class="special-mode-title">Normal</span>
+                                                        <small class="special-mode-desc" style="display: block; color: var(--text-muted); font-size: 0.7rem;">Cobertura estándar</small>
+                                                    </div>
+                                                </label>
+                                                <label class="special-mode-option" id="specialModeSundayLike">
+                                                    <input type="radio" name="specialDayMode" value="sunday_like" onchange="setSpecialDayMode(this.value)">
+                                                    <div class="mode-content">
+                                                        <i class="fa-solid fa-sun" style="color: #f59e0b;"></i>
+                                                        <span>Como Domingo</span>
+                                                        <small style="display: block; color: var(--text-muted); font-size: 0.7rem;">Excepción: otro día con cobertura tipo domingo</small>
+                                                    </div>
+                                                </label>
+                                                <label class="special-mode-option" id="specialModeHolyThursday">
+                                                    <input type="radio" name="specialDayMode" value="holy_thursday" onchange="setSpecialDayMode(this.value)">
+                                                    <div class="mode-content">
+                                                        <i class="fa-solid fa-users" style="color: #8b5cf6;"></i>
+                                                        <span>2-4-3-2</span>
+                                                        <small style="display: block; color: var(--text-muted); font-size: 0.7rem;">2 · 4 · 3 · 2 personas</small>
+                                                    </div>
+                                                </label>
+                                                <label class="special-mode-option" id="specialModeClosed">
+                                                    <input type="radio" name="specialDayMode" value="closed" onchange="setSpecialDayMode(this.value)">
+                                                    <div class="mode-content">
+                                                        <i class="fa-solid fa-lock" style="color: #ef4444;"></i>
+                                                        <span>Cerrado</span>
+                                                        <small style="display: block; color: var(--text-muted); font-size: 0.7rem;">Sin operaciones</small>
+                                                    </div>
+                                                </label>
+                                            </div>
+                                        </div>
+
+                                        <!-- Legacy grid (hidden but functional) -->
+                                        <div id="weekSpecialDaysSection" class="hidden" style="display: none;">
+                                            <div id="weekSpecialDaysGrid"></div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Días Festivos -->
+                                <div class="vac-emp-card param-card" style="padding:1.5rem;">
+                                    <div class="param-card-header" onclick="toggleParamCard(this)">
+                                        <h3 style="color:var(--text-main); margin:0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
+                                            <span style="background:rgba(245,158,11,0.12); color:#f59e0b; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
+                                                <i class="fa-solid fa-calendar-days" style="font-size:0.85rem;"></i>
+                                            </span>
+                                            Días Festivos
+                                        </h3>
+                                        <i class="fa-solid fa-chevron-down chevron"></i>
+                                    </div>
+                                    <div class="param-card-content">
+                                        <p class="helper-text-sm" style="margin-bottom: 0.75rem;">Feriados de Costa Rica (pago obligatorio). El generador marcará visualmente las columnas que coincidan.</p>
+
+                                        <!-- Add holiday form -->
+                                        <div style="display: flex; gap: 0.5rem; align-items: end; margin-bottom: 1rem;">
+                                            <div class="input-group" style="flex:1; margin-bottom:0;">
+                                                <label style="font-size: 0.75rem; color: var(--text-muted);">Fecha</label>
+                                                <input type="date" id="holidayDateInput" style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-panel); color: var(--text-main); font-size: 0.85rem;">
+                                            </div>
+                                            <div class="input-group" style="flex:2; margin-bottom:0;">
+                                                <label style="font-size: 0.75rem; color: var(--text-muted);">Nombre</label>
+                                                <input type="text" id="holidayNameInput" placeholder="ej: Día de la Independencia" style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-panel); color: var(--text-main); font-size: 0.85rem;">
+                                            </div>
+                                            <button type="button" class="btn-action" onclick="addHoliday()" style="border-radius: 6px; padding: 0.5rem 0.75rem; flex-shrink:0;">
+                                                <i class="fa-solid fa-plus"></i>
+                                            </button>
+                                        </div>
+
+                                        <!-- Holidays list -->
+                                        <div id="holidaysList" style="max-height: 220px; overflow-y: auto; background: var(--surface-2); border-radius: 8px; padding: 0.5rem;">
+                                            <p style="margin: 0; color: var(--text-muted); font-size: 0.8rem; text-align: center; padding: 1rem;">Sin días festivos configurados</p>
+                                        </div>
+
+                                        <div style="margin-top: 0.75rem; display: flex; gap: 0.5rem;">
+                                            <button type="button" class="btn-action" onclick="loadDefaultCRHolidays()" style="font-size: 0.75rem; padding: 0.4rem 0.7rem; border-radius: 6px;">
+                                                <i class="fa-solid fa-flag"></i> Cargar feriados CR
+                                            </button>
+                                            <button type="button" class="btn-action" onclick="clearAllHolidays()" style="font-size: 0.75rem; padding: 0.4rem 0.7rem; border-radius: 6px; color: var(--danger);">
+                                                <i class="fa-solid fa-trash"></i> Limpiar todo
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ═══════════ AVANZADO ═══════════ -->
+                    <div class="param-group collapsed" id="paramGroupAvanzado">
+                        <div class="param-group-header" onclick="toggleParamGroup(this)">
+                            <div class="param-group-header-left">
+                                <span class="param-group-icon" style="background:rgba(245,158,11,0.12); color:#f59e0b;">
+                                    <i class="fa-solid fa-microchip"></i>
+                                </span>
+                                <span class="param-group-title">Avanzado</span>
+                                <span class="param-group-count">1</span>
+                            </div>
+                            <i class="fa-solid fa-chevron-down param-group-chevron"></i>
+                        </div>
+                        <div class="param-group-body">
+                            <div class="param-group-grid">
+
+                                <!-- Turnos Personalizados -->
+                                <div class="vac-emp-card param-card" style="padding:1.5rem; border: 2px solid #f59e0b;">
+                                    <div class="param-card-header" onclick="toggleParamCard(this)">
+                                        <h3 style="color:var(--text-main); margin:0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
+                                            <span style="background:rgba(245,158,11,0.12); color:#f59e0b; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
+                                                <i class="fa-solid fa-clock" style="font-size:0.85rem;"></i>
+                                            </span>
+                                            Turnos Personalizados
+                                            <span style="background: #f59e0b; color: white; font-size: 0.65rem; padding: 2px 6px; border-radius: 4px; margin-left: 0.5rem;">AVANZADO</span>
+                                        </h3>
+                                        <i class="fa-solid fa-chevron-down chevron"></i>
+                                    </div>
+                                    <div class="param-card-content">
+                                        <p class="helper-text-sm" style="margin-bottom: 0.75rem;">Agregá turnos personalizados con horario específico. Cada turno tiene una prioridad que indica al generador cuánto usarlo.</p>
+
+                                        <!-- Add new shift form -->
+                                        <div style="background: var(--surface-2); padding: 1rem; border-radius: 10px; margin-bottom: 1rem;">
+                                            <p style="margin: 0 0 0.75rem 0; font-weight: 600; color: var(--text-main); font-size: 0.9rem;">➕ Agregar Turno</p>
+
+                                            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 0.5rem; align-items: end;">
+                                                <div class="input-group">
+                                                    <label style="font-size: 0.75rem; color: var(--text-muted);">Nombre</label>
+                                                    <input type="text" id="customShiftName" placeholder="ej: MiTurno" style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-panel); color: var(--text-main); font-size: 0.85rem;">
+                                                </div>
+                                                <div class="input-group">
+                                                    <label style="font-size: 0.75rem; color: var(--text-muted);">Hora inicio</label>
+                                                    <input type="number" id="customShiftStart" min="0" max="23" placeholder="5" style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-panel); color: var(--text-main); font-size: 0.85rem;">
+                                                </div>
+                                                <div class="input-group">
+                                                    <label style="font-size: 0.75rem; color: var(--text-muted);">Hora fin</label>
+                                                    <input type="number" id="customShiftEnd" min="0" max="23" placeholder="13" style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-panel); color: var(--text-main); font-size: 0.85rem;">
+                                                </div>
+                                                <button type="button" class="btn-action" onclick="addCustomShift()" style="border-radius: 6px; padding: 0.5rem;">
+                                                    <i class="fa-solid fa-plus"></i>
+                                                </button>
+                                            </div>
+
+                                            <!-- Priority -->
+                                            <div style="margin-top: 0.75rem;">
+                                                <label style="font-size: 0.75rem; color: var(--text-muted); margin-right: 0.5rem;">Prioridad:</label>
+                                                <select id="customShiftPriority" style="padding: 0.35rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-panel); color: var(--text-main); font-size: 0.8rem;">
+                                                    <option value="100">🔴 Alta (usar mucho)</option>
+                                                    <option value="50" selected>🟡 Media (normal)</option>
+                                                    <option value="10">🟢 Baja (usar poco)</option>
+                                                </select>
+                                            </div>
+                                        </div>
+
+                                        <!-- Custom shifts list -->
+                                        <div>
+                                            <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem;">Turnos configurados:</p>
+                                            <div id="customShiftsList" style="max-height: 200px; overflow-y: auto; background: var(--surface-2); border-radius: 8px; padding: 0.5rem;">
+                                                <p style="margin: 0; color: var(--text-muted); font-size: 0.8rem; text-align: center; padding: 1rem;">Sin turnos personalizados</p>
+                                            </div>
+                                        </div>
+
+                                        <!-- Info about existing shifts -->
+                                        <div style="margin-top: 1rem; padding: 0.75rem; background: var(--bg-app); border-radius: 8px;">
+                                            <p style="margin: 0 0 0.5rem 0; font-size: 0.8rem; color: var(--text-muted);">
+                                                <i class="fa-solid fa-info-circle"></i>
+                                                <strong>Turnos estándar disponibles:</strong>
+                                            </p>
+                                            <div id="standardShiftsList" style="display: flex; flex-wrap: wrap; gap: 0.35rem;">
+                                                <!-- Populated by JS -->
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                            </div>
+                        </div>
+                    </div>
+
                 </div>
-                    </div>
-                </div>
-
             </section>
 
             <!-- TAB: HORARIO PARCIAL -->

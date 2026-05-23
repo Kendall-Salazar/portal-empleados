@@ -62,7 +62,7 @@ os.makedirs(_planillas_dir, exist_ok=True)
 if os.path.exists(_resource_planillas_dir):
     sys.path.insert(0, os.path.abspath(_resource_planillas_dir))
 
-import database as plan_db  # Initializes planilla.db with all tables
+import database as plan_db  # Initializes cronos.db with all tables
 import planilla as pl_module
 import generador_boletas as gb_module
 import horario_db
@@ -100,7 +100,7 @@ def _get_export_base_name(entry: Optional[dict], fallback: str = "horario") -> s
     return _sanitize_export_stem(entry.get("name"), fallback)
 
 def _get_conn():
-    """Get connection to the shared planilla.db"""
+    """Get connection to the shared cronos.db"""
     return plan_db.get_conn()
 
 
@@ -194,6 +194,9 @@ def load_db():
             "cleaning_tasks": json.loads(cfg_row["cleaning_tasks"])
             if "cleaning_tasks" in cfg_row.keys() and cfg_row["cleaning_tasks"]
             else {},
+            "jefe_config": json.loads(cfg_row["jefe_config"])
+            if "jefe_config" in cfg_row.keys() and cfg_row["jefe_config"]
+            else {},
         }
 
     # Historial: todas las filas activas, orden cronológico por id (no se borra al generar).
@@ -286,8 +289,8 @@ def save_db(data):
             (id, night_mode, fixed_night_person, allow_long_shifts, use_refuerzo,
              refuerzo_type, refuerzo_start, refuerzo_end, refuerzo_days_mode, refuerzo_manual_days,
              allow_collision_quebrado, collision_peak_priority, sunday_cycle_index, sunday_rotation_queue, use_history, holidays,
-             jefe_base_shift, use_pref_plantilla, cleaning_tasks)
-            VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             jefe_base_shift, use_pref_plantilla, cleaning_tasks, jefe_config)
+            VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             cfg.get("night_mode", "rotation"),
             cfg.get("fixed_night_person"),
@@ -307,6 +310,7 @@ def save_db(data):
             str(cfg.get("jefe_base_shift", "J_06-16") or "J_06-16"),
             1 if cfg.get("use_pref_plantilla", False) else 0,
             json.dumps(cfg.get("cleaning_tasks", {})),
+            json.dumps(cfg.get("jefe_config", {})),
         ))
 
     # NOTA: history_log NO se guarda aquí. El historial se maneja exclusivamente
@@ -685,6 +689,7 @@ class Config(BaseModel):
     jefe_base_shift: str = "J_06-16"  # Turno tipo lun–vie al aplicar plantilla de jefe desde Parámetros
     use_pref_plantilla: bool = False  # Si False, el motor ignora horario_pref_plantilla (preferencias en turnos_fijos)
     cleaning_tasks: Optional[Dict[str, Dict[str, bool]]] = None
+    jefe_config: Optional[Dict[str, Any]] = None
 
 class SolverRequest(BaseModel):
     employees: List[Employee]
@@ -1668,6 +1673,10 @@ def _task_style_key(task_text: str) -> str:
         return "tanques"
     if "oficina" in normalized:
         return "oficina"
+    if "calibracion" in normalized:
+        return "calibracion"
+    if "canos" in normalized:
+        return "canos"
     return ""
 
 
@@ -2048,6 +2057,12 @@ def export_excel(history_index: Optional[int] = None, history_db_id: Optional[in
                 elif style_key == "oficina":
                     cell.fill = PatternFill(start_color="FADBD8", end_color="FADBD8", fill_type="solid")
                     cell.font = Font(color="BE185D", bold=True, size=10)
+                elif style_key == "calibracion":
+                    cell.fill = PatternFill(start_color="E8D5F5", end_color="E8D5F5", fill_type="solid")
+                    cell.font = Font(color="6B21A8", bold=True, size=10)
+                elif style_key == "canos":
+                    cell.fill = PatternFill(start_color="D1FAE5", end_color="D1FAE5", fill_type="solid")
+                    cell.font = Font(color="065F46", bold=True, size=10)
                 else:
                     cell.font = Font(size=10)
             else:

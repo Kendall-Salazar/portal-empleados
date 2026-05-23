@@ -1018,6 +1018,38 @@ class ShiftScheduler:
         for d in DAYS:
             if self.day_modes.get(d) == SPECIAL_DAY_MODE_CLOSED:
                 continue
+
+            # Config cache — used by is_task_enabled and oficina check
+            _ct = self.config.get("cleaning_tasks", {})
+
+            # Jefe de pista config (stored as separate column jefe_config)
+            _jc = self.config.get("jefe_config", {})
+            jefe_enabled = _jc.get("enabled", False)
+            jefe_exclude_regular = _jc.get("exclude_regular", True)
+            jefe_assignment = _jc.get("assignment", {})
+
+            JEFE_TASKS = ["banos", "tanques", "oficina", "calibracion", "canos", "canos_glp"]
+
+            def has_jefe_assignment_on_day(day):
+                """Check if jefe has any task assigned for this day per the 6×7 matrix."""
+                for task in JEFE_TASKS:
+                    if jefe_assignment.get(task, {}).get(day, False):
+                        return True
+                return False
+
+            def is_task_enabled(task_id, day):
+                # If config has an explicit value for task_id×day, use it
+                if isinstance(_ct, dict) and day in _ct and task_id in _ct[day]:
+                    return _ct[day][task_id]
+                # Legacy / default fallbacks
+                if task_id in ("am_tanques", "pm_tanques") and day == "Dom": return False
+                if task_id == "pm_tanques" and day == "Sáb": return False
+                if task_id == "oficina": return day in ("Lun", "Jue")
+                if task_id == "calibracion": return day == "Mar"
+                if task_id == "canos": return day == "Lun"
+                if task_id == "canos_glp": return day == "Jue"
+                return True
+
             available = []
             for e in schedule_employees:
                 if e == "Refuerzo" and skip_refuerzo:
@@ -1026,8 +1058,15 @@ class ShiftScheduler:
                 if shift in ["OFF", "VAC", "PERM", "N_22-05"]:
                     continue
                 is_jefe = self.emp_data[e].get('is_jefe_pista', False)
-                if is_jefe and not (d == "Sáb" and self.day_modes.get(d) == SPECIAL_DAY_MODE_NORMAL):
-                    continue
+                if is_jefe:
+                    if not jefe_enabled:
+                        continue  # Jefe mode OFF → no tasks at all
+                    jefe_has_task = has_jefe_assignment_on_day(d)
+                    if jefe_has_task and jefe_exclude_regular:
+                        continue  # Tiene tarea específica asignada hoy → no lo metas en limpieza regular
+                    if not jefe_has_task:
+                        continue  # Sin tarea asignada en la matrix para hoy
+                    # Si llegó acá: jefe puede hacer tareas regulares hoy
                 shift_hours = get_shift_hours_set(shift)
                 if not shift_hours:
                     continue
@@ -1046,14 +1085,6 @@ class ShiftScheduler:
             
             def q_label(base, worker):
                 return f"{base} {'↑AM' if worker['start'] < 12 else '↓PM'}"
-            
-            def is_task_enabled(task_id, day):
-                ct = self.config.get("cleaning_tasks")
-                if ct and day in ct:
-                    return ct[day].get(task_id, True)
-                if day == "Dom" and task_id in ["am_tanques", "pm_tanques"]: return False
-                if day == "Sáb" and task_id == "pm_tanques": return False
-                return True
             
             assigned_today = set()
             # AM pool: only workers who start early enough to do morning tasks.
@@ -1076,11 +1107,13 @@ class ShiftScheduler:
                     res_tasks[pick['name']][d] = q_label("Tanques", pick)
                     assigned_today.add(pick['name']); task_count[pick['name']] += 1
             
-            # --- AM BAÑOS (Lun/Jue → incluye oficina) ---
+            # --- AM BAÑOS (días con oficina habilitada → incluye Basureros) ---
             if is_task_enabled("am_banos", d):
                 pick = pick_one(am_pool, assigned_today)
                 if pick:
-                    is_oficina_day = is_weekday_like_mode(get_effective_day_mode(d, self.day_modes)) and d in ["Lun", "Jue"]
+                    oficina_default = d in ["Lun", "Jue"]
+                    oficina_enabled = isinstance(_ct, dict) and d in _ct and _ct[d].get("oficina", oficina_default)
+                    is_oficina_day = is_weekday_like_mode(get_effective_day_mode(d, self.day_modes)) and oficina_enabled
                     label = "Oficina + Basureros + Baños" if is_oficina_day else "Baños"
                     res_tasks[pick['name']][d] = q_label(label, pick)
                     assigned_today.add(pick['name']); task_count[pick['name']] += 1
@@ -1098,7 +1131,27 @@ class ShiftScheduler:
                 if pick:
                     res_tasks[pick['name']][d] = q_label("Baños", pick)
                     assigned_today.add(pick['name']); task_count[pick['name']] += 1
-        
+
+            # --- JEFE DE PISTA TASKS (Calibración, Caños, Caños GLP) ---
+            # Solo si jefe_enabled y hay tarea activa hoy
+            if jefe_enabled and has_jefe_assignment_on_day(d):
+                jefe_names = [e for e in schedule_employees if self.emp_data[e].get('is_jefe_pista', False)]
+                if jefe_names:
+                    jefe_name = jefe_names[0]
+                    jefe_shift = schedule.get(jefe_name, {}).get(d, "OFF")
+                    if jefe_shift not in ("OFF", "VAC", "PERM", "N_22-05"):
+                        jefe_hours_set = get_shift_hours_set(jefe_shift)
+                        if jefe_hours_set:
+                            if is_task_enabled("calibracion", d) and jefe_name not in assigned_today:
+                                res_tasks[jefe_name][d] = "Calibración"
+                                assigned_today.add(jefe_name); task_count[jefe_name] += 1
+                            if is_task_enabled("canos", d) and jefe_name not in assigned_today:
+                                res_tasks[jefe_name][d] = "Caños"
+                                assigned_today.add(jefe_name); task_count[jefe_name] += 1
+                            if is_task_enabled("canos_glp", d) and jefe_name not in assigned_today:
+                                res_tasks[jefe_name][d] = "Caños GLP"
+                                assigned_today.add(jefe_name); task_count[jefe_name] += 1
+
         return res_tasks
 
     def _build_rest_between_shifts_report(
