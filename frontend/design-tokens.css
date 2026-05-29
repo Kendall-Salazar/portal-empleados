@@ -1,0 +1,81 @@
+/* ========================================================================
+   CHRONOS DESIGN TOKENS
+   Variables del sistema de diseño — modo claro y oscuro
+   ======================================================================== */
+
+:root {
+    /* Brand */
+    --primary: #4f46e5;
+    --primary-hover: #4338ca;
+    --primary-subtle: rgba(79, 70, 229, 0.1);
+    --accent-blue: #3b82f6;
+
+    /* Semantic */
+    --success: #10b981;
+    --success-subtle: rgba(16, 185, 129, 0.1);
+    --warning: #f59e0b;
+    --warning-subtle: rgba(245, 158, 11, 0.1);
+    --danger: #ef4444;
+    --danger-subtle: rgba(239, 68, 68, 0.1);
+
+    /* Light palette */
+    --bg-app: #f1f5f9;
+    --bg-panel: #ffffff;
+    --bg-sidebar: rgba(255, 255, 255, 0.9);
+    --surface: #ffffff;
+
+    --text-main: #0f172a;
+    --text-muted: #64748b;
+    --text-dim: #94a3b8;
+    --text-inv: #0f172a;
+
+    --border: rgba(15, 23, 42, 0.09);
+    --border-strong: rgba(15, 23, 42, 0.18);
+
+    /* Elevation */
+    --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.06), 0 1px 2px -1px rgb(0 0 0 / 0.06);
+    --shadow-md: 0 4px 8px -2px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.06);
+    --shadow-lg: 0 12px 24px -4px rgb(0 0 0 / 0.12), 0 4px 8px -2px rgb(0 0 0 / 0.06);
+
+    /* Radii */
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 14px;
+    --radius-xl: 20px;
+
+    /* Transitions */
+    --transition: 0.18s ease;
+    --transition-bounce: 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+
+    /* Typography scale — 6 steps */
+    --fs-xs: 0.68rem;   /* labels, badges */
+    --fs-sm: 0.78rem;   /* secondary text */
+    --fs-base: 0.88rem; /* body / UI text */
+    --fs-md: 1rem;      /* modal titles, names */
+    --fs-lg: 1.25rem;   /* section headers */
+    --fs-xl: 1.5rem;    /* page titles */
+}
+
+.dark-mode {
+    --bg-app: #0b0f19;
+    --bg-panel: #111827;
+    --bg-sidebar: rgba(15, 20, 35, 0.92);
+    --surface: #1e293b;
+
+    --text-main: #f1f5f9;
+    --text-muted: #94a3b8;
+    --text-dim: #64748b;
+    --text-inv: #f8fafc;
+
+    --border: #1e293b;
+    --border-strong: #334155;
+
+    --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.3);
+    --shadow-md: 0 4px 8px -2px rgb(0 0 0 / 0.4);
+    --shadow-lg: 0 12px 24px -4px rgb(0 0 0 / 0.5);
+
+    --primary-subtle: rgba(99, 102, 241, 0.15);
+    --success-subtle: rgba(16, 185, 129, 0.12);
+    --warning-subtle: rgba(245, 158, 11, 0.12);
+    --danger-subtle: rgba(239, 68, 68, 0.12);
+}

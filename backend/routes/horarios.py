@@ -196,6 +196,80 @@ def get_history():
     return result
 
 
+def _classify_shift_type(shift: str) -> str:
+    """Classify a shift as matutino, vespertino, nocturno, or libre."""
+    if shift in ("OFF", "VAC", "PERM", ""):
+        return "libre"
+    if shift == "N_22-05":
+        return "nocturno"
+    # Import SHIFTS to check start hour
+    try:
+        from scheduler_engine import SHIFTS
+        hours = SHIFTS.get(shift, set())
+        if not hours:
+            return "libre"
+        min_hour = min(hours)
+        if min_hour < 12:
+            return "matutino"
+        else:
+            return "vespertino"
+    except ImportError:
+        return "libre"
+
+
+def _compute_dominant_type(counts: dict) -> str:
+    """Determine dominant shift type from counts. Tie-breaks by first non-zero."""
+    types_order = ["matutino", "vespertino", "nocturno", "libre"]
+    max_count = max(counts.values()) if counts else 0
+    if max_count == 0:
+        return "libre"
+    # Return first type with max count (tie-break by order)
+    for t in types_order:
+        if counts.get(t, 0) == max_count:
+            return t
+    return "libre"
+
+
+@router.get("/history/individual/{name}")
+def get_history_individual(name: str, weeks: int = 6):
+    """Get individual employee history — dominant shift type per ISO week.
+    
+    Returns the last N weeks (default 6) with per-type counts and dominant type.
+    """
+    conn = plan_db.get_conn()
+    rows = conn.execute(
+        f"SELECT id, nombre, horario, metadata, timestamp FROM horarios_generados "
+        f"WHERE deleted = 0 ORDER BY {_HISTORY_LIST_ORDER} LIMIT ?",
+        (weeks,)
+    ).fetchall()
+    conn.close()
+
+    weeks_data = []
+    for row in rows:
+        schedule = json.loads(row["horario"]) if row["horario"] else {}
+        meta = json.loads(row["metadata"]) if row["metadata"] else {}
+        emp_days = schedule.get(name, {})
+
+        # Count shift types
+        counts = {"matutino": 0, "vespertino": 0, "nocturno": 0, "libre": 0}
+        days_detail = {}
+        for day, shift in emp_days.items():
+            shift_type = _classify_shift_type(shift)
+            counts[shift_type] = counts.get(shift_type, 0) + 1
+            days_detail[day] = shift
+
+        dominant = _compute_dominant_type(counts)
+        weeks_data.append({
+            "week_label": row.get("nombre", f"Week {row['id']}"),
+            "timestamp": row.get("timestamp", ""),
+            "dominant_type": dominant,
+            "counts": counts,
+            "days": days_detail,
+        })
+
+    return {"employee": name, "weeks": weeks_data}
+
+
 @router.post("/history")
 def save_history(entry: HistoryEntry):
     """Misma semántica que main: siempre INSERT (varios con el mismo nombre), sin purga de activos."""
@@ -631,19 +705,28 @@ def reassign_history_tasks(index: int):
 
     config_row = conn.execute("SELECT * FROM horario_config WHERE id=1").fetchone()
     config_data = dict(config_row) if config_row else {}
-    # cleaning_tasks ya viene de la DB (columna TEXT → string), parseamos a dict
+    # cleaning_tasks y jefe_config vienen de la DB (columna TEXT → string), parseamos a dict
     if "cleaning_tasks" in config_data and isinstance(config_data["cleaning_tasks"], str):
         try:
             config_data["cleaning_tasks"] = json.loads(config_data["cleaning_tasks"]) if config_data["cleaning_tasks"] else {}
         except json.JSONDecodeError:
             config_data["cleaning_tasks"] = {}
+    if "jefe_config" in config_data and isinstance(config_data["jefe_config"], str):
+        try:
+            config_data["jefe_config"] = json.loads(config_data["jefe_config"]) if config_data["jefe_config"] else {}
+        except json.JSONDecodeError:
+            config_data["jefe_config"] = {}
     config_data["use_refuerzo"] = "Refuerzo" in schedule
     existing_meta = json.loads(row["metadata"]) if row["metadata"] else {}
     special_days = _normalize_special_days(existing_meta.get("special_days", {}))
     config_data["special_days"] = special_days
 
     scheduler = ShiftScheduler(employees_data, config_data, history_data=[])
-    daily_tasks = scheduler.assign_tasks(schedule)
+    try:
+        daily_tasks = scheduler.assign_tasks(schedule)
+    except Exception as e:
+        print(f"[reassign_history_tasks] Error in assign_tasks: {e}")
+        daily_tasks = {}
 
     # Update tasks in metadata
     existing_meta["daily_tasks"] = daily_tasks

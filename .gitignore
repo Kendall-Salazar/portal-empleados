@@ -173,3 +173,6 @@ packaging/.pyinstaller/
 packaging/logs/
 export_horarios/
 acciones de empleado/
+
+# SDD skill registry (auto-generated, per-workspace)
+.atl/

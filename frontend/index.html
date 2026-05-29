@@ -10,6 +10,8 @@
     <!-- Icons (local) -->
     <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css">
     <script src="vendor/html2canvas.min.js"></script>
+    <link rel="stylesheet" href="design-tokens.css">
+    <link rel="stylesheet" href="utilities.css">
     <link rel="stylesheet" href="style.css?v=2">
 </head>
 
@@ -98,10 +100,16 @@
             </div>
 
             <div class="sidebar-footer">
-                <button id="btnSundayRotation" class="btn-action" onclick="openSundayRotationModal()" style="width: 100%; margin-bottom: 0.75rem; background: var(--surface-2); border: 1px solid var(--border-color); color: var(--text-main); border-radius: 10px; padding: 0.6rem; font-size: 0.85rem; display: flex; align-items: center; justify-content: center; gap: 0.5rem;">
-                    <i class="fa-solid fa-arrows-spin" style="color: #14b8a6;"></i>
-                    <span>Cola Domingos</span>
-                </button>
+                <div class="sidebar-row">
+                    <button id="btnSundayRotation" class="btn-action sidebar-row-btn" onclick="openSundayRotationModal()">
+                        <i class="fa-solid fa-arrows-spin" style="color: #14b8a6;"></i>
+                        <span>Cola Domingos</span>
+                    </button>
+                    <button id="btnHistoryMatrix" class="btn-action sidebar-row-btn history-btn" onclick="openHistoryMatrix()">
+                        <i class="fa-solid fa-clock-rotate-left"></i>
+                        <span>Historial</span>
+                    </button>
+                </div>
                 
                 <button class="btn-generate" onclick="generateSchedule()">
                     <span class="icon"><i class="fa-solid fa-wand-magic-sparkles"></i></span>
@@ -438,10 +446,10 @@
                                 </div>
 
                                 <!-- Cobertura Nocturna -->
-                                <div class="vac-emp-card param-card" style="padding:1.5rem;">
+                                <div class="vac-emp-card param-card pad-card">
                                     <div class="param-card-header" onclick="toggleParamCard(this)">
-                                        <h3 style="color:var(--text-main); margin:0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
-                                            <span style="background:rgba(139,92,246,0.12); color:#8b5cf6; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
+                                        <h3 class="card-hdr">
+                                            <span class="icon-badge-lg badge-indigo">
                                                 <i class="fa-solid fa-moon" style="font-size:0.85rem;"></i>
                                             </span>
                                             Cobertura Nocturna
@@ -464,10 +472,10 @@
                                 </div>
 
                                 <!-- Turnos Largos -->
-                                <div class="vac-emp-card param-card" style="padding:1.5rem;">
+                                <div class="vac-emp-card param-card pad-card">
                                     <div class="param-card-header" onclick="toggleParamCard(this)">
-                                        <h3 style="color:var(--text-main); margin:0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
-                                            <span style="background:rgba(16,185,129,0.12); color:#10b981; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
+                                        <h3 class="card-hdr">
+                                            <span class="icon-badge-lg badge-green">
                                                 <i class="fa-solid fa-clock" style="font-size:0.85rem;"></i>
                                             </span>
                                             Turnos Largos
@@ -495,10 +503,10 @@
                                 </div>
 
                                 <!-- Refuerzo Provisional -->
-                                <div class="vac-emp-card param-card" style="padding:1.5rem;">
+                                <div class="vac-emp-card param-card pad-card">
                                     <div class="param-card-header" onclick="toggleParamCard(this)">
-                                        <h3 style="color:var(--text-main); margin:0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
-                                            <span style="background:rgba(245,158,11,0.12); color:#f59e0b; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
+                                        <h3 class="card-hdr">
+                                            <span class="icon-badge-lg badge-orange">
                                                 <i class="fa-solid fa-user-shield" style="font-size:0.85rem;"></i>
                                             </span>
                                             Refuerzo Provisional
@@ -593,10 +601,10 @@
                                 </div>
 
                                 <!-- Regla de Colisión -->
-                                <div class="vac-emp-card param-card" style="padding:1.5rem;">
+                                <div class="vac-emp-card param-card pad-card">
                                     <div class="param-card-header" onclick="toggleParamCard(this)">
-                                        <h3 style="color:var(--text-main); margin:0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
-                                            <span style="background:rgba(99,102,241,0.12); color:#6366f1; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
+                                        <h3 class="card-hdr">
+                                            <span class="icon-badge-lg badge-purple">
                                                 <i class="fa-solid fa-puzzle-piece" style="font-size:0.85rem;"></i>
                                             </span>
                                             Regla de Colisión
@@ -631,10 +639,10 @@
                                 </div>
 
                                 <!-- Historial de Rotación -->
-                                <div class="vac-emp-card param-card" style="padding:1.5rem;">
+                                <div class="vac-emp-card param-card pad-card">
                                     <div class="param-card-header" onclick="toggleParamCard(this)">
-                                        <h3 style="color:var(--text-main); margin:0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
-                                            <span style="background:rgba(14,165,233,0.12); color:#0ea5e9; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
+                                        <h3 class="card-hdr">
+                                            <span class="icon-badge-lg badge-sky">
                                                 <i class="fa-solid fa-clock-rotate-left" style="font-size:0.85rem;"></i>
                                             </span>
                                             Historial de Rotación
@@ -661,10 +669,10 @@
                                 </div>
 
                                 <!-- Rotación Global AM/PM -->
-                                <div class="vac-emp-card param-card" style="padding:1.5rem;">
+                                <div class="vac-emp-card param-card pad-card">
                                     <div class="param-card-header" onclick="toggleParamCard(this)">
-                                        <h3 style="color:var(--text-main); margin:0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
-                                            <span style="background:rgba(20,184,166,0.12); color:#14b8a6; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
+                                        <h3 class="card-hdr">
+                                            <span class="icon-badge-lg badge-teal">
                                                 <i class="fa-solid fa-rotate" style="font-size:0.85rem;"></i>
                                             </span>
                                             Rotación Global AM/PM
@@ -724,7 +732,7 @@
                                 </div>
 
                                 <!-- Plantillas preferencias horario -->
-                                <div class="vac-emp-card param-card hidden-pref-plantillas-section full-width" style="padding:1.5rem;">
+                                <div class="vac-emp-card param-card hidden-pref-plantillas-section full-width pad-card">
                                     <div style="display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:1rem; margin-bottom:0.75rem;">
                                         <div>
                                             <h3 style="color:var(--text-main); margin:0; font-size:1.05rem; display:flex; align-items:center; gap:0.5rem;">
@@ -741,10 +749,10 @@
                                 </div>
 
                                 <!-- Alternancia de Turnos -->
-                                <div class="vac-emp-card param-card" style="padding:1.5rem;">
+                                <div class="vac-emp-card param-card pad-card">
                                     <div class="param-card-header" onclick="toggleParamCard(this)">
-                                        <h3 style="color:var(--text-main); margin:0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
-                                            <span style="background:rgba(236,72,153,0.12); color:#ec4899; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
+                                        <h3 class="card-hdr">
+                                            <span class="icon-badge-lg badge-rose">
                                                 <i class="fa-solid fa-right-left" style="font-size:0.85rem;"></i>
                                             </span>
                                             Alternancia de Turnos
@@ -814,10 +822,10 @@
                             <div class="param-group-grid">
 
                                 <!-- Jefe de Pista -->
-                                <div class="vac-emp-card param-card full-width" style="padding:1.5rem;">
+                                <div class="vac-emp-card param-card full-width pad-card">
                                     <div class="param-card-header" onclick="toggleParamCard(this)">
-                                        <h3 style="color:var(--text-main); margin:0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
-                                            <span style="background:rgba(16,185,129,0.12); color:#10b981; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
+                                        <h3 class="card-hdr">
+                                            <span class="icon-badge-lg badge-green">
                                                 <i class="fa-solid fa-user-tie" style="font-size:0.85rem;"></i>
                                             </span>
                                             Jefe de Pista
@@ -946,10 +954,10 @@
                                 </div>
 
                                 <!-- Tareas de Limpieza -->
-                                <div class="vac-emp-card param-card full-width" style="padding:1.5rem;">
+                                <div class="vac-emp-card param-card full-width pad-card">
                                     <div class="param-card-header" onclick="toggleParamCard(this)">
-                                        <h3 style="color:var(--text-main); margin:0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
-                                            <span style="background:rgba(16,185,129,0.12); color:#10b981; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
+                                        <h3 class="card-hdr">
+                                            <span class="icon-badge-lg badge-green">
                                                 <i class="fa-solid fa-broom" style="font-size:0.85rem;"></i>
                                             </span>
                                             Tareas de Limpieza
@@ -1079,10 +1087,10 @@
                             <div class="param-group-grid">
 
                                 <!-- Excepciones Semanales -->
-                                <div class="vac-emp-card param-card" style="padding:1.5rem;">
+                                <div class="vac-emp-card param-card pad-card">
                                     <div class="param-card-header" onclick="toggleParamCard(this)">
-                                        <h3 style="color:var(--text-main); margin:0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
-                                            <span style="background:rgba(245,158,11,0.12); color:#f59e0b; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
+                                        <h3 class="card-hdr">
+                                            <span class="icon-badge-lg badge-orange">
                                                 <i class="fa-solid fa-wand-magic-sparkles" style="font-size:0.85rem;"></i>
                                             </span>
                                             Excepciones Semanales
@@ -1143,10 +1151,10 @@
                                 </div>
 
                                 <!-- Días Festivos -->
-                                <div class="vac-emp-card param-card" style="padding:1.5rem;">
+                                <div class="vac-emp-card param-card pad-card">
                                     <div class="param-card-header" onclick="toggleParamCard(this)">
-                                        <h3 style="color:var(--text-main); margin:0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
-                                            <span style="background:rgba(245,158,11,0.12); color:#f59e0b; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
+                                        <h3 class="card-hdr">
+                                            <span class="icon-badge-lg badge-orange">
                                                 <i class="fa-solid fa-calendar-days" style="font-size:0.85rem;"></i>
                                             </span>
                                             Días Festivos
@@ -1160,11 +1168,11 @@
                                         <div style="display: flex; gap: 0.5rem; align-items: end; margin-bottom: 1rem;">
                                             <div class="input-group" style="flex:1; margin-bottom:0;">
                                                 <label style="font-size: 0.75rem; color: var(--text-muted);">Fecha</label>
-                                                <input type="date" id="holidayDateInput" style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-panel); color: var(--text-main); font-size: 0.85rem;">
+                                                <input type="date" id="holidayDateInput" class="form-input-sm">
                                             </div>
                                             <div class="input-group" style="flex:2; margin-bottom:0;">
                                                 <label style="font-size: 0.75rem; color: var(--text-muted);">Nombre</label>
-                                                <input type="text" id="holidayNameInput" placeholder="ej: Día de la Independencia" style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-panel); color: var(--text-main); font-size: 0.85rem;">
+                                                <input type="text" id="holidayNameInput" placeholder="ej: Día de la Independencia" class="form-input-sm">
                                             </div>
                                             <button type="button" class="btn-action" onclick="addHoliday()" style="border-radius: 6px; padding: 0.5rem 0.75rem; flex-shrink:0;">
                                                 <i class="fa-solid fa-plus"></i>
@@ -1207,10 +1215,10 @@
                             <div class="param-group-grid">
 
                                 <!-- Turnos Personalizados -->
-                                <div class="vac-emp-card param-card" style="padding:1.5rem; border: 2px solid #f59e0b;">
+                                <div class="vac-emp-card param-card pad-card" style="border: 2px solid #f59e0b;">
                                     <div class="param-card-header" onclick="toggleParamCard(this)">
-                                        <h3 style="color:var(--text-main); margin:0; font-size:1rem; display:flex; align-items:center; gap:0.6rem;">
-                                            <span style="background:rgba(245,158,11,0.12); color:#f59e0b; width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
+                                        <h3 class="card-hdr">
+                                            <span class="icon-badge-lg badge-orange">
                                                 <i class="fa-solid fa-clock" style="font-size:0.85rem;"></i>
                                             </span>
                                             Turnos Personalizados
@@ -1228,15 +1236,15 @@
                                             <div style="display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 0.5rem; align-items: end;">
                                                 <div class="input-group">
                                                     <label style="font-size: 0.75rem; color: var(--text-muted);">Nombre</label>
-                                                    <input type="text" id="customShiftName" placeholder="ej: MiTurno" style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-panel); color: var(--text-main); font-size: 0.85rem;">
+                                                    <input type="text" id="customShiftName" placeholder="ej: MiTurno" class="form-input-sm">
                                                 </div>
                                                 <div class="input-group">
                                                     <label style="font-size: 0.75rem; color: var(--text-muted);">Hora inicio</label>
-                                                    <input type="number" id="customShiftStart" min="0" max="23" placeholder="5" style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-panel); color: var(--text-main); font-size: 0.85rem;">
+                                                    <input type="number" id="customShiftStart" min="0" max="23" placeholder="5" class="form-input-sm">
                                                 </div>
                                                 <div class="input-group">
                                                     <label style="font-size: 0.75rem; color: var(--text-muted);">Hora fin</label>
-                                                    <input type="number" id="customShiftEnd" min="0" max="23" placeholder="13" style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-panel); color: var(--text-main); font-size: 0.85rem;">
+                                                    <input type="number" id="customShiftEnd" min="0" max="23" placeholder="13" class="form-input-sm">
                                                 </div>
                                                 <button type="button" class="btn-action" onclick="addCustomShift()" style="border-radius: 6px; padding: 0.5rem;">
                                                     <i class="fa-solid fa-plus"></i>
@@ -1623,7 +1631,7 @@
                         <div class="input-group">
                             <label>Fecha de Inicio</label>
                             <input type="date" id="planEmpFechaInicio" class="custom-input"
-                                style="width: 100%; padding: 0.7rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px;">
+                                class="form-input">
                         </div>
                     </div>
 
@@ -1649,7 +1657,7 @@
                                 <option value="mensual" selected>Mensual</option>
                             </select>
                             <input type="number" id="planEmpSalarioFijo" placeholder="Ej. 350000" min="0" step="1"
-                                style="width: 100%; padding: 0.7rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px;">
+                                class="form-input">
                         </div>
                     </div>
 
@@ -1964,19 +1972,19 @@
                     <div class="input-group">
                         <label>Tarifa Diurna (¢)</label>
                         <input type="number" id="cfgTarifaDiurna" step="0.01" class="custom-input"
-                            style="width: 100%; padding: 0.7rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px;">
+                            class="form-input">
                     </div>
                     <div class="input-group">
                         <label>Tarifa Mixta (¢)</label>
                         <input type="number" id="cfgTarifaMixta" step="0.01" class="custom-input"
-                            style="width: 100%; padding: 0.7rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px;">
+                            class="form-input">
                     </div>
                 </div>
                 <div class="input-row">
                     <div class="input-group">
                         <label>Tarifa Nocturna (¢)</label>
                         <input type="number" id="cfgTarifaNocturna" step="0.01" class="custom-input"
-                            style="width: 100%; padding: 0.7rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px;">
+                            class="form-input">
                     </div>
                     <div class="input-group">
                         <label>Seguro / CCSS</label>
@@ -1996,13 +2004,13 @@
                     <div class="input-group">
                         <label id="cfgSeguroPctLabel">Porcentaje (ej. 10.67)</label>
                         <input type="number" id="cfgSeguroValorPct" step="0.01" min="0" class="custom-input"
-                            style="width: 100%; padding: 0.7rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px;"
+                            class="form-input"
                             placeholder="10.67">
                     </div>
                     <div class="input-group">
                         <label id="cfgSeguroFijoLabel">Monto fijo semanal (¢)</label>
                         <input type="number" id="cfgSeguroValorFijo" step="1" min="0" class="custom-input"
-                            style="width: 100%; padding: 0.7rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px;"
+                            class="form-input"
                             placeholder="0">
                     </div>
                 </div>
@@ -2071,13 +2079,13 @@
                     <div class="input-group" style="flex:1;">
                         <label>Año</label>
                         <input type="number" id="nuevoMesAnio" value="" class="custom-input"
-                            style="width: 100%; padding: 0.7rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px;"
+                            class="form-input"
                             required>
                     </div>
                     <div class="input-group" style="flex:2;">
                         <label>Mes</label>
                         <select id="nuevoMesSel"
-                            style="width: 100%; padding: 0.7rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px;">
+                            class="form-input">
                             <option value="1">Enero</option>
                             <option value="2">Febrero</option>
                             <option value="3">Marzo</option>
@@ -2116,7 +2124,7 @@
                 <div class="input-group">
                     <label>Fecha del Viernes</label>
                     <input type="date" id="nuevaSemanaFecha" class="custom-input"
-                        style="width: 100%; padding: 0.7rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px;"
+                        class="form-input"
                         required>
                 </div>
             </div>
@@ -2225,7 +2233,7 @@
                 <div class="input-group">
                     <label>Horario Generado</label>
                     <select id="importHorarioSel"
-                        style="width: 100%; padding: 0.7rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px;"></select>
+                        class="form-input"></select>
                 </div>
                 <div class="input-group" style="margin-top: 15px; display: flex; align-items: center; gap: 10px;">
                     <input type="checkbox" id="importSyncEmps" checked>
@@ -2255,12 +2263,12 @@
                 </p>
                 <div class="input-group" style="margin-bottom: 1rem;">
                     <label>Semana</label>
-                    <select id="boletaSemanaSel" style="width: 100%; padding: 0.7rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px;"></select>
+                    <select id="boletaSemanaSel" class="form-input"></select>
                 </div>
                 
                 <div class="input-group" style="margin-bottom: 1rem;">
                     <label>Concepto de Bonificación</label>
-                    <select id="boletaTipoBonoSel" onchange="document.getElementById('boletaStickerValGroup').style.display = this.value === 'stickers' ? 'block' : 'none';" style="width: 100%; padding: 0.7rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px;">
+                    <select id="boletaTipoBonoSel" onchange="document.getElementById('boletaStickerValGroup').style.display = this.value === 'stickers' ? 'block' : 'none';" class="form-input">
                         <option value="stickers">Stickers</option>
                         <option value="otros">Otro Concepto</option>
                     </select>
@@ -2268,7 +2276,7 @@
 
                 <div class="input-group" id="boletaStickerValGroup" style="display: block;">
                     <label>Valor Unitario del Sticker</label>
-                    <input type="number" id="boletaStickerValor" value="150" step="0.01" style="width: 100%; padding: 0.7rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px;">
+                    <input type="number" id="boletaStickerValor" value="150" step="0.01" class="form-input">
                 </div>
             </div>
             <div class="modal-actions-footer">
@@ -2321,7 +2329,7 @@
                     <p style="margin: 0 0 0.75rem 0; color: var(--text-main); font-size: 0.9rem; line-height: 1.6;">
                         <strong>¿Qué es?</strong> El turno de noche es el más pesado porque es de 10 horas (10 PM a 5 AM). Necesitás decidir cómo asignarlo.
                     </p>
-                    <p style="margin: 0 0 0.5rem 0; color: var(--text-muted); font-size: 0.85rem;">
+                    <p class="helper-text-sm">
                         <strong>Rotación:</strong> Cada semana cambia de persona. Si Juan trabajó noches esta semana, la próxima semana le toca a Pedro. Así nadie se cansa demaisiado.
                     </p>
                     <p style="margin: 0; color: var(--text-muted); font-size: 0.85rem;">
@@ -2350,7 +2358,7 @@
                     <p style="margin: 0 0 0.75rem 0; color: var(--text-main); font-size: 0.9rem; line-height: 1.6;">
                         <strong>¿Qué es?</strong> Es como llamar a un refuerzo temporal cuando falta gente. Agrega una persona extra al turno.
                     </p>
-                    <p style="margin: 0 0 0.5rem 0; color: var(--text-muted); font-size: 0.85rem;">
+                    <p class="helper-text-sm">
                         <strong>Tipos:</strong>
                     </p>
                     <ul style="margin: 0; color: var(--text-muted); font-size: 0.85rem; padding-left: 1.25rem;">
@@ -2370,7 +2378,7 @@
                     <p style="margin: 0 0 0.75rem 0; color: var(--text-main); font-size: 0.9rem; line-height: 1.6;">
                         <strong>¿Qué es?</strong> Si tenés dos mujeres (o más personas configuradas), el sistema hace que no trabajen el mismo turno el mismo día.
                     </p>
-                    <p style="margin: 0 0 0.5rem 0; color: var(--text-muted); font-size: 0.85rem;">
+                    <p class="helper-text-sm">
                         <strong>Ejemplo:</strong> Si Jensy trabaja de mañana (AM), Ileana trabaja de tarde (PM). Así hay siempre alguien en cada turno.
                     </p>
                     <p style="margin: 0; color: var(--text-muted); font-size: 0.85rem;">
@@ -2386,10 +2394,10 @@
                     <p style="margin: 0 0 0.75rem 0; color: var(--text-main); font-size: 0.9rem; line-height: 1.6;">
                         <strong>¿Qué es?</strong> Es la versión "SUPER estricta" de la alternancia. Si la activás:
                     </p>
-                    <p style="margin: 0 0 0.5rem 0; color: var(--text-muted); font-size: 0.85rem;">
+                    <p class="helper-text-sm">
                         <strong>Si Jensy tiene turno AM un día, TENDRÁ AM TODA LA SEMANA.</strong>
                     </p>
-                    <p style="margin: 0 0 0.5rem 0; color: var(--text-muted); font-size: 0.85rem;">
+                    <p class="helper-text-sm">
                         <strong>Si Ileana tiene turno PM un día, TENDRÁ PM TODA LA SEMANA.</strong>
                     </p>
                     <p style="margin: 0; color: var(--text-muted); font-size: 0.85rem;">
@@ -2405,10 +2413,10 @@
                     <p style="margin: 0 0 0.75rem 0; color: var(--text-main); font-size: 0.9rem; line-height: 1.6;">
                         <strong>¿Qué es?</strong> Hace que TODOS los empleados (no solo las mujeres) alternen entre mañana y tarde semana a semana.
                     </p>
-                    <p style="margin: 0 0 0.5rem 0; color: var(--text-muted); font-size: 0.85rem;">
+                    <p class="helper-text-sm">
                         <strong>Semana 1:</strong> Juan trabaja de mañana
                     </p>
-                    <p style="margin: 0 0 0.5rem 0; color: var(--text-muted); font-size: 0.85rem;">
+                    <p class="helper-text-sm">
                         <strong>Semana 2:</strong> Juan trabaja de tarde
                     </p>
                     <p style="margin: 0; color: var(--text-muted); font-size: 0.85rem;">
@@ -2424,7 +2432,7 @@
                     <p style="margin: 0 0 0.75rem 0; color: var(--text-main); font-size: 0.9rem; line-height: 1.6;">
                         <strong>¿Qué es?</strong> El sistema "recuerda" los horarios anteriores y los usa para no repetir demasiado.
                     </p>
-                    <p style="margin: 0 0 0.5rem 0; color: var(--text-muted); font-size: 0.85rem;">
+                    <p class="helper-text-sm">
                         <strong>Por ejemplo:</strong> Si a Juan le tocó trabajar el domingo pasado, el sistema intenta que esta semana descanse. Así nadie se cansa.
                     </p>
                     <p style="margin: 0; color: var(--text-muted); font-size: 0.85rem;">
@@ -2440,10 +2448,10 @@
                     <p style="margin: 0 0 0.75rem 0; color: var(--text-main); font-size: 0.9rem; line-height: 1.6;">
                         <strong>¿Qué son?</strong> Días que tienen reglas especiales porque son distintos a lo normal.
                     </p>
-                    <p style="margin: 0 0 0.5rem 0; color: var(--text-muted); font-size: 0.85rem;">
+                    <p class="helper-text-sm">
                         <strong>Domingo:</strong> Es día de descanso general. Casi nadie trabaja o trabajan menos horas.
                     </p>
-                    <p style="margin: 0 0 0.5rem 0; color: var(--text-muted); font-size: 0.85rem;">
+                    <p class="helper-text-sm">
                         <strong>Jueves Santo:</strong> Si es Semana Santa, la estación puede cerrar.
                     </p>
                     <p style="margin: 0; color: var(--text-muted); font-size: 0.85rem;">
@@ -2459,7 +2467,7 @@
                     <p style="margin: 0 0 0.75rem 0; color: var(--text-main); font-size: 0.9rem; line-height: 1.6;">
                         <strong>¿Qué son?</strong> Son turnos que una persona SIEMPRE tiene, no importa qué pase.
                     </p>
-                    <p style="margin: 0 0 0.5rem 0; color: var(--text-muted); font-size: 0.85rem;">
+                    <p class="helper-text-sm">
                         <strong>Ejemplo:</strong> El jefe de pista siempre trabaja de mañana (6 AM a 4 PM). Le ponés ese turno como "fijo" y el sistema siempre se lo respeta.
                     </p>
                     <p style="margin: 0; color: var(--text-muted); font-size: 0.85rem;">

@@ -1,0 +1,51 @@
+# openspec/config.yaml
+schema: spec-driven
+
+context: |
+  Proyecto: Chronos (cronos)
+  App desktop para gestión de turnos y planillas — Servicentro La Marina, Costa Rica
+  Python 3.12+ | FastAPI (uvicorn) backend | HTML/CSS/JS vanilla frontend
+  pywebview (EdgeChromium) shell | SQLite (planillas) + JSON (horarios)
+  Scheduler: OR-Tools CP-SAT solver | PyInstaller packaging
+  Documentos: openpyxl (Excel), python-docx (Word), Pillow (boletas JPEG)
+
+testing:
+  strict_tdd: true
+  runner:
+    command: pytest
+    framework: pytest 8.3
+    options: "-v --tb=short"
+  layers:
+    unit: { available: true, tool: pytest }
+    integration: { available: true, tool: pytest }
+    e2e: { available: true, tool: "tools/validate_app.py (ASGI custom)" }
+  coverage:
+    available: true
+    command: "pytest --cov=backend --cov=planillas"
+  quality:
+    linter: { available: true, command: "ruff check" }
+    type_checker: { available: false, command: null }
+    formatter: { available: true, command: "ruff format" }
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+  specs:
+    - Use Given/When/Then for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+  design:
+    - Include sequence diagrams for complex flows
+    - Document architecture decisions with rationale
+  tasks:
+    - Group by phase, use hierarchical numbering
+    - Keep tasks completable in one session
+  apply:
+    - Follow existing code patterns
+    tdd: true
+    test_command: "pytest -v --tb=short"
+  verify:
+    test_command: "pytest -v --tb=short --cov=backend --cov=planillas"
+    build_command: "python tools/validate_app.py"
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive deltas

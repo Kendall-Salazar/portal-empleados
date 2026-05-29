@@ -367,6 +367,10 @@ SAME_SHIFT_STACK_PENALTY_4 = 25000
 SAME_SHIFT_STACK_PENALTY_5 = 90000
 INFEASIBLE_DIAGNOSTIC_MAX_TIME_SECONDS = 6
 
+# Near-hard consistency penalty: raised from 50k to 500k so turno_principal
+# dominates all soft constraints except coverage infeasibility.
+CONSISTENCY_PENALTY = 500000
+
 
 def build_rest_incompatible_pairs(min_rest_hours, shift_names, shift_is_working, shift_min_hour, shift_max_hour):
     """Pares (s1,s2) con descanso estrictamente menor a min_rest_hours entre fin(s1) e inicio(s2) al día siguiente."""
@@ -1469,6 +1473,7 @@ class ShiftScheduler:
         # night_replacement candidates (they might become Libres)
         # and the primary night person (who only does N_22-05/OFF).
         turno_principal = {}
+        consistency_exempt = []  # Track employees exempt from consistency
         
         night_person_name = self.config.get('fixed_night_person', None)
         
@@ -1480,6 +1485,12 @@ class ShiftScheduler:
             # Skip if fully fixed
             fixed_days_count = len(self.emp_data[e].get('fixed_shifts', {}))
             if fixed_days_count > 5:
+                continue
+            
+            # EXEMPTION: forced_libres employees (persona de libres) are exempt
+            # from turno_principal consistency — their role requires variable shifts.
+            if self.emp_data[e].get('forced_libres', False):
+                consistency_exempt.append(e)
                 continue
             
             # Candidatos de libres: tienen turno principal pero la consistencia
@@ -1511,7 +1522,7 @@ class ShiftScheduler:
                 # Consistency Penalty: Penalize deviations from the assigned turno_principal.
                 # If they work a shift `s` on day `d` that is NOT their `turno_principal[s]`, apply penalty.
                 # (Excluding special shifts like OFF, VAC, PERM, J_, X_, Q_)
-                CONSISTENCY_PENALTY = 50000
+                # Uses module-level CONSISTENCY_PENALTY (500k — near-hard constraint).
                 for d in DAYS:
                     if _has_working_fixed_shift(self.emp_data[e], d):
                         continue
@@ -2173,6 +2184,27 @@ class ShiftScheduler:
                 d2 = DAYS[i + 1]
                 for (s1, s2) in INCOMPATIBLE_LT:
                     model.Add(x[(e, d2, s2)] == 0).OnlyEnforceIf(x[(e, d1, s1)])
+
+        # FRIDAY HEURISTIC: Soft reward for OFF/PM after Thursday night shift.
+        # If employee worked N_22-05 on Thursday (from history), reward OFF or
+        # afternoon shifts on Friday. Steven (forced_libres) is exempt.
+        # Weight: -300k (soft — preserves feasibility).
+        FRIDAY_NIGHT_REWARD = 300000
+        for e in self.employees:
+            if self.emp_data[e].get("forced_libres", False):
+                continue
+            last_jue = most_recent_schedule.get(e, {}).get("Jue", "")
+            if last_jue == "N_22-05":
+                # Reward OFF on Friday
+                penalties.append(-FRIDAY_NIGHT_REWARD * x[(e, "Vie", "OFF")])
+                # Reward afternoon shifts on Friday (starts >= 12)
+                for s in SHIFT_NAMES:
+                    if s in ("OFF", "VAC", "PERM", "N_22-05"):
+                        continue
+                    if SHIFT_IS_WORKING.get(s, False):
+                        min_h = SHIFT_MIN_HOUR.get(s)
+                        if min_h is not None and min_h >= 12:
+                            penalties.append(-FRIDAY_NIGHT_REWARD * x[(e, "Vie", s)])
 
         # Empleados no disponibles por día — incluye VAC/PERM/OFF en fixed_constraints
         unavailable_per_day = {}
@@ -3403,6 +3435,57 @@ class ShiftScheduler:
 
                     is_repeating_3rd = x[(e, d, s1)]
                     penalties.append(10000 * is_repeating_3rd)
+
+        # ANTI-3PEAT AM/PM: Hard constraint — if employee had same AM/PM token
+        # for 3+ consecutive weeks on the same day, force the opposite token.
+        # Exemptions: forced_libres, fixed shifts, jefe de pista, fixed night person.
+        for e in self.employees:
+            # Exempt forced_libres (Steven)
+            if self.emp_data[e].get("forced_libres", False):
+                continue
+            # Exempt fixed night person
+            night_person = self.config.get("fixed_night_person")
+            if e == night_person:
+                continue
+            # Exempt jefe de pista
+            if self.emp_data[e].get("is_jefe_pista", False):
+                continue
+
+            employee_history = _history_window_for_employee(e, history_entries)
+            if len(employee_history) < 3:
+                continue
+
+            # Check last 3 weeks for same AM/PM token on same day
+            week_entries = employee_history[-3:]
+            tokens = []
+            for entry in week_entries:
+                sched = _normalize_history_schedule(entry.get("schedule", {}))
+                e_sched = sched.get(e, {})
+                day_tokens = {}
+                for d in DAYS:
+                    if _has_working_fixed_shift(self.emp_data[e], d):
+                        continue
+                    if _history_day_is_neutral(entry, d):
+                        continue
+                    shift = e_sched.get(d)
+                    if shift:
+                        day_tokens[d] = _am_pm_token(shift)
+                tokens.append(day_tokens)
+
+            for d in DAYS:
+                if _has_working_fixed_shift(self.emp_data[e], d):
+                    continue
+                # Check if all 3 weeks have the same AM/PM token
+                t0 = tokens[0].get(d)
+                t1 = tokens[1].get(d)
+                t2 = tokens[2].get(d)
+                if t0 and t1 and t2 and t0 == t1 == t2 and t0 in ("AM", "PM"):
+                    # Hard constraint: block the same token
+                    opposite = "PM" if t0 == "AM" else "AM"
+                    # Block all shifts of the same token type
+                    for s in SHIFT_NAMES:
+                        if _am_pm_token(s) == t0 and s not in ("OFF", "VAC", "PERM"):
+                            model.Add(x[(e, d, s)] == 0)
         
         # Soft penalty: discourage repeating shifts from recent weeks
         for e in self.employees:
@@ -3853,6 +3936,8 @@ class ShiftScheduler:
                      "solutions_found": solution_counter.solution_count,
                      "min_rest_hours_applied": min_rest_hours,
                      "rest_between_shifts": rest_report,
+                     "consistency_penalty": CONSISTENCY_PENALTY,
+                     "consistency_exempt": consistency_exempt,
                  }
              }
         if status == cp_model.INFEASIBLE:

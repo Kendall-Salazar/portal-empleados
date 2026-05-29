@@ -1,85 +1,3 @@
-:root {
-    /* Brand */
-    --primary: #4f46e5;
-    --primary-hover: #4338ca;
-    --primary-subtle: rgba(79, 70, 229, 0.1);
-    --accent-blue: #3b82f6;
-
-    /* Semantic */
-    --success: #10b981;
-    --success-subtle: rgba(16, 185, 129, 0.1);
-    --warning: #f59e0b;
-    --warning-subtle: rgba(245, 158, 11, 0.1);
-    --danger: #ef4444;
-    --danger-subtle: rgba(239, 68, 68, 0.1);
-
-    /* Light palette */
-    --bg-app: #f1f5f9;
-    --bg-panel: #ffffff;
-    --bg-sidebar: rgba(255, 255, 255, 0.9);
-    --surface: #ffffff;
-
-    --text-main: #0f172a;
-    --text-muted: #64748b;
-    --text-dim: #94a3b8;
-    --text-inv: #0f172a;
-
-    --border: rgba(15, 23, 42, 0.09);
-    --border-strong: rgba(15, 23, 42, 0.18);
-
-    /* Elevation */
-    --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.06), 0 1px 2px -1px rgb(0 0 0 / 0.06);
-    --shadow-md: 0 4px 8px -2px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.06);
-    --shadow-lg: 0 12px 24px -4px rgb(0 0 0 / 0.12), 0 4px 8px -2px rgb(0 0 0 / 0.06);
-
-    /* Radii */
-    --radius-sm: 6px;
-    --radius-md: 10px;
-    --radius-lg: 14px;
-    --radius-xl: 20px;
-
-    /* Transitions */
-    --transition: 0.18s ease;
-    --transition-bounce: 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-
-    /* Typography scale — 6 steps */
-    --fs-xs: 0.68rem;
-    /* labels, badges */
-    --fs-sm: 0.78rem;
-    /* secondary text */
-    --fs-base: 0.88rem;
-    /* body / UI text */
-    --fs-md: 1rem;
-    /* modal titles, names */
-    --fs-lg: 1.25rem;
-    /* section headers */
-    --fs-xl: 1.5rem;
-    /* page titles */
-}
-
-.dark-mode {
-    --bg-app: #0b0f19;
-    --bg-panel: #111827;
-    --bg-sidebar: rgba(15, 20, 35, 0.92);
-    --surface: #1e293b;
-
-    --text-main: #f1f5f9;
-    --text-muted: #94a3b8;
-    --text-dim: #64748b;
-    --text-inv: #f8fafc;
-
-    --border: #1e293b;
-    --border-strong: #334155;
-
-    --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.3);
-    --shadow-md: 0 4px 8px -2px rgb(0 0 0 / 0.4);
-    --shadow-lg: 0 12px 24px -4px rgb(0 0 0 / 0.5);
-
-    --primary-subtle: rgba(99, 102, 241, 0.15);
-    --success-subtle: rgba(16, 185, 129, 0.12);
-    --warning-subtle: rgba(245, 158, 11, 0.12);
-    --danger-subtle: rgba(239, 68, 68, 0.12);
-}
 
 * {
     box-sizing: border-box;
@@ -331,6 +249,180 @@ body {
     padding-top: 1rem;
     border-top: 1px solid var(--border-strong);
     margin-top: auto;
+}
+
+.sidebar-row {
+    display: flex;
+    gap: 0.5rem;
+    width: 100%;
+}
+
+.sidebar-row-btn {
+    flex: 1;
+    min-width: 0;
+    justify-content: center;
+    font-size: 0.8rem;
+    padding: 0.55rem 0.4rem;
+    background: var(--surface-2);
+    border: 1px solid var(--border-color);
+    color: var(--text-main);
+    border-radius: 10px;
+    white-space: nowrap;
+}
+
+.history-btn {
+    border-color: var(--primary);
+    border-width: 1.5px;
+}
+
+.history-btn i {
+    color: var(--primary);
+}
+
+.history-btn:hover {
+    background: var(--primary);
+    color: white;
+}
+
+.history-btn:hover i {
+    color: white;
+}
+
+/* ═══════════════════════════════════════
+   HISTORIAL MATRIX — todos los empleados × semanas
+   ═══════════════════════════════════════ */
+.hist-matrix-content {
+    max-width: min(95vw, 1100px);
+    width: fit-content;
+}
+
+.hist-matrix-table {
+    border-collapse: collapse;
+    font-size: 0.85rem;
+    white-space: nowrap;
+}
+
+.hist-matrix-table thead th {
+    padding: 0.6rem 0.7rem;
+    font-weight: 600;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border-color);
+    text-align: center;
+}
+
+.hist-matrix-table thead th.sticky-emp,
+.hist-matrix-table tbody td.sticky-emp {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    text-align: left;
+    padding: 0.5rem 0.8rem 0.5rem 0;
+    background: var(--surface);
+    min-width: 120px;
+}
+
+.hist-matrix-table tbody td.sticky-emp {
+    font-weight: 500;
+    color: var(--text-main);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.hist-matrix-table tbody td:not(.sticky-emp) {
+    padding: 0.5rem 0.7rem;
+    text-align: center;
+    font-weight: 600;
+    font-size: 0.82rem;
+    border-bottom: 1px solid var(--border-color);
+    border-radius: 0;
+    transition: transform 0.12s;
+    cursor: default;
+}
+
+.hist-matrix-table tbody td:not(.sticky-emp):hover {
+    transform: scale(1.15);
+}
+
+/* Cell colors by dominant type */
+.cell-am {
+    background: rgba(59, 130, 246, 0.15);
+    color: #60a5fa;
+}
+
+.cell-pm {
+    background: rgba(245, 158, 11, 0.15);
+    color: #fbbf24;
+}
+
+.cell-n {
+    background: rgba(30, 27, 75, 0.35);
+    color: #818cf8;
+}
+
+.cell-off {
+    background: rgba(107, 114, 128, 0.1);
+    color: #6b7280;
+}
+
+.cell-libres {
+    background: rgba(16, 185, 129, 0.15);
+    color: #34d399;
+    font-weight: 700;
+    font-size: 0.78rem;
+    letter-spacing: 0.3px;
+}
+
+.dark-mode .cell-libres {
+    background: rgba(16, 185, 129, 0.12);
+}
+
+.dark-mode .cell-am {
+    background: rgba(59, 130, 246, 0.12);
+}
+
+.dark-mode .cell-pm {
+    background: rgba(245, 158, 11, 0.12);
+}
+
+.dark-mode .cell-n {
+    background: rgba(99, 102, 241, 0.18);
+}
+
+.dark-mode .cell-off {
+    background: rgba(107, 114, 128, 0.08);
+}
+
+/* Legend */
+.hist-matrix-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    justify-content: center;
+    margin-top: 1rem;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.legend-swatch {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    vertical-align: middle;
+    margin-right: 4px;
+}
+
+.sw-am { background: rgba(59, 130, 246, 0.4); }
+.sw-pm { background: rgba(245, 158, 11, 0.4); }
+.sw-n { background: rgba(99, 102, 241, 0.4); }
+.sw-off { background: rgba(107, 114, 128, 0.25); }
+.sw-libres { background: rgba(16, 185, 129, 0.4); }
+
+/* Sticky header row */
+.hist-matrix-table thead th.week-col {
+    z-index: 3;
 }
 
 .btn-generate {
@@ -8102,4 +8194,75 @@ th[id^="th-collaborator"]:hover {
     background: rgba(239,68,68,0.08);
     border-color: rgba(239,68,68,0.3);
     color: #ef4444;
+}
+
+/* ===================================================================
+   SCHEDULER CONSISTENCY & ROTATION — New styles for this change
+   =================================================================== */
+
+/* Libres person badge for current week */
+.libres-week-badge {
+    display: inline-block;
+    font-size: 0.6em;
+    margin-left: 4px;
+    padding: 1px 5px;
+    background: linear-gradient(135deg, #f59e0b, #d97706);
+    color: white;
+    border-radius: 4px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    box-shadow: 0 1px 3px rgba(245, 158, 11, 0.3);
+}
+
+/* Libres row highlight (for the persona de libres this week) */
+.libres-row {
+    background: rgba(245, 158, 11, 0.06) !important;
+}
+.libres-row:hover {
+    background: rgba(245, 158, 11, 0.12) !important;
+}
+
+/* Individual history modal */
+.hist-individual-modal {
+    max-width: 700px;
+    width: 90%;
+}
+
+.hist-individual-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+}
+.hist-individual-table th {
+    background: var(--bg-surface);
+    padding: 0.5rem;
+    text-align: center;
+    font-weight: 600;
+    border-bottom: 2px solid var(--border-color);
+}
+.hist-individual-table td {
+    padding: 0.4rem 0.5rem;
+    text-align: center;
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+/* Dominant type cell colors */
+.cell-dominant-am {
+    background: rgba(251, 191, 36, 0.2);
+    color: #d97706;
+    font-weight: 600;
+}
+.cell-dominant-pm {
+    background: rgba(99, 102, 241, 0.2);
+    color: #6366f1;
+    font-weight: 600;
+}
+.cell-dominant-off {
+    background: rgba(107, 114, 128, 0.15);
+    color: #6b7280;
+}
+.cell-dominant-n {
+    background: rgba(30, 27, 75, 0.3);
+    color: #818cf8;
+    font-weight: 600;
 }

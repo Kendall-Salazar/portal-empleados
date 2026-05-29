@@ -2401,6 +2401,11 @@ function renderSchedule(
             const forcedLibresBadge = emp && emp.forced_libres ? '<i class="fa-solid fa-thumbtack forced-libres-icon" title="Rol Libres Forzado"></i>' : '';
             const forcedQuebradoBadge = emp && emp.forced_quebrado ? '<i class="fa-solid fa-bolt" style="font-size:0.7em; margin-left:4px; color:#7c3aed;" title="Forzar Quebrado"></i>' : '';
             const refBadge = name === "Refuerzo" ? '<span class="tag night" style="font-size:0.6em; margin-left:4px;">REF</span>' : '';
+            // Libres person badge for current week (from metadata)
+            const libresPerson = currentMetadata?.libres_person || "";
+            const libresWeekBadge = name === libresPerson
+                ? '<span class="libres-week-badge" title="Persona de Libres esta semana">★ LIBRES</span>'
+                : '';
 
             const nameJsLiteral = JSON.stringify(name).replace(/"/g, "&quot;");
             const nameClickAttrs = isHistory
@@ -2412,7 +2417,7 @@ function renderSchedule(
                     <div class="emp-cell-content">
                         <div class="emp-avatar" style="${name === "Refuerzo" ? 'background: var(--accent-color);' : ''}">${initials}</div>
                         <div class="emp-details">
-                            <span ${nameClickAttrs}>${displayName}${aliasIndicator} ${nightBadge} ${noRestBadge} ${forcedLibresBadge} ${forcedQuebradoBadge} ${refBadge}</span>
+                            <span ${nameClickAttrs}>${displayName}${aliasIndicator} ${nightBadge} ${noRestBadge} ${forcedLibresBadge} ${forcedQuebradoBadge} ${libresWeekBadge} ${refBadge}</span>
                             <span class="emp-role">${name === "Refuerzo" ? 'Apoyo Extra' : (emp && sqlIntFlagOn(emp.is_jefe_pista) ? 'Jefe de Pista' : (emp && emp.is_practicante ? 'Practicante' : 'Colaborador'))}</span>
                         </div>
                     </div>
@@ -4689,6 +4694,10 @@ function _escapeHtml(text) {
     const div = document.createElement("div");
     div.textContent = text;
     return div.innerHTML;
+}
+
+function escapeHtml(text) {
+    return _escapeHtml(text);
 }
 
 function exportToExcel() {
@@ -7408,4 +7417,226 @@ document.addEventListener("click", function(e) {
         results.style.display = "none";
     }
 });
+
+// ===================================================================
+// INDIVIDUAL HISTORY — Per-employee 6-week history view
+// ===================================================================
+
+async function fetchIndividualHistory(name, weeks = 6) {
+    const resp = await fetch(`${API_URL}/history/individual/${encodeURIComponent(name)}?weeks=${weeks}`);
+    if (!resp.ok) throw new Error(`Failed to fetch history for ${name}`);
+    return resp.json();
+}
+
+function renderHistoryIndividual(name) {
+    fetchIndividualHistory(name, 6).then(data => {
+        const weeks = data.weeks || [];
+        if (weeks.length === 0) {
+            alert(`No hay historial para ${name}`);
+            return;
+        }
+
+        const typeLabels = {
+            matutino: "AM",
+            vespertino: "PM",
+            nocturno: "Noche",
+            libre: "Libre"
+        };
+        const typeClasses = {
+            matutino: "cell-dominant-am",
+            vespertino: "cell-dominant-pm",
+            nocturno: "cell-dominant-n",
+            libre: "cell-dominant-off"
+        };
+
+        let html = `<div class="modal-overlay" onclick="closeIndividualHistory(event)">
+            <div class="modal-content hist-individual-modal" onclick="event.stopPropagation()">
+                <div class="modal-header">
+                    <h3>Historial Individual: ${escapeHtml(name)}</h3>
+                    <button class="modal-close" onclick="closeIndividualHistory()">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <table class="hist-individual-table">
+                        <thead>
+                            <tr>
+                                <th>Semana</th>
+                                <th>Tipo Dominante</th>
+                                <th>AM</th>
+                                <th>PM</th>
+                                <th>Noche</th>
+                                <th>Libre</th>
+                            </tr>
+                        </thead>
+                        <tbody>`;
+
+        weeks.forEach(w => {
+            const cls = typeClasses[w.dominant_type] || "";
+            const label = typeLabels[w.dominant_type] || w.dominant_type;
+            html += `<tr>
+                <td>${escapeHtml(w.week_label)}</td>
+                <td class="${cls}">${label}</td>
+                <td>${w.counts?.matutino || 0}</td>
+                <td>${w.counts?.vespertino || 0}</td>
+                <td>${w.counts?.nocturno || 0}</td>
+                <td>${w.counts?.libre || 0}</td>
+            </tr>`;
+        });
+
+        html += `</tbody></table></div></div></div>`;
+
+        const container = document.createElement("div");
+        container.id = "individual-history-modal";
+        container.innerHTML = html;
+        document.body.appendChild(container);
+    }).catch(err => {
+        console.error("Error fetching individual history:", err);
+        alert(`Error al cargar historial: ${err.message}`);
+    });
+}
+
+function closeIndividualHistory(event) {
+    if (event && event.target !== event.currentTarget) return;
+    const modal = document.getElementById("individual-history-modal");
+    if (modal) modal.remove();
+}
+
+/* ─── Historial Matriz: todos los empleados × semanas ─── */
+async function openHistoryMatrix() {
+    // Cerrar si ya está abierto
+    const existing = document.getElementById("history-matrix-modal");
+    if (existing) { existing.remove(); return; }
+
+    try {
+        const resp = await fetch(`${API_URL}/history`);
+        if (!resp.ok) throw new Error(`Error ${resp.status}`);
+        const history = await resp.json();
+
+        // Tomar últimas 6 semanas
+        const last6 = (history || []).slice(-6).reverse();
+
+        if (last6.length === 0) {
+            alert("No hay historial disponible.");
+            return;
+        }
+
+        // Recopilar todos los empleados únicos
+        const empSet = new Set();
+        last6.forEach(entry => {
+            const sched = entry.schedule || {};
+            Object.keys(sched).forEach(name => {
+                // Solo activos
+                const emp = window.employees ? window.employees.find(e => e.name === name) : null;
+                if (!emp || emp.activo !== false && emp.activo !== 0) {
+                    empSet.add(name);
+                }
+            });
+        });
+        const empList = Array.from(empSet).sort();
+
+        // Clasificar shift types
+        function classifyShift(shift) {
+            if (!shift || shift === "OFF" || shift === "VAC" || shift === "PERM") return "libre";
+            if (shift === "N_22-05") return "nocturno";
+            if (shift.startsWith("J_") || shift.startsWith("X_") || shift.startsWith("Q")) return "libre";
+            // Por hora: turnos antes de 12 son matutino
+            const hourMatch = shift.match(/(\d+)/);
+            if (hourMatch) {
+                const h = parseInt(hourMatch[1], 10);
+                return h < 12 ? "matutino" : "vespertino";
+            }
+            return "libre";
+        }
+
+        function dominantType(days) {
+            const counts = { matutino: 0, vespertino: 0, nocturno: 0, libre: 0 };
+            Object.values(days).forEach(s => {
+                const t = classifyShift(s);
+                counts[t] = (counts[t] || 0) + 1;
+            });
+            const maxVal = Math.max(...Object.values(counts), 1);
+            const order = ["matutino", "vespertino", "nocturno", "libre"];
+            for (const t of order) {
+                if (counts[t] === maxVal) return t;
+            }
+            return "libre";
+        }
+
+        const typeLabel = { matutino: "AM", vespertino: "PM", nocturno: "N", libre: "—" };
+        const typeClass = { matutino: "cell-am", vespertino: "cell-pm", nocturno: "cell-n", libre: "cell-off" };
+        const typeFull = { matutino: "Matutino", vespertino: "Vespertino", nocturno: "Nocturno", libre: "Libre" };
+
+        let html = `<div class="modal-overlay" id="history-matrix-overlay" onclick="closeHistoryMatrix(event)">
+            <div class="modal-content hist-matrix-content" onclick="event.stopPropagation()">
+                <div class="modal-header">
+                    <h3><i class="fa-solid fa-clock-rotate-left" style="color:var(--primary);"></i> Historial de Turnos</h3>
+                    <button class="modal-close" onclick="closeHistoryMatrix()">&times;</button>
+                </div>
+                <div class="modal-body" style="overflow-x:auto;">
+                    <table class="hist-matrix-table">
+                        <thead>
+                            <tr>
+                                <th class="sticky-emp">Empleado</th>`;
+
+        last6.forEach(w => {
+            const label = w.name || w.nombre || `Semana`;
+            html += `<th class="week-col">${escapeHtml(label)}</th>`;
+        });
+
+        html += `</tr></thead><tbody>`;
+
+        empList.forEach(name => {
+            html += `<tr>
+                <td class="sticky-emp"><span class="emp-name-cell">${escapeHtml(name)}</span></td>`;
+            last6.forEach(entry => {
+                const sched = entry.schedule || {};
+                const days = sched[name] || {};
+                const meta = entry.metadata || {};
+                
+                // Si la persona fue la de libres esta semana, mostrarlo
+                if (meta.libres_person === name) {
+                    html += `<td class="cell-libres" title="${escapeHtml(name)}: Persona de Libres esta semana">Libres</td>`;
+                    return;
+                }
+                
+                const d = dominantType(days);
+                const cls = typeClass[d] || "cell-off";
+                const label = typeLabel[d] || "—";
+                const title = typeFull[d] || "";
+                html += `<td class="${cls}" title="${escapeHtml(name)}: ${title}">${label}</td>`;
+            });
+            html += `</tr>`;
+        });
+
+        html += `</tbody></table>
+                <div class="hist-matrix-legend">
+                    <span><span class="legend-swatch sw-am"></span> AM (Matutino)</span>
+                    <span><span class="legend-swatch sw-pm"></span> PM (Vespertino)</span>
+                    <span><span class="legend-swatch sw-n"></span> N (Nocturno)</span>
+                    <span><span class="legend-swatch sw-libres"></span> Libres (Persona de Libres)</span>
+                    <span><span class="legend-swatch sw-off"></span> — (Libre)</span>
+                </div>
+                <p class="helper-text" style="text-align:center;margin-top:0.75rem;">
+                    <i class="fa-solid fa-info-circle"></i>
+                    Se muestra el tipo de turno dominante de cada semana.
+                    Turnos fijos (jefe) y de refuerzo no se cuentan.
+                    "Libres" indica que la persona fue asignada como cubierta de nocturnos esa semana.
+                </p>
+            </div></div></div>`;
+
+        const container = document.createElement("div");
+        container.id = "history-matrix-modal";
+        container.innerHTML = html;
+        document.body.appendChild(container);
+
+    } catch (err) {
+        console.error("Error loading history matrix:", err);
+        alert("Error al cargar historial: " + err.message);
+    }
+}
+
+function closeHistoryMatrix(event) {
+    if (event && event.target !== event.currentTarget) return;
+    const modal = document.getElementById("history-matrix-modal");
+    if (modal) modal.remove();
+}
 

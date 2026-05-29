@@ -1,0 +1,141 @@
+/* ========================================================================
+   CHRONOS UTILITY CLASSES
+   Patrones extraídos de estilos inline repetidos en index.html
+   ======================================================================== */
+
+/* ── Layout ── */
+.flex-row { display: flex; align-items: center; }
+.flex-row-gap { display: flex; align-items: center; gap: 0.6rem; }
+.flex-row-gap-sm { display: flex; align-items: center; gap: 0.4rem; }
+.flex-row-wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.flex-between { display: flex; align-items: center; justify-content: space-between; }
+
+/* ── Card padding ── */
+.pad-card { padding: 1.5rem; }
+.pad-card-sm { padding: 1rem; }
+.pad-section { padding: 0.85rem 1rem; }
+
+/* ── Typography helpers ── */
+.text-xs { font-size: 0.7rem; }
+.text-sm { font-size: 0.78rem; }
+.text-base { font-size: 0.85rem; }
+.text-muted { color: var(--text-muted); }
+
+/* ── Card header title (flex-row + h3 style) ── */
+.card-hdr {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    color: var(--text-main);
+    margin: 0;
+    font-size: 1rem;
+}
+
+/* ── Helper text ── */
+
+
+/* ── Form inputs ── */
+.form-input {
+    width: 100%;
+    padding: 0.7rem;
+    background: var(--bg-app);
+    border: 1px solid var(--border);
+    color: var(--text-main);
+    border-radius: 8px;
+    box-sizing: border-box;
+    font-size: 0.88rem;
+}
+
+.form-input-sm {
+    width: 100%;
+    padding: 0.5rem;
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-panel);
+    color: var(--text-main);
+    font-size: 0.85rem;
+    box-sizing: border-box;
+}
+
+/* ── Select inputs ── */
+.select-input {
+    width: 100%;
+    padding: 0.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    background: var(--surface-2);
+    color: var(--text-main);
+    font-size: 0.85rem;
+}
+
+/* ── Icon badges (step numbers, section icons) ── */
+.icon-badge {
+    width: 26px;
+    height: 26px;
+    border-radius: 7px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    font-size: 0.75rem;
+    font-weight: 700;
+}
+
+.icon-badge-lg {
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+/* ── Margin helpers ── */
+.mb-8 { margin-bottom: 0.5rem; }
+.mb-12 { margin-bottom: 0.75rem; }
+.mb-16 { margin-bottom: 1rem; }
+.mt-8 { margin-top: 0.5rem; }
+.mt-12 { margin-top: 0.75rem; }
+
+/* ── Day checkbox pills (pattern de 7 dígitos con checkbox oculto) ── */
+.day-pill {
+    padding: 0.4rem 0.8rem;
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+    font-size: 0.8rem;
+    display: inline-block;
+    cursor: pointer;
+}
+
+/* ── Color badge icons (repeated pattern for section icons) ── */
+.badge-purple { background: rgba(99, 102, 241, 0.12); color: #6366f1; }
+.badge-green { background: rgba(16, 185, 129, 0.12); color: #10b981; }
+.badge-orange { background: rgba(245, 158, 11, 0.12); color: #f59e0b; }
+.badge-blue { background: rgba(59, 130, 246, 0.1); color: #3b82f6; }
+.badge-red { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
+.badge-amber { background: rgba(245, 158, 11, 0.12); color: #f59e0b; }
+.badge-indigo { background: rgba(139, 92, 246, 0.12); color: #8b5cf6; }
+.badge-pink { background: rgba(236, 72, 153, 0.14); color: #db2777; }
+.badge-sky { background: rgba(14, 165, 233, 0.12); color: #0ea5e9; }
+.badge-teal { background: rgba(20, 184, 166, 0.12); color: #14b8a6; }
+.badge-rose { background: rgba(236, 72, 153, 0.12); color: #ec4899; }
+
+/* ── Opt icon container (switch/option cards) ── */
+.opt-icon-box {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* ── Status badge chico ── */
+.badge-sm {
+    font-size: 0.72rem;
+    padding: 0.2rem 0.55rem;
+    border-radius: 6px;
+    font-weight: 600;
+    border: 1px solid;
+}

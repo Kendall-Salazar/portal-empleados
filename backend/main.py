@@ -1418,12 +1418,17 @@ def _reassign_history_tasks_for_row(conn, row_id: int) -> dict:
 
     config_row = conn.execute("SELECT * FROM horario_config WHERE id=1").fetchone()
     config_data = dict(config_row) if config_row else {}
-    # cleaning_tasks ya viene de la DB (columna TEXT → string), parseamos a dict
+    # cleaning_tasks y jefe_config vienen de la DB (columna TEXT → string), parseamos a dict
     if "cleaning_tasks" in config_data and isinstance(config_data["cleaning_tasks"], str):
         try:
             config_data["cleaning_tasks"] = json.loads(config_data["cleaning_tasks"]) if config_data["cleaning_tasks"] else {}
         except json.JSONDecodeError:
             config_data["cleaning_tasks"] = {}
+    if "jefe_config" in config_data and isinstance(config_data["jefe_config"], str):
+        try:
+            config_data["jefe_config"] = json.loads(config_data["jefe_config"]) if config_data["jefe_config"] else {}
+        except json.JSONDecodeError:
+            config_data["jefe_config"] = {}
     config_data["use_refuerzo"] = "Refuerzo" in schedule
     existing_meta = json.loads(row["metadata"]) if row["metadata"] else {}
     special_days = _normalize_special_days(existing_meta.get("special_days", {}))
