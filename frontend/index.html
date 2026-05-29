@@ -100,15 +100,20 @@
             </div>
 
             <div class="sidebar-footer">
-                <div class="sidebar-row">
-                    <button id="btnSundayRotation" class="btn-action sidebar-row-btn" onclick="openSundayRotationModal()">
-                        <i class="fa-solid fa-arrows-spin" style="color: #14b8a6;"></i>
-                        <span>Cola Domingos</span>
-                    </button>
-                    <button id="btnHistoryMatrix" class="btn-action sidebar-row-btn history-btn" onclick="openHistoryMatrix()">
-                        <i class="fa-solid fa-clock-rotate-left"></i>
-                        <span>Historial</span>
-                    </button>
+                <div class="sidebar-group">
+                    <div class="sidebar-group-label">
+                        <i class="fa-solid fa-rotate-left" style="font-size: 0.65rem;"></i> Rotación
+                    </div>
+                    <div class="sidebar-row">
+                        <button id="btnSundayRotation" class="btn-action sidebar-row-btn" onclick="openSundayRotationModal()" title="Ver quién descansa este domingo">
+                            <i class="fa-solid fa-arrows-spin" style="color: #14b8a6;"></i>
+                            <span>Cola Domingos</span>
+                        </button>
+                        <button id="btnHistoryMatrix" class="btn-action sidebar-row-btn history-btn" onclick="openHistoryMatrix()" title="Historial de turnos por semana">
+                            <i class="fa-solid fa-clock-rotate-left"></i>
+                            <span>Historial</span>
+                        </button>
+                    </div>
                 </div>
                 
                 <button class="btn-generate" onclick="generateSchedule()">
@@ -225,6 +230,30 @@
                         </button>
                     </div>
                     <div id="historyList" class="history-list"></div>
+
+                    <!-- CARPETAS POR AÑO -->
+                    <div class="folders-section">
+                        <div class="folders-header">
+                            <h3><i class="fa-solid fa-folder-tree"></i> Carpetas</h3>
+                            <div class="folders-header-actions">
+                                <div class="folders-create-wrap">
+                                    <input type="text" id="folderNameInput" class="form-input-sm" placeholder="2026" style="width:80px; display:none;" onkeydown="if(event.key==='Enter')createFolder()" />
+                                    <button class="btn-action btn-sm" onclick="toggleFolderCreate()" id="btnToggleFolderCreate" title="Crear carpeta nueva">
+                                        <i class="fa-solid fa-folder-plus"></i> Nueva
+                                    </button>
+                                </div>
+                                <button class="btn-action btn-sm" onclick="loadFolders()"><i class="fa-solid fa-rotate"></i></button>
+                                <i class="fa-solid fa-chevron-down folders-arrow" id="foldersArrow" onclick="toggleFoldersSection()"></i>
+                            </div>
+                        </div>
+                        <div class="folders-body" id="foldersBody">
+                            <div id="foldersList" class="folders-list">
+                                <div class="empty-msg" style="padding:1rem;text-align:center;color:var(--text-muted);font-size:0.85rem;">
+                                    <i class="fa-solid fa-folder-open"></i> Sin carpetas aún. Creá una para agrupar horarios del año.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
 
                     <!-- PAPELERA DE RECICLAJE -->
                     <div class="trash-section">

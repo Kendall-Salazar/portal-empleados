@@ -731,6 +731,7 @@ function openOverlay(id) {
         overlay.classList.remove('hidden');
         if (id === 'overlay-history') {
             loadHistory();
+            loadFolders();
             updateSidebarActive('nav-history');
         } else if (id === 'overlay-employees') {
             updateSidebarActive('nav-employees');
@@ -2591,6 +2592,14 @@ function renderHistoryList() {
                     <span class="h-date">${dateStr}</span>
                 </div>
                 <div class="h-actions">
+                    <i class="fa-solid fa-chevron-down arrow"></i>
+                    <button type="button" class="btn-icon delete" onclick="deleteHistory(${i}, event)">
+                        <i class="fa-solid fa-trash"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="history-body">
+                <div class="history-body-toolbar">
                     <button type="button" class="btn-icon history-action-button" onclick="validateHistory(${i}, event)" title="Validar Historial">
                         <i class="fa-solid fa-shield-check"></i>
                         <span>Validar</span>
@@ -2620,13 +2629,11 @@ function renderHistoryList() {
                         <i class="fa-solid fa-right-left"></i>
                         <span>Intercambiar</span>
                     </button>
-                    <i class="fa-solid fa-chevron-down arrow"></i>
-                    <button type="button" class="btn-icon delete" onclick="deleteHistory(${i}, event)">
-                        <i class="fa-solid fa-trash"></i>
+                    <button type="button" class="btn-icon history-action-button" onclick="addHistoryToFolder(${i}, event)" title="Agregar a carpeta">
+                        <i class="fa-solid fa-folder-plus"></i>
+                        <span>Carpeta</span>
                     </button>
                 </div>
-            </div>
-            <div class="history-body">
                 <div class="history-table-wrapper">
                     <table class="clean-table" id="hist-table-${i}">
                         <thead>
@@ -2665,6 +2672,7 @@ async function loadHistory(forceRefresh = false) {
         await loadTrash();
         renderHistoryList();
         renderTrashList();
+        await loadFolders();
     } catch (e) {
         console.error(e);
         listContainer.innerHTML = '<div class="error-msg">Error al cargar historial</div>';
@@ -4635,10 +4643,16 @@ async function downloadExcel(url) {
     }
 }
 
-function showExportConfirmationModal(filename) {
+function showExportConfirmationModal(filename, type = 'excel') {
     // Remove existing modal if any
     let existing = document.getElementById("exportConfirmModal");
     if (existing) existing.remove();
+
+    const titles = {
+        excel: { icon: 'fa-file-excel', color: '#10b981', msg: 'Excel exportado exitosamente' },
+        image: { icon: 'fa-image', color: '#3b82f6', msg: 'Imagen exportada exitosamente' },
+    };
+    const cfg = titles[type] || titles.excel;
 
     const modal = document.createElement("div");
     modal.id = "exportConfirmModal";
@@ -4647,12 +4661,12 @@ function showExportConfirmationModal(filename) {
         <div class="modal-dialog" style="max-width: 440px; animation: modalSpringUp 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.2) both;">
             <div class="modal-content" style="text-align: center; padding: 2rem;">
                 <div style="margin-bottom: 1.25rem;">
-                    <div style="width: 64px; height: 64px; border-radius: 50%; background: linear-gradient(135deg, #10b981, #059669); display: flex; align-items: center; justify-content: center; margin: 0 auto 1rem;">
+                    <div style="width: 64px; height: 64px; border-radius: 50%; background: linear-gradient(135deg, ${cfg.color}, ${cfg.color}dd); display: flex; align-items: center; justify-content: center; margin: 0 auto 1rem;">
                         <i class="fa-solid fa-check" style="font-size: 1.75rem; color: white;"></i>
                     </div>
-                    <h3 style="margin: 0 0 0.5rem; font-size: 1.2rem; color: var(--text-main);">Excel exportado exitosamente</h3>
+                    <h3 style="margin: 0 0 0.5rem; font-size: 1.2rem; color: var(--text-main);">${cfg.msg}</h3>
                     <p style="margin: 0; color: var(--text-muted); font-size: 0.9rem;">
-                        <i class="fa-solid fa-file-excel" style="color: #10b981; margin-right: 4px;"></i>
+                        <i class="fa-solid ${cfg.icon}" style="color: ${cfg.color}; margin-right: 4px;"></i>
                         ${_escapeHtml(filename)}
                     </p>
                 </div>
@@ -4780,19 +4794,28 @@ async function exportToImage() {
 
     try {
         const canvas = await renderScheduleCaptureCanvas(captureElement);
-        const link = document.createElement('a');
-        link.download = 'horario_completo.png';
+        const filename = 'horario_completo.png';
         const imgData = canvas.toDataURL("image/png");
+        const link = document.createElement('a');
+        link.download = filename;
         link.href = imgData;
         link.click();
 
-        fetch(`${API_URL}/export_image`, {
+        const saveRes = await fetch(`${API_URL}/export_image`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ image_data: imgData, filename: 'horario_completo.png' })
-        }).catch(err => console.error("Server backup failed:", err));
+            body: JSON.stringify({ image_data: imgData, filename })
+        });
+        if (!saveRes.ok) {
+            let detail = "No se pudo guardar la imagen en export_horarios.";
+            try { const err = await saveRes.json(); detail = err.detail || detail; } catch (_) {}
+            throw new Error(detail);
+        }
+
+        showExportConfirmationModal(filename, 'image');
     } catch (err) {
         console.error("Capture failed:", err);
+        alert(err.message || "Error al exportar imagen");
     }
 }
 
@@ -5823,7 +5846,7 @@ window.exportHistoryImage = async function (index, event) {
             throw new Error(detail);
         }
 
-        setStatusMessage("Imagen exportada y guardada en export_horarios.", "success");
+        showExportConfirmationModal(filename, 'image');
     } catch (err) {
         console.error("Capture failed:", err);
         setStatusMessage("No se pudo exportar la imagen del historial.", "error");
@@ -6027,6 +6050,7 @@ async function confirmSaveSchedule(event) {
         name,
         schedule: currentGeneratedSchedule,
         daily_tasks: currentDailyTasks,
+        metadata: currentMetadata || {},
         next_sunday_cycle_index: currentMetadata?.next_sunday_cycle_index,
         next_sunday_rotation_queue: currentMetadata?.next_sunday_rotation_queue,
         week_dates: weekDates,
@@ -6034,7 +6058,7 @@ async function confirmSaveSchedule(event) {
     };
 
     try {
-        const res = await fetch('/api/history', {
+        const res = await fetch('/api/save-history-with-folder-check', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -7502,7 +7526,6 @@ function closeIndividualHistory(event) {
 
 /* ─── Historial Matriz: todos los empleados × semanas ─── */
 async function openHistoryMatrix() {
-    // Cerrar si ya está abierto
     const existing = document.getElementById("history-matrix-modal");
     if (existing) { existing.remove(); return; }
 
@@ -7511,20 +7534,21 @@ async function openHistoryMatrix() {
         if (!resp.ok) throw new Error(`Error ${resp.status}`);
         const history = await resp.json();
 
-        // Tomar últimas 6 semanas
-        const last6 = (history || []).slice(-6).reverse();
+        // Últimas 8 semanas (alineado con ROTATION_HISTORY_WINDOW)
+        // La API devuelve ordenado DESC (más reciente primero), así que
+        // tomamos las primeras 8 (más recientes) y las invertimos a cronológico.
+        const weeks = (history || []).slice(0, 8).reverse();
 
-        if (last6.length === 0) {
+        if (weeks.length === 0) {
             alert("No hay historial disponible.");
             return;
         }
 
-        // Recopilar todos los empleados únicos
+        // Empleados únicos (solo activos)
         const empSet = new Set();
-        last6.forEach(entry => {
+        weeks.forEach(entry => {
             const sched = entry.schedule || {};
             Object.keys(sched).forEach(name => {
-                // Solo activos
                 const emp = window.employees ? window.employees.find(e => e.name === name) : null;
                 if (!emp || emp.activo !== false && emp.activo !== 0) {
                     empSet.add(name);
@@ -7533,95 +7557,227 @@ async function openHistoryMatrix() {
         });
         const empList = Array.from(empSet).sort();
 
-        // Clasificar shift types
+        // Clasificación de turnos
         function classifyShift(shift) {
-            if (!shift || shift === "OFF" || shift === "VAC" || shift === "PERM") return "libre";
+            if (!shift || shift === "OFF") return "off";        // día libre normal → NO se cuenta
+            if (shift === "VAC") return "vac";
+            if (shift === "PERM") return "perm";
             if (shift === "N_22-05") return "nocturno";
-            if (shift.startsWith("J_") || shift.startsWith("X_") || shift.startsWith("Q")) return "libre";
-            // Por hora: turnos antes de 12 son matutino
-            const hourMatch = shift.match(/(\d+)/);
+            const hourMatch = shift.match(/[_](\d+)/);
             if (hourMatch) {
                 const h = parseInt(hourMatch[1], 10);
                 return h < 12 ? "matutino" : "vespertino";
             }
-            return "libre";
+            return "off";
         }
 
-        function dominantType(days) {
-            const counts = { matutino: 0, vespertino: 0, nocturno: 0, libre: 0 };
+        // ── Config de tipos visibles ──
+        // `cls` se usa para el nombre de clase CSS del pill (type-pill-{cls})
+        const TYPE_CFG = {
+            matutino:    { fill: '#3b82f6', label: 'AM', name: 'Matutino',    short: 'AM',  cls: 'am' },
+            vespertino:  { fill: '#f97316', label: 'PM', name: 'Vespertino',  short: 'PM',  cls: 'pm' },
+            nocturno:    { fill: '#8b5cf6', label: 'N',  name: 'Nocturno',    short: 'N',   cls: 'n'  },
+            vac:         { fill: '#f59e0b', label: 'V',  name: 'Vacaciones',  short: 'VAC', cls: 'vac'},
+            perm:        { fill: '#ef4444', label: 'P',  name: 'Permiso',     short: 'PERM',cls: 'perm'},
+        };
+        const VISIBLE_TYPES = ["matutino","vespertino","nocturno","vac","perm"];
+
+        function countDayTypes(days) {
+            const counts = { matutino: 0, vespertino: 0, nocturno: 0, vac: 0, perm: 0, off: 0 };
             Object.values(days).forEach(s => {
                 const t = classifyShift(s);
                 counts[t] = (counts[t] || 0) + 1;
             });
-            const maxVal = Math.max(...Object.values(counts), 1);
-            const order = ["matutino", "vespertino", "nocturno", "libre"];
-            for (const t of order) {
-                if (counts[t] === maxVal) return t;
-            }
-            return "libre";
+            return counts;
         }
 
-        const typeLabel = { matutino: "AM", vespertino: "PM", nocturno: "N", libre: "—" };
-        const typeClass = { matutino: "cell-am", vespertino: "cell-pm", nocturno: "cell-n", libre: "cell-off" };
-        const typeFull = { matutino: "Matutino", vespertino: "Vespertino", nocturno: "Nocturno", libre: "Libre" };
+        function isConsistentWeek(counts) {
+            const active = VISIBLE_TYPES.filter(t => (counts[t] || 0) > 0);
+            return active.length === 1;
+        }
 
-        let html = `<div class="modal-overlay" id="history-matrix-overlay" onclick="closeHistoryMatrix(event)">
-            <div class="modal-content hist-matrix-content" onclick="event.stopPropagation()">
-                <div class="modal-header">
-                    <h3><i class="fa-solid fa-clock-rotate-left" style="color:var(--primary);"></i> Historial de Turnos</h3>
-                    <button class="modal-close" onclick="closeHistoryMatrix()">&times;</button>
+        /** Barra: opacidad 0.45 para colores más vívidos */
+        function buildBarData(days) {
+            const counts = countDayTypes(days);
+            const total = VISIBLE_TYPES.reduce((s, t) => s + (counts[t] || 0), 0) || 1;
+            let segments = '';
+            const parts = [];
+            VISIBLE_TYPES.forEach(t => {
+                const c = counts[t] || 0;
+                if (c === 0) return;
+                const pct = (c / total) * 100;
+                const cfg = TYPE_CFG[t];
+                segments += `<span style="width:${pct}%;background:${cfg.fill};opacity:0.45;"></span>`;
+                parts.push(`${c} ${cfg.label}`);
+            });
+            if (!segments) {
+                segments = `<span style="width:100%;background:var(--border);opacity:0.2;"></span>`;
+                parts.push('Sin datos');
+            }
+            return { segments, breakdown: parts.join(' · ') };
+        }
+
+        /** Pill si semana 100% consistente, mini bar si mixto */
+        function renderCellContent(days) {
+            const counts = countDayTypes(days);
+            if (isConsistentWeek(counts)) {
+                const type = VISIBLE_TYPES.find(t => counts[t] > 0) || 'off';
+                if (type === 'off') return `<span class="type-pill type-pill-off">—</span>`;
+                const cfg = TYPE_CFG[type];
+                return `<span class="type-pill type-pill-${cfg.cls}">${cfg.short}</span>`;
+            }
+            const { segments, breakdown } = buildBarData(days);
+            return `<div class="hist-bar" title="${breakdown}">${segments}</div>`;
+        }
+
+        /** Persona de libres: badge + hover reveal */
+        function renderLibresCell(days) {
+            const { segments, breakdown } = buildBarData(days);
+            return `<div class="hist-libres-wrap">
+                <span class="hist-libres-badge">LIBRES</span>
+                <div class="hist-libres-hover">
+                    <div class="hist-bar">${segments}</div>
+                    <div class="hist-bar-legend">${breakdown}</div>
                 </div>
-                <div class="modal-body" style="overflow-x:auto;">
-                    <table class="hist-matrix-table">
-                        <thead>
-                            <tr>
-                                <th class="sticky-emp">Empleado</th>`;
+            </div>`;
+        }
 
-        last6.forEach(w => {
+        
+
+        // ── Detectar persona de libres por semana ──
+        // Orden: 1) metadata.libres_person (solver) → 2) schedule N_22-05 (historiales viejos)
+        function findLibresForWeek(entry) {
+            const meta = entry.metadata || {};
+            if (meta.libres_person) return meta.libres_person;
+            // Fallback para historiales viejos: buscar N_22-05 en schedule
+            const sched = entry.schedule || {};
+            let best = null, bestCount = 0;
+            for (const [ename, days] of Object.entries(sched)) {
+                if (!days || typeof days !== 'object') continue;
+                let n = 0;
+                for (const shift of Object.values(days)) {
+                    if (shift === 'N_22-05') n++;
+                }
+                if (n > 0 && n <= 4 && n > bestCount) { bestCount = n; best = ename; }
+            }
+            return best;
+        }
+        const empCache = window.employees || [];
+        const libresByWeek = [];
+        weeks.forEach((entry, wi) => {
+            const person = findLibresForWeek(entry);
+            if (person) {
+                libresByWeek.push({ weekIdx: wi, label: entry.name || entry.nombre || `Semana`, person });
+            }
+        });
+        const libresPersonMap = {};
+        libresByWeek.forEach(lb => { libresPersonMap[lb.weekIdx] = lb.person; });
+
+        // ── Detectar empleados con horario fijo (no mostrar pill/barra) ──
+        function isFixedScheduleEmployee(name) {
+            if (name === 'Refuerzo') return true;
+            const emp = empCache.find(e => e.name === name);
+            if (!emp || !emp.fixed_shifts) return false;
+            const working = Object.values(emp.fixed_shifts).filter(s => s && s !== 'OFF' && s !== 'VAC' && s !== 'PERM');
+            return working.length >= 5;
+        }
+
+        // ── Modal HTML ──
+        let html = `<div class="modal-backdrop" id="history-matrix-backdrop">
+            <div class="modal-dialog large" style="max-width: 900px;">
+                <div class="modal-header-simple">
+                    <h3><i class="fa-solid fa-clock-rotate-left" style="color:var(--primary);"></i> Historial de Turnos</h3>
+                    <button class="close-icon" onclick="closeHistoryMatrix()"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+                <div class="modal-body-scroll" style="padding: 1.25rem 1.5rem;">`;
+
+        // ── Sección: Persona de Libres ──
+        if (libresByWeek.length > 0) {
+            html += `<div style="background: var(--primary-subtle); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 0.85rem 1rem; margin-bottom: 1.25rem; display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem;">
+                <span style="font-weight: 700; font-size: var(--fs-sm); color: var(--primary); white-space: nowrap;">
+                    <i class="fa-solid fa-people-arrows"></i> Persona de Libres:
+                </span>`;
+            libresByWeek.forEach(lb => {
+                html += `<span style="background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.3rem 0.65rem; font-size: var(--fs-sm); white-space: nowrap;">
+                    <strong>${escapeHtml(lb.person)}</strong>
+                    <span style="color: var(--text-muted); margin-left: 0.3rem;">(${escapeHtml(lb.label)})</span>
+                </span>`;
+            });
+            html += `</div>`;
+        }
+
+        // ── Tabla Matriz ──
+        html += `<div style="overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius-md);">
+            <table class="hist-matrix-table" style="width: 100%; border-collapse: collapse; font-size: var(--fs-sm);">
+                <thead>
+                    <tr>
+                        <th class="sticky-emp" style="position: sticky; left: 0; z-index: 2; background: var(--bg-panel); padding: 0.6rem 0.75rem; text-align: left; font-weight: 700; color: var(--text-main); border-bottom: 2px solid var(--border); min-width: 130px;">Empleado</th>`;
+
+        weeks.forEach(w => {
             const label = w.name || w.nombre || `Semana`;
-            html += `<th class="week-col">${escapeHtml(label)}</th>`;
+            html += `<th class="week-col" style="padding: 0.6rem 0.5rem; text-align: center; font-weight: 600; color: var(--text-muted); border-bottom: 2px solid var(--border); font-size: var(--fs-xs); white-space: nowrap;">${escapeHtml(label)}</th>`;
         });
 
         html += `</tr></thead><tbody>`;
 
         empList.forEach(name => {
+            const skipCell = isFixedScheduleEmployee(name);
             html += `<tr>
-                <td class="sticky-emp"><span class="emp-name-cell">${escapeHtml(name)}</span></td>`;
-            last6.forEach(entry => {
-                const sched = entry.schedule || {};
-                const days = sched[name] || {};
-                const meta = entry.metadata || {};
-                
-                // Si la persona fue la de libres esta semana, mostrarlo
-                if (meta.libres_person === name) {
-                    html += `<td class="cell-libres" title="${escapeHtml(name)}: Persona de Libres esta semana">Libres</td>`;
+                <td class="sticky-emp" style="position: sticky; left: 0; z-index: 1; background: var(--bg-panel); padding: 0.5rem 0.75rem; font-weight: 600; color: var(--text-main); border-bottom: 1px solid var(--border);">
+                    <span>${escapeHtml(name)}</span>
+                </td>`;
+            weeks.forEach((entry, wi) => {
+                if (skipCell) {
+                    html += `<td style="padding: 0.3rem 0.4rem; border-bottom: 1px solid var(--border);"></td>`;
                     return;
                 }
-                
-                const d = dominantType(days);
-                const cls = typeClass[d] || "cell-off";
-                const label = typeLabel[d] || "—";
-                const title = typeFull[d] || "";
-                html += `<td class="${cls}" title="${escapeHtml(name)}: ${title}">${label}</td>`;
+                const sched = entry.schedule || {};
+                const days = sched[name] || {};
+                const weekLibres = libresPersonMap[wi];
+                if (weekLibres === name) {
+                    html += `<td style="padding: 0.3rem 0.4rem; border-bottom: 1px solid var(--border); vertical-align: middle; background: var(--success-subtle);">${renderLibresCell(days)}</td>`;
+                    return;
+                }
+                html += `<td style="padding: 0.3rem 0.4rem; border-bottom: 1px solid var(--border); vertical-align: middle;">${renderCellContent(days)}</td>`;
             });
             html += `</tr>`;
         });
 
-        html += `</tbody></table>
-                <div class="hist-matrix-legend">
-                    <span><span class="legend-swatch sw-am"></span> AM (Matutino)</span>
-                    <span><span class="legend-swatch sw-pm"></span> PM (Vespertino)</span>
-                    <span><span class="legend-swatch sw-n"></span> N (Nocturno)</span>
-                    <span><span class="legend-swatch sw-libres"></span> Libres (Persona de Libres)</span>
-                    <span><span class="legend-swatch sw-off"></span> — (Libre)</span>
-                </div>
-                <p class="helper-text" style="text-align:center;margin-top:0.75rem;">
+        html += `</tbody></table></div>`;
+
+        // ── Leyenda ──
+        html += `<div style="display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 1rem; padding: 0.75rem 1rem; background: var(--bg-app); border-radius: var(--radius-md); border: 1px solid var(--border); align-items: center;">
+            <span style="font-size: var(--fs-xs); font-weight: 600; color: var(--text-muted); margin-right: 0.25rem;">Leyenda:</span>
+            <span style="display: inline-flex; align-items: center; gap: 0.35rem; font-size: var(--fs-xs); color: var(--text-muted);">
+                <span style="width: 18px; height: 6px; border-radius: 3px; background: #3b82f6; opacity: 0.35;"></span> AM
+            </span>
+            <span style="display: inline-flex; align-items: center; gap: 0.35rem; font-size: var(--fs-xs); color: var(--text-muted);">
+                <span style="width: 18px; height: 6px; border-radius: 3px; background: #f97316; opacity: 0.35;"></span> PM
+            </span>
+            <span style="display: inline-flex; align-items: center; gap: 0.35rem; font-size: var(--fs-xs); color: var(--text-muted);">
+                <span style="width: 18px; height: 6px; border-radius: 3px; background: #8b5cf6; opacity: 0.35;"></span> N
+            </span>
+            <span style="display: inline-flex; align-items: center; gap: 0.35rem; font-size: var(--fs-xs); color: var(--text-muted);">
+                <span style="width: 18px; height: 6px; border-radius: 3px; background: #f59e0b; opacity: 0.35;"></span> VAC
+            </span>
+            <span style="display: inline-flex; align-items: center; gap: 0.35rem; font-size: var(--fs-xs); color: var(--text-muted);">
+                <span style="width: 18px; height: 6px; border-radius: 3px; background: #ef4444; opacity: 0.35;"></span> PERM
+            </span>
+            <span style="display: inline-flex; align-items: center; gap: 0.35rem; font-size: var(--fs-xs); color: var(--text-muted); margin-left: 0.5rem;">
+                <span style="display: inline-block; background: var(--success-subtle); color: var(--success); font-weight: 700; font-size: 0.55rem; padding: 1px 6px; border-radius: 4px; text-transform: uppercase;">Libres</span> Persona de Libres
+            </span>
+        </div>`;
+
+        // ── Helper text ──
+        html += `<p style="font-size: var(--fs-xs); color: var(--text-muted); text-align: center; margin-top: 0.75rem; margin-bottom: 0;">
                     <i class="fa-solid fa-info-circle"></i>
-                    Se muestra el tipo de turno dominante de cada semana.
-                    Turnos fijos (jefe) y de refuerzo no se cuentan.
-                    "Libres" indica que la persona fue asignada como cubierta de nocturnos esa semana.
+                    Los <strong>pills</strong> (AM / PM / N) indican semanas consistentes.
+                    La <strong>barra</strong> muestra la distribución cuando hay tipos mixtos (excluye días libres).
+                    Pasá el mouse sobre <strong>LIBRES</strong> para ver su distribución real.
                 </p>
-            </div></div></div>`;
+                </div>
+            </div>
+        </div>`;
 
         const container = document.createElement("div");
         container.id = "history-matrix-modal";
@@ -7638,5 +7794,250 @@ function closeHistoryMatrix(event) {
     if (event && event.target !== event.currentTarget) return;
     const modal = document.getElementById("history-matrix-modal");
     if (modal) modal.remove();
+}
+
+// ═══════════════════════════════════════════════
+// FOLDERS — carpetas por año
+// ═══════════════════════════════════════════════
+
+let foldersCache = [];
+
+function toggleFoldersSection() {
+    const body = document.getElementById("foldersBody");
+    const arrow = document.getElementById("foldersArrow");
+    if (!body || !arrow) return;
+    body.classList.toggle("hidden");
+    arrow.classList.toggle("rotated");
+}
+
+function toggleFolderCreate() {
+    const input = document.getElementById("folderNameInput");
+    const btn = document.getElementById("btnToggleFolderCreate");
+    if (!input || !btn) return;
+    const isHidden = input.style.display === "none" || !input.style.display;
+    input.style.display = isHidden ? "inline-block" : "none";
+    if (isHidden) { input.focus(); btn.innerHTML = '<i class="fa-solid fa-times"></i> Cancelar'; }
+    else { btn.innerHTML = '<i class="fa-solid fa-folder-plus"></i> Nueva'; }
+}
+
+async function createFolder() {
+    const input = document.getElementById("folderNameInput");
+    if (!input) return;
+    const name = input.value.trim();
+    if (!name) { alert("Ingresá un nombre para la carpeta (ej: 2026)."); return; }
+    try {
+        const res = await fetch('/api/folders', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name })
+        });
+        if (!res.ok) throw new Error(await res.text());
+        input.value = "";
+        input.style.display = "none";
+        document.getElementById("btnToggleFolderCreate").innerHTML = '<i class="fa-solid fa-folder-plus"></i> Nueva';
+        await loadFolders();
+        setStatusMessage(`Carpeta "${name}" creada.`, "success");
+    } catch (e) {
+        alert("Error al crear carpeta: " + e.message);
+    }
+}
+
+async function loadFolders() {
+    const container = document.getElementById("foldersList");
+    if (!container) return;
+    try {
+        const res = await fetch('/api/folders');
+        const folders = await res.json();
+        foldersCache = folders;
+        if (!folders.length) {
+            container.innerHTML = '<div class="empty-msg" style="padding:1rem;text-align:center;color:var(--text-muted);font-size:0.85rem;"><i class="fa-solid fa-folder-open"></i> Sin carpetas aún. Creá una para agrupar horarios del año.</div>';
+            return;
+        }
+        container.innerHTML = folders.map(f => `
+            <div class="folder-card">
+                <div class="folder-card-info" onclick="openFolderDetail(${f.id})" style="cursor:pointer;flex:1;">
+                    <div class="folder-card-icon"><i class="fa-solid fa-folder"></i></div>
+                    <div>
+                        <div class="folder-card-name">${escapeHtml(f.name)}</div>
+                        <div class="folder-card-count">${f.entry_count} horario${f.entry_count !== 1 ? 's' : ''}</div>
+                    </div>
+                </div>
+                <div class="folder-card-actions">
+                    <button class="btn-icon" onclick="event.stopPropagation();deleteFolder(${f.id})" title="Eliminar carpeta">
+                        <i class="fa-solid fa-trash"></i>
+                    </button>
+                </div>
+            </div>
+        `).join('');
+    } catch (e) {
+        console.error("Error loading folders:", e);
+        container.innerHTML = '<div class="error-msg">Error al cargar carpetas</div>';
+    }
+}
+
+async function deleteFolder(folderId) {
+    const folder = foldersCache.find(f => f.id === folderId);
+    const hasEntries = folder && folder.entry_count > 0;
+    let msg = `¿Eliminar la carpeta "${folder?.name || ''}"?`;
+    if (hasEntries) {
+        msg = `¡ATENCIÓN! La carpeta "${folder?.name || ''}" contiene ${folder.entry_count} horario(s).\n\n`;
+        msg += `Al eliminarla, TODOS los horarios se irán a la papelera por 7 días.\n\n`;
+        msg += `¿Estás ABSOLUTAMENTE seguro? (3 clics necesarios)`;
+    }
+    if (hasEntries) {
+        if (!confirm(msg)) return;
+        if (!confirm(`⚠️ CONFIRMACIÓN 2/3: ¿Seguro que querés eliminar "${folder?.name || ''}" con TODOS sus horarios?`)) return;
+        if (!confirm(`🚨 CONFIRMACIÓN 3/3: Esta acción es irreversible. ¿Eliminar definitivamente?`)) return;
+    } else {
+        if (!confirm(msg)) return;
+    }
+    try {
+        const res = await fetch(`/api/folders/${folderId}?purge=${hasEntries ? 'false' : 'false'}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error(await res.text());
+        await loadFolders();
+        setStatusMessage(hasEntries ? `Carpeta enviada a papelera.` : "Carpeta eliminada.", "success");
+    } catch (e) {
+        alert("Error: " + e.message);
+    }
+}
+
+async function openFolderDetail(folderId) {
+    const folder = foldersCache.find(f => f.id === folderId);
+    if (!folder) return;
+    try {
+        const res = await fetch(`/api/folders/${folderId}/entries`);
+        if (!res.ok) throw new Error(await res.text());
+        const entries = await res.json();
+
+        const existing = document.getElementById("folderDetailModal");
+        if (existing) existing.remove();
+
+        const modal = document.createElement("div");
+        modal.id = "folderDetailModal";
+        modal.className = "modal-backdrop";
+        modal.innerHTML = `
+            <div class="modal-dialog large" style="max-width: 600px;">
+                <div class="modal-header-simple">
+                    <h3><i class="fa-solid fa-folder-open" style="color:var(--primary);"></i> ${escapeHtml(folder.name)}</h3>
+                    <button class="close-icon" onclick="document.getElementById('folderDetailModal').remove()"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+                <div class="modal-body-scroll">
+                    ${entries.length === 0 ? '<p style="text-align:center;color:var(--text-muted);padding:2rem 0;">La carpeta está vacía.</p>' : ''}
+                    ${entries.map(e => `
+                        <div class="folder-detail-entry">
+                            <div>
+                                <span class="folder-detail-entry-name">${escapeHtml(e.name)}</span>
+                                <span class="folder-detail-entry-date">${e.timestamp ? new Date(e.timestamp).toLocaleDateString() : ''}</span>
+                            </div>
+                            <div style="display:flex;gap:0.4rem;">
+                                <button class="btn-icon" onclick="exportHistoryExcelByDbId(${e.db_id})" title="Exportar Excel">
+                                    <i class="fa-solid fa-file-excel"></i>
+                                </button>
+                                <button class="btn-icon" onclick="removeFromFolder(${folderId}, ${e.db_id})" title="Quitar de carpeta">
+                                    <i class="fa-solid fa-xmark" style="color:var(--danger);"></i>
+                                </button>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+                ${entries.length > 0 ? `
+                <div class="modal-actions-footer" style="justify-content:space-between;">
+                    <span style="font-size:0.8rem;color:var(--text-muted);">${entries.length} horario${entries.length !== 1 ? 's' : ''}</span>
+                    <button class="btn-action primary" onclick="exportFolderExcel(${folderId})">
+                        <i class="fa-solid fa-file-excel"></i> Exportar todo como Excel
+                    </button>
+                </div>` : ''}
+            </div>
+        `;
+        document.body.appendChild(modal);
+        modal.addEventListener("click", (e) => { if (e.target === modal) modal.remove(); });
+    } catch (e) {
+        alert("Error: " + e.message);
+    }
+}
+
+function addHistoryToFolder(i, event) {
+    event.stopPropagation();
+    const entry = historyEntriesCache[i];
+    if (!entry || !entry.db_id) {
+        alert("No se pudo identificar este historial.");
+        return;
+    }
+    if (!foldersCache || !foldersCache.length) {
+        alert("No hay carpetas creadas aún. Creá una carpeta primero.");
+        return;
+    }
+
+    // Remove existing modal if any
+    const existing = document.getElementById("addToFolderModal");
+    if (existing) existing.remove();
+
+    const modal = document.createElement("div");
+    modal.id = "addToFolderModal";
+    modal.className = "modal-backdrop";
+    modal.innerHTML = `
+        <div class="modal-dialog" style="max-width: 360px;">
+            <div class="modal-header-simple">
+                <h3>Agregar a carpeta</h3>
+                <button class="close-icon" onclick="document.getElementById('addToFolderModal').remove()"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-body-scroll" style="max-height: 60vh;">
+                ${foldersCache.map(f => `
+                    <div class="folder-select-item" onclick="addToFolder(${f.id}, ${entry.db_id}); document.getElementById('addToFolderModal').remove();" style="cursor:pointer;padding:0.6rem 0.8rem;display:flex;align-items:center;gap:0.5rem;border-bottom:1px solid var(--border);transition:background 0.15s;" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background='transparent'">
+                        <i class="fa-solid fa-folder" style="color:var(--primary);"></i>
+                        <span>${escapeHtml(f.name)}</span>
+                        <span style="margin-left:auto;font-size:0.75rem;color:var(--text-muted);">${f.entry_count} horario${f.entry_count !== 1 ? 's' : ''}</span>
+                    </div>
+                `).join('')}
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+    modal.addEventListener("click", (e) => { if (e.target === modal) modal.remove(); });
+}
+
+async function addToFolder(folderId, entryDbId) {
+    try {
+        const res = await fetch(`/api/folders/${folderId}/entries`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ entry_ids: [entryDbId] })
+        });
+        if (!res.ok) throw new Error(await res.text());
+        setStatusMessage("Horario agregado a carpeta.", "success");
+        await loadFolders();
+    } catch (e) {
+        alert("Error: " + e.message);
+    }
+}
+
+async function removeFromFolder(folderId, entryDbId) {
+    try {
+        const res = await fetch(`/api/folders/${folderId}/entries/${entryDbId}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error(await res.text());
+        openFolderDetail(folderId); // Refresh
+        await loadFolders();
+    } catch (e) {
+        alert("Error: " + e.message);
+    }
+}
+
+async function exportFolderExcel(folderId) {
+    try {
+        const res = await fetch(`/api/folders/${folderId}/export-excel`);
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || "Error al exportar");
+        }
+        const data = await res.json();
+        showExportConfirmationModal(data.filename, 'excel');
+    } catch (e) {
+        alert(e.message);
+    }
+}
+
+async function exportHistoryExcelByDbId(dbId) {
+    // Reuse the existing export flow via the /api/export_excel endpoint
+    window.open(`/api/export_excel?history_db_id=${dbId}`, '_blank');
 }
 

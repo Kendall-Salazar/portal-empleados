@@ -251,6 +251,30 @@ body {
     margin-top: auto;
 }
 
+.sidebar-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.sidebar-group-label {
+    font-size: 0.6rem;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    color: var(--text-dim);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.3rem;
+    padding: 0.15rem 0.4rem;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    width: fit-content;
+    margin: 0 auto;
+    text-transform: uppercase;
+}
+
 .sidebar-row {
     display: flex;
     gap: 0.5rem;
@@ -378,6 +402,101 @@ body {
     background: rgba(16, 185, 129, 0.12);
 }
 
+/* ── Type pills (consistent week) ── */
+.type-pill {
+    display: inline-block;
+    padding: 1px 10px;
+    border-radius: 10px;
+    font-weight: 700;
+    font-size: 0.68rem;
+    letter-spacing: 0.4px;
+    line-height: 1.6;
+}
+.type-pill-am    { background: rgba(59,130,246,0.15); color: #3b82f6; border: 1px solid rgba(59,130,246,0.25); }
+.type-pill-pm    { background: rgba(249,115,22,0.15); color: #f97316; border: 1px solid rgba(249,115,22,0.25); }
+.type-pill-n     { background: rgba(139,92,246,0.15); color: #8b5cf6; border: 1px solid rgba(139,92,246,0.25); }
+.type-pill-vac   { background: rgba(245,158,11,0.15);  color: #d97706; border: 1px solid rgba(245,158,11,0.25); }
+.type-pill-perm  { background: rgba(239,68,68,0.12);   color: #ef4444; border: 1px solid rgba(239,68,68,0.2); }
+.type-pill-off   { background: rgba(107,114,128,0.1);  color: #6b7280; border: 1px solid rgba(107,114,128,0.15); }
+
+.dark-mode .type-pill-am    { background: rgba(59,130,246,0.18); }
+.dark-mode .type-pill-pm    { background: rgba(249,115,22,0.18); }
+.dark-mode .type-pill-n     { background: rgba(139,92,246,0.18); }
+.dark-mode .type-pill-vac   { background: rgba(245,158,11,0.18); }
+.dark-mode .type-pill-perm  { background: rgba(239,68,68,0.15); }
+.dark-mode .type-pill-off   { background: rgba(107,114,128,0.08); }
+
+/* ── Mini stacked bar (AM/PM/N distribution) ── */
+.hist-bar {
+    display: flex;
+    height: 7px;
+    border-radius: 4px;
+    overflow: hidden;
+    min-width: 50px;
+    max-width: 90px;
+    margin: 0 auto;
+    background: rgba(0,0,0,0.04);
+    cursor: default;
+}
+
+.dark-mode .hist-bar {
+    background: rgba(255,255,255,0.04);
+}
+
+.hist-bar span {
+    display: block;
+    height: 100%;
+    transition: opacity 0.15s;
+}
+
+.hist-bar:hover span {
+    opacity: 0.7 !important;
+}
+
+/* ── Bar legend text (below bar) ── */
+.hist-bar-legend {
+    font-size: 0.55rem;
+    color: var(--text-muted);
+    text-align: center;
+    margin-top: 3px;
+    white-space: nowrap;
+    line-height: 1.2;
+}
+
+/* ── Libres badge + hover reveal ── */
+.hist-libres-badge {
+    display: inline-block;
+    background: var(--success-subtle);
+    color: var(--success);
+    font-weight: 700;
+    font-size: 0.65rem;
+    letter-spacing: 0.3px;
+    padding: 2px 8px;
+    border-radius: 5px;
+    text-transform: uppercase;
+}
+
+.hist-libres-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 32px;
+}
+
+.hist-libres-hover {
+    display: none;
+    flex-direction: column;
+    align-items: center;
+}
+
+.hist-libres-wrap:hover .hist-libres-badge {
+    display: none;
+}
+
+.hist-libres-wrap:hover .hist-libres-hover {
+    display: flex;
+}
 .dark-mode .cell-am {
     background: rgba(59, 130, 246, 0.12);
 }
@@ -1253,6 +1372,17 @@ tr:hover td {
     visibility: visible;
 }
 
+/* Toolbar dentro del body (solo visible al expandir) */
+.history-body-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1.25rem;
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+    background: rgba(0, 0, 0, 0.01);
+}
+
 /* Animación suave cuando se ocultan los items */
 .history-item {
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.25s ease;
@@ -1391,6 +1521,143 @@ tr:hover td {
     display: flex;
     align-items: center;
     gap: 0.5rem;
+}
+
+/* ── Folders Section ── */
+.folders-section {
+    margin-top: 1rem;
+    border-top: 1px solid var(--border);
+    padding-top: 0.75rem;
+}
+
+.folders-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.5rem 0.75rem;
+    border-radius: 8px;
+}
+
+.folders-header h3 {
+    margin: 0;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.folders-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.folders-create-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+}
+
+.folders-arrow {
+    transition: transform 0.2s;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    cursor: pointer;
+}
+
+.folders-arrow.rotated {
+    transform: rotate(180deg);
+}
+
+.folders-body {
+    transition: max-height 0.3s ease;
+}
+
+.folders-body.hidden {
+    display: none;
+}
+
+.folders-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.5rem 0;
+}
+
+.folder-card {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 0.75rem 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    transition: all 0.15s;
+}
+
+.folder-card:hover {
+    border-color: var(--primary);
+    box-shadow: var(--shadow-sm);
+}
+
+.folder-card-info {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.folder-card-icon {
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    background: var(--primary-subtle);
+    color: var(--primary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1rem;
+}
+
+.folder-card-name {
+    font-weight: 700;
+    font-size: 0.95rem;
+    color: var(--text-main);
+}
+
+.folder-card-count {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+}
+
+.folder-card-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+/* ── Folder detail modal ── */
+.folder-detail-entry {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-panel);
+    margin-bottom: 0.5rem;
+}
+
+.folder-detail-entry-name {
+    font-weight: 600;
+    font-size: 0.88rem;
+    color: var(--text-main);
+}
+
+.folder-detail-entry-date {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-left: 0.5rem;
 }
 
 .btn-restore {

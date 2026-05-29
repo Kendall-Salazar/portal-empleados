@@ -450,7 +450,7 @@ def _history_entry_display_name(info):
     return "semana previa"
 
 
-def _prepare_history_for_solver(history_list, target_week_start=None, use_history=True, max_entries=3):
+def _prepare_history_for_solver(history_list, target_week_start=None, use_history=True, max_entries=8):
     if not use_history:
         return [], {
             "enabled": False,
@@ -930,6 +930,7 @@ def solve_schedule(request: SolverRequest):
         history_list,
         target_week_start=request.target_week_start,
         use_history=config_data.get("use_history", True),
+        max_entries=8,
     )
     
     # Instantiate Scheduler
@@ -1256,6 +1257,284 @@ def save_history(entry: HistoryEntry):
     _last_generated_preview = None
 
     return {"status": "Saved", "history_len": total}
+
+# ═══════════════════════════════════════════════════════════
+# FOLDERS — carpetas para agrupar horarios del año
+# ═══════════════════════════════════════════════════════════
+
+class FolderCreate(BaseModel):
+    name: str
+
+class FolderAddEntries(BaseModel):
+    entry_ids: List[int]
+
+@app.get("/api/folders")
+def list_folders():
+    """Lista todas las carpetas activas con conteo de entradas."""
+    conn = _get_conn()
+    rows = conn.execute("""
+        SELECT f.*, COUNT(fe.id) AS entry_count
+        FROM folders f
+        LEFT JOIN folder_entries fe ON fe.folder_id = f.id
+        WHERE f.deleted = 0
+        GROUP BY f.id
+        ORDER BY f.name DESC
+    """).fetchall()
+    conn.close()
+    return [{
+        "id": r["id"],
+        "name": r["name"],
+        "created_at": r["created_at"],
+        "entry_count": r["entry_count"]
+    } for r in rows]
+
+@app.post("/api/folders")
+def create_folder(body: FolderCreate):
+    """Crea una carpeta nueva."""
+    conn = _get_conn()
+    now = datetime.datetime.now().isoformat()
+    conn.execute(
+        "INSERT INTO folders (name, created_at) VALUES (?, ?)",
+        (body.name.strip(), now)
+    )
+    folder_id = conn.lastrowid
+    conn.commit()
+    conn.close()
+    return {"id": folder_id, "name": body.name.strip(), "created_at": now, "entry_count": 0}
+
+@app.delete("/api/folders/{folder_id}")
+def delete_folder(folder_id: int, purge: bool = False):
+    """Elimina lógico (papelera 7d) o físico si purge=true."""
+    conn = _get_conn()
+    row = conn.execute("SELECT id FROM folders WHERE id = ? AND deleted = 0", (folder_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "Carpeta no encontrada")
+    if purge:
+        # Eliminación física: borrar entradas + carpeta
+        conn.execute("DELETE FROM folder_entries WHERE folder_id = ?", (folder_id,))
+        conn.execute("DELETE FROM folders WHERE id = ?", (folder_id,))
+    else:
+        now = datetime.datetime.now().isoformat()
+        conn.execute("UPDATE folders SET deleted = 1, deleted_at = ? WHERE id = ?", (now, folder_id))
+    conn.commit()
+    conn.close()
+    return {"status": "deleted"}
+
+@app.get("/api/folders/trash")
+def list_folder_trash():
+    """Lista carpetas en papelera."""
+    conn = _get_conn()
+    rows = conn.execute("""
+        SELECT f.*, COUNT(fe.id) AS entry_count
+        FROM folders f
+        LEFT JOIN folder_entries fe ON fe.folder_id = f.id
+        WHERE f.deleted = 1
+        GROUP BY f.id
+        ORDER BY f.deleted_at DESC
+    """).fetchall()
+    conn.close()
+    return [{
+        "id": r["id"],
+        "name": r["name"],
+        "created_at": r["created_at"],
+        "deleted_at": r["deleted_at"],
+        "entry_count": r["entry_count"]
+    } for r in rows]
+
+@app.post("/api/folders/{folder_id}/restore")
+def restore_folder(folder_id: int):
+    """Restaura carpeta de la papelera."""
+    conn = _get_conn()
+    conn.execute("UPDATE folders SET deleted = 0, deleted_at = NULL WHERE id = ?", (folder_id,))
+    conn.commit()
+    conn.close()
+    return {"status": "restored"}
+
+@app.post("/api/folders/{folder_id}/entries")
+def add_folder_entries(folder_id: int, body: FolderAddEntries):
+    """Agrega horarios a una carpeta."""
+    conn = _get_conn()
+    folder = conn.execute("SELECT id FROM folders WHERE id = ? AND deleted = 0", (folder_id,)).fetchone()
+    if not folder:
+        conn.close()
+        raise HTTPException(404, "Carpeta no encontrada")
+    added = 0
+    for eid in body.entry_ids:
+        # Verificar que el horario existe y no está en la carpeta ya
+        existing = conn.execute(
+            "SELECT id FROM folder_entries WHERE folder_id = ? AND history_entry_id = ?",
+            (folder_id, eid)
+        ).fetchone()
+        if not existing:
+            conn.execute(
+                "INSERT INTO folder_entries (folder_id, history_entry_id) VALUES (?, ?)",
+                (folder_id, eid)
+            )
+            added += 1
+    conn.commit()
+    conn.close()
+    return {"status": "ok", "added": added}
+
+@app.delete("/api/folders/{folder_id}/entries/{entry_id}")
+def remove_folder_entry(folder_id: int, entry_id: int):
+    """Quita un horario de la carpeta."""
+    conn = _get_conn()
+    conn.execute(
+        "DELETE FROM folder_entries WHERE folder_id = ? AND history_entry_id = ?",
+        (folder_id, entry_id)
+    )
+    conn.commit()
+    conn.close()
+    return {"status": "removed"}
+
+@app.get("/api/folders/{folder_id}/entries")
+def get_folder_entries(folder_id: int):
+    """Lista horarios dentro de una carpeta (orden cronológico ascendente)."""
+    conn = _get_conn()
+    rows = conn.execute("""
+        SELECT h.id, h.nombre, h.horario, h.tareas, h.metadata, h.timestamp
+        FROM folder_entries fe
+        JOIN horarios_generados h ON h.id = fe.history_entry_id
+        WHERE fe.folder_id = ? AND h.deleted = 0
+        ORDER BY h.timestamp ASC
+    """, (folder_id,)).fetchall()
+    conn.close()
+    return [{
+        "db_id": r["id"],
+        "name": r["nombre"],
+        "schedule": json.loads(r["horario"]) if r["horario"] else {},
+        "daily_tasks": json.loads(r["tareas"]) if r["tareas"] else {},
+        "metadata": json.loads(r["metadata"]) if r["metadata"] else {},
+        "timestamp": r["timestamp"] or "",
+    } for r in rows]
+
+@app.get("/api/folders/{folder_id}/export-excel")
+def export_folder_excel(folder_id: int):
+    """Exporta todos los horarios de una carpeta como Excel multi-sheet."""
+    from openpyxl.styles import Border, Side
+    from scheduler_engine import DAYS
+
+    conn = _get_conn()
+    folder = conn.execute("SELECT name FROM folders WHERE id = ? AND deleted = 0", (folder_id,)).fetchone()
+    if not folder:
+        conn.close()
+        raise HTTPException(404, "Carpeta no encontrada")
+
+    rows = conn.execute("""
+        SELECT h.id, h.nombre, h.horario, h.tareas, h.metadata, h.timestamp
+        FROM folder_entries fe
+        JOIN horarios_generados h ON h.id = fe.history_entry_id
+        WHERE fe.folder_id = ? AND h.deleted = 0
+        ORDER BY h.timestamp ASC
+    """, (folder_id,)).fetchall()
+    conn.close()
+
+    if not rows:
+        raise HTTPException(400, "La carpeta está vacía")
+
+    import openpyxl
+    wb = openpyxl.Workbook()
+    # Eliminar hoja por defecto
+    wb.remove(wb.active)
+    thin_border = Border(
+        left=Side(style='thin', color='CCCCCC'),
+        right=Side(style='thin', color='CCCCCC'),
+        top=Side(style='thin', color='CCCCCC'),
+        bottom=Side(style='thin', color='CCCCCC')
+    )
+
+    for r in rows:
+        sheet_name = r["nombre"][:31]  # Excel max sheet name length
+        ws = wb.create_sheet(title=sheet_name)
+        schedule = json.loads(r["horario"]) if r["horario"] else {}
+        tasks = json.loads(r["tareas"]) if r["tareas"] else {}
+
+        employees = sorted(schedule.keys())
+        # Header row
+        headers = ["Empleado"] + DAYS + ["Horas"]
+        for ci, h in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=ci, value=h)
+            cell.font = openpyxl.styles.Font(bold=True, size=10)
+            cell.border = thin_border
+
+        for ri, emp in enumerate(employees, 2):
+            ws.cell(row=ri, column=1, value=emp).border = thin_border
+            total_hours = 0
+            for di, day in enumerate(DAYS, 2):
+                shift = (schedule.get(emp) or {}).get(day, "")
+                cell = ws.cell(row=ri, column=di, value=shift)
+                cell.border = thin_border
+                # Calculate hours if shift is working
+                shift_upper = shift.upper() if shift else ""
+                if shift_upper and shift_upper not in ("OFF", "VAC", "PERM", ""):
+                    try:
+                        from scheduler_engine import get_shift_hours_set
+                        hrs = get_shift_hours_set(shift_upper)
+                        if hrs:
+                            total_hours += len(hrs)
+                    except Exception:
+                        pass
+            ws.cell(row=ri, column=len(DAYS) + 2, value=total_hours).border = thin_border
+
+        # Auto-width columns
+        for col in ws.columns:
+            max_len = max((len(str(c.value or "")) for c in col), default=8)
+            ws.column_dimensions[col[0].column_letter].width = min(max_len + 3, 30)
+
+    folder_name = folder["name"]
+    filename = f"HORARIOS {folder_name}.xlsx"
+    export_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "export_horarios")
+    os.makedirs(export_dir, exist_ok=True)
+    filepath = os.path.join(export_dir, filename)
+    wb.save(filepath)
+
+    return {"filename": filename, "path": filepath, "sheets": len(rows)}
+
+@app.post("/api/save-history-with-folder-check")
+def save_history_with_folder_check(entry: HistoryEntry):
+    """Igual que save_history pero auto-asigna a carpeta del año si existe."""
+    result = save_history(entry)
+    if result.get("status") != "Saved":
+        return result
+
+    # Inferir año desde week_dates o timestamp
+    year = None
+    wd = (entry.week_dates or {})
+    for v in wd.values():
+        if v and "/" in str(v):
+            parts = str(v).split("/")
+            if len(parts) == 3:
+                try:
+                    year = int(parts[2])
+                    break
+                except ValueError:
+                    pass
+    if not year and entry.timestamp:
+        try:
+            year = datetime.datetime.fromisoformat(entry.timestamp).year
+        except Exception:
+            pass
+
+    if year:
+        conn = _get_conn()
+        folder = conn.execute(
+            "SELECT id FROM folders WHERE name = ? AND deleted = 0", (str(year),)
+        ).fetchone()
+        if folder:
+            # Obtener el id del horario recién guardado
+            row = conn.execute(
+                "SELECT id FROM horarios_generados WHERE deleted = 0 ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            if row:
+                conn.execute(
+                    "INSERT OR IGNORE INTO folder_entries (folder_id, history_entry_id) VALUES (?, ?)",
+                    (folder["id"], row["id"])
+                )
+            conn.commit()
+        conn.close()
+
+    return result
 
 # Orden alineado con fetchHistoryEntries() en el frontend: más reciente primero (timestamp, luego id).
 _HISTORY_LIST_ORDER = "timestamp DESC, id DESC"

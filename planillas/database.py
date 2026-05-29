@@ -211,6 +211,22 @@ def init_db():
             deleted_at TEXT
         );
 
+        CREATE TABLE IF NOT EXISTS folders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            deleted INTEGER DEFAULT 0,
+            deleted_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS folder_entries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            folder_id INTEGER NOT NULL,
+            history_entry_id INTEGER NOT NULL,
+            FOREIGN KEY (folder_id) REFERENCES folders(id),
+            FOREIGN KEY (history_entry_id) REFERENCES horarios_generados(id)
+        );
+
         -- ══ SALARIOS MENSUALES (para aguinaldo) ══
         CREATE TABLE IF NOT EXISTS salarios_mensuales (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

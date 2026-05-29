@@ -29,7 +29,7 @@ IGNORED_ROTATION_SHIFTS = frozenset({"OFF", "VAC", "PERM", "N_22-05"})
 
 # Ventana de semanas que se usa para rachas AM/PM y rotación de domingos.
 # Se usa en: build_rotation_history_context, recent_entries, Sunday rotation scan.
-ROTATION_HISTORY_WINDOW = 6
+ROTATION_HISTORY_WINDOW = 8
 
 HEAVY_EXTENDED_SHIFTS = frozenset({
     "J_07-17",

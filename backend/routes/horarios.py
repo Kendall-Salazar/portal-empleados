@@ -54,7 +54,7 @@ except (ImportError, AttributeError):
     def _normalize_special_days(special_days):
         return special_days if isinstance(special_days, dict) else {}
     
-    def _prepare_history_for_solver(history_list, target_week_start=None, use_history=True, max_entries=3):
+    def _prepare_history_for_solver(history_list, target_week_start=None, use_history=True, max_entries=8):
         return [], {"enabled": False, "label": "Mock", "selection_fallback": False}
 
 router = APIRouter(prefix="/api", tags=["horarios"])
@@ -154,6 +154,7 @@ def solve_schedule(request: SolverRequest):
         history_list,
         target_week_start=request.target_week_start,
         use_history=config_data.get("use_history", True),
+        max_entries=8,
     )
     
     # Instantiate Scheduler
