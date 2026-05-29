@@ -1,14 +1,11 @@
 """API router for employees endpoints."""
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
 from typing import List, Dict
 import json
 import sys
 import os
 
 # Import plan_db directly
-import sys
-import os
 _backend_dir = os.path.dirname(os.path.abspath(__file__))
 _root_dir = os.path.abspath(os.path.join(_backend_dir, ".."))
 _planillas_dir = os.path.join(_root_dir, "planillas")
@@ -16,23 +13,9 @@ if os.path.exists(_planillas_dir) and _planillas_dir not in sys.path:
     sys.path.insert(0, _planillas_dir)
 import database as plan_db
 
+from .shared_models import Employee
+
 router = APIRouter(prefix="/api", tags=["empleados"])
-
-
-# Models
-class Employee(BaseModel):
-    name: str
-    gender: str = "M"
-    can_do_night: bool = True
-    allow_no_rest: bool = False
-    forced_libres: bool = False
-    forced_quebrado: bool = False
-    is_jefe_pista: bool = False
-    is_practicante: bool = False
-    strict_preferences: bool = False
-    activo: bool = True
-    incluir_en_horario: bool = True
-    fixed_shifts: Dict[str, str] = Field(default_factory=dict)
 
 
 # Endpoints
@@ -57,6 +40,7 @@ def get_employees(include_inactive: bool = False):
             "allow_no_rest": bool(e.get("allow_no_rest", 0)),
             "forced_libres": bool(e.get("forced_libres", 0)),
             "forced_quebrado": bool(e.get("forced_quebrado", 0)),
+            "forced_quebrado_partial": bool(e.get("forced_quebrado_partial", 0)),
             "is_jefe_pista": bool(e.get("es_jefe_pista", 0)),
             "is_practicante": bool(e.get("es_practicante", 0)),
             "strict_preferences": bool(e.get("strict_preferences", 0)),
@@ -86,8 +70,10 @@ def update_employees(employees: List[Employee]):
                 puede_nocturno=1 if e.can_do_night else 0,
                 forced_libres=1 if e.forced_libres else 0,
                 forced_quebrado=1 if e.forced_quebrado else 0,
+                forced_quebrado_partial=1 if e.forced_quebrado_partial else 0,
                 allow_no_rest=1 if e.allow_no_rest else 0,
                 es_jefe_pista=1 if e.is_jefe_pista else 0,
+                es_practicante=1 if e.is_practicante else 0,
                 strict_preferences=1 if e.strict_preferences else 0,
                 incluir_en_horario=1 if e.incluir_en_horario else 0,
                 turnos_fijos=json.dumps(e.fixed_shifts),
@@ -100,8 +86,10 @@ def update_employees(employees: List[Employee]):
                 puede_nocturno=1 if e.can_do_night else 0,
                 forced_libres=1 if e.forced_libres else 0,
                 forced_quebrado=1 if e.forced_quebrado else 0,
+                forced_quebrado_partial=1 if e.forced_quebrado_partial else 0,
                 allow_no_rest=1 if e.allow_no_rest else 0,
                 es_jefe_pista=1 if e.is_jefe_pista else 0,
+                es_practicante=1 if e.is_practicante else 0,
                 strict_preferences=1 if e.strict_preferences else 0,
                 incluir_en_horario=1 if e.incluir_en_horario else 0,
                 turnos_fijos=json.dumps(e.fixed_shifts),
@@ -133,8 +121,10 @@ def update_single_employee(name: str, emp: Employee):
         puede_nocturno=1 if emp.can_do_night else 0,
         forced_libres=1 if emp.forced_libres else 0,
         forced_quebrado=1 if emp.forced_quebrado else 0,
+        forced_quebrado_partial=1 if emp.forced_quebrado_partial else 0,
         allow_no_rest=1 if emp.allow_no_rest else 0,
         es_jefe_pista=1 if emp.is_jefe_pista else 0,
+        es_practicante=1 if emp.is_practicante else 0,
         strict_preferences=1 if emp.strict_preferences else 0,
         incluir_en_horario=1 if emp.incluir_en_horario else 0,
         turnos_fijos=json.dumps(emp.fixed_shifts),

@@ -31,6 +31,7 @@
 
     --border: rgba(15, 23, 42, 0.09);
     --border-strong: rgba(15, 23, 42, 0.18);
+    --border-color: var(--border);
 
     /* Elevation */
     --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.06), 0 1px 2px -1px rgb(0 0 0 / 0.06);
@@ -69,6 +70,7 @@
 
     --border: #1e293b;
     --border-strong: #334155;
+    --border-color: var(--border);
 
     --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.3);
     --shadow-md: 0 4px 8px -2px rgb(0 0 0 / 0.4);

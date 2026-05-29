@@ -2220,7 +2220,8 @@ class ShiftScheduler:
         # para que un trabajador AM pueda cambiar a Q sin causar infeasibility.
         _q_shifts_active = (
             self.config.get('allow_collision_quebrado', False) or
-            any(self.emp_data[e].get('forced_quebrado_partial', False) for e in self.employees)
+            any(self.emp_data[e].get('forced_quebrado_partial', False) for e in self.employees) or
+            not standard_mode
         )
 
         # Cobertura
@@ -3045,12 +3046,11 @@ class ShiftScheduler:
                 # they are exempt from the 900k consistency penalty — the whole
                 # point is that Q is assigned only when necessary, so we must
                 # not make it prohibitively expensive through consistency.
-                working_q_today = None
-                if fq_partial:
-                    working_q_today = model.NewBoolVar(f"working_q_partial_{e}_{d}")
-                    q_sum_d = sum(x[(e, d, q)] for q in ["Q1_05-11+17-20", "Q2_07-11+17-20", "Q3_05-11+17-22"])
-                    model.Add(q_sum_d >= 1).OnlyEnforceIf(working_q_today)
-                    model.Add(q_sum_d == 0).OnlyEnforceIf(working_q_today.Not())
+                # O3. Consistency exemption for Q shifts (ALL employees, not just forced_quebrado_partial)
+                working_q_today = model.NewBoolVar(f"working_q_today_{e}_{d}")
+                q_sum_d = sum(x[(e, d, q)] for q in ["Q1_05-11+17-20", "Q2_07-11+17-20", "Q3_05-11+17-22"])
+                model.Add(q_sum_d >= 1).OnlyEnforceIf(working_q_today)
+                model.Add(q_sum_d == 0).OnlyEnforceIf(working_q_today.Not())
 
                 for s in turno_principal[e]:
                     usa_otro = model.NewBoolVar(f"usa_otro_{e}_{d}_{s}")
@@ -3066,9 +3066,8 @@ class ShiftScheduler:
                     if e in persona_hace_libres:
                         conditions_exento.append(persona_hace_libres[e])
 
-                    # forced_quebrado_partial: exempt from consistency on Q days
-                    if working_q_today is not None:
-                        conditions_exento.append(working_q_today)
+                    # Q-shift exemption: all employees exempt from consistency on Q days
+                    conditions_exento.append(working_q_today)
 
                     if primary_night and e == primary_night:
                         model.Add(exento == 1)

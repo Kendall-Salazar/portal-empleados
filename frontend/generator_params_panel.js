@@ -354,6 +354,8 @@
     };
 
     window.genPanelBatchForcedQuebrado = function (value) {
+        const label = value ? "quebrado total" : "quitar quebrado total";
+        if (!confirm(`¿Estás seguro de aplicar ${label} a TODOS los empleados visibles?`)) return;
         for (const id of Object.keys(genPanelRows)) {
             genPanelRows[id].flags.forced_quebrado = !!value;
             if (value) genPanelRows[id].flags.forced_quebrado_partial = false;
@@ -362,6 +364,8 @@
     };
 
     window.genPanelBatchForcedQuebradoPartial = function (value) {
+        const label = value ? "quebrado parcial" : "quitar quebrado parcial";
+        if (!confirm(`¿Estás seguro de aplicar ${label} a TODOS los empleados visibles?`)) return;
         for (const id of Object.keys(genPanelRows)) {
             genPanelRows[id].flags.forced_quebrado_partial = !!value;
             if (value) genPanelRows[id].flags.forced_quebrado = false;

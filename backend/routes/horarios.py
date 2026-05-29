@@ -1,61 +1,14 @@
 """API router for scheduling and history endpoints."""
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 import json
 import datetime
-import sys
-import os
 
-# Import directly
-import sys
-import os
-_backend_dir = os.path.dirname(os.path.abspath(__file__))
-_root_dir = os.path.abspath(os.path.join(_backend_dir, ".."))
-_planillas_dir = os.path.join(_root_dir, "planillas")
-if os.path.exists(_planillas_dir) and _planillas_dir not in sys.path:
-    sys.path.insert(0, _planillas_dir)
-
-from scheduler_engine import ShiftScheduler
 import database as plan_db
+from scheduler_engine import ShiftScheduler
 
-
-# Import helper functions from main - will be set after import
-def _get_helper_functions():
-    """Get helper functions from main module after it's fully loaded."""
-    import main as main_module
-    return (
-        main_module.plan_db,
-        main_module.load_db,
-        main_module.save_db,
-        main_module._normalize_special_days,
-        main_module._prepare_history_for_solver,
-    )
-
-
-# Try to get helpers, otherwise use fallbacks
-try:
-    import main as main_module
-    _plan_db = main_module.plan_db
-    _load_db = main_module.load_db
-    _save_db = main_module.save_db
-    _normalize_special_days = main_module._normalize_special_days
-    _prepare_history_for_solver = main_module._prepare_history_for_solver
-except (ImportError, AttributeError):
-    # Fallbacks
-    _plan_db = plan_db
-    
-    def _load_db():
-        return {"employees": [], "config": {}, "history_log": [], "last_result": {}}
-    
-    def _save_db(data):
-        pass
-    
-    def _normalize_special_days(special_days):
-        return special_days if isinstance(special_days, dict) else {}
-    
-    def _prepare_history_for_solver(history_list, target_week_start=None, use_history=True, max_entries=8):
-        return [], {"enabled": False, "label": "Mock", "selection_fallback": False}
+from .shared_models import Employee, Config, SolverRequest, HistoryEntry, PartialOffClassification, DepartedEmployee, PartialSolverRequest
+from .helpers import load_db, save_db, _normalize_special_days, _prepare_history_for_solver
 
 router = APIRouter(prefix="/api", tags=["horarios"])
 
@@ -63,62 +16,11 @@ router = APIRouter(prefix="/api", tags=["horarios"])
 _HISTORY_LIST_ORDER = "timestamp DESC, id DESC"
 _TRASH_LIST_ORDER = "deleted_at DESC, id DESC"
 
-
-# Models
-class Employee(BaseModel):
-    name: str
-    gender: str = "M"
-    can_do_night: bool = True
-    allow_no_rest: bool = False
-    forced_libres: bool = False
-    forced_quebrado: bool = False
-    is_jefe_pista: bool = False
-    is_practicante: bool = False
-    strict_preferences: bool = False
-    activo: bool = True
-    fixed_shifts: Dict[str, str] = Field(default_factory=dict)
-
-
-class Config(BaseModel):
-    night_mode: str = "rotation"
-    fixed_night_person: Optional[str] = None
-    allow_long_shifts: bool = False
-    use_refuerzo: bool = False
-    refuerzo_type: str = "personalizado"
-    refuerzo_start: str = "07:00"
-    refuerzo_end: str = "12:00"
-    allow_collision_quebrado: bool = False
-    collision_peak_priority: str = "pm"
-    use_history: bool = True
-    sunday_cycle_index: int = 0
-    sunday_rotation_queue: Optional[List[str]] = None
-    prioritize_jefe_coverage: bool = True
-
-
-class SolverRequest(BaseModel):
-    employees: List[Employee]
-    config: Config
-    target_week_start: Optional[str] = None
-    special_days: Dict[str, str] = Field(default_factory=dict)
-
-
-class HistoryEntry(BaseModel):
-    name: str
-    schedule: Dict[str, Dict[str, str]]
-    daily_tasks: Dict[str, Dict[str, Optional[str]]] = Field(default_factory=dict)
-    next_sunday_cycle_index: Optional[int] = None
-    next_sunday_rotation_queue: Optional[List[str]] = None
-    week_dates: Optional[Dict[str, str]] = None
-    special_days: Dict[str, str] = Field(default_factory=dict)
-    timestamp: str = ""
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-
-
 # Endpoints
 @router.post("/solve")
 def solve_schedule(request: SolverRequest):
     """Generate a new schedule."""
-    db = _load_db()
+    db = load_db()
     
     # Get History
     history_list = db.get("history_log", [])
@@ -127,13 +29,13 @@ def solve_schedule(request: SolverRequest):
         
     # Always read employees from SQLite
     try:
-        unified_emps = _plan_db.get_empleados(solo_activos=True)
+        unified_emps = plan_db.get_empleados(solo_activos=True)
     except Exception:
         unified_emps = []
-    use_tpl = _plan_db.get_use_pref_plantilla()
+    use_tpl = plan_db.get_use_pref_plantilla()
     employees_data = []
     for e in unified_emps:
-        rp = _plan_db.resolve_prefs_for_solver(e, use_pref_plantilla=use_tpl)
+        rp = plan_db.resolve_prefs_for_solver(e, use_pref_plantilla=use_tpl)
         employees_data.append({
             "name": e.get("nombre", ""),
             "gender": e.get("genero", "M"),
@@ -816,44 +718,6 @@ def merge_partial_schedules(
     return merged_schedule
 
 
-class PartialOffClassification(BaseModel):
-    """
-    Clasificación de un día libre (OFF/VAC/PERM) que el usuario hace
-    de forma manual en la UI del Generador Parcial.
-
-    fixed=True  → el solver DEBE respetar ese libre (se inyecta en fixed_shifts).
-    fixed=False → el solver PUEDE reasignarlo si la cobertura lo requiere.
-    """
-    employee: str
-    day: str      # "Vie" | "Sáb" | "Dom" | "Lun" | "Mar" | "Mié" | "Jue"
-    fixed: bool   # True = fijo, False = flexible (reasignable)
-
-
-class DepartedEmployee(BaseModel):
-    """
-    Empleado que causó baja durante la semana.
-    last_working_day: último día que trabajó. A partir del día siguiente se
-    excluye del pool del solver y la celda aparece vacía en el resultado.
-    """
-    name: str
-    last_working_day: str  # Último día trabajado, p.ej. "Dom"
-
-
-class PartialSolverRequest(BaseModel):
-    """
-    Request completo para la generación parcial.
-    El frontend envía el db_id del horario base junto con la configuración
-    de qué días bloquear, quién se fue y cómo tratar los libres.
-    """
-    base_history_db_id: int                   # id en horarios_generados
-    config: Config
-    target_week_start: Optional[str] = None   # Fecha del viernes de la semana
-    special_days: Dict[str, str] = Field(default_factory=dict)
-    locked_days: List[str] = Field(default_factory=list)   # Días pasados, p.ej. ["Vie","Sáb","Dom"]
-    departed_employees: List[DepartedEmployee] = Field(default_factory=list)
-    off_classifications: List[PartialOffClassification] = Field(default_factory=list)
-
-
 @router.post("/solve-partial")
 def solve_partial_schedule(request: PartialSolverRequest):
     """
@@ -915,11 +779,11 @@ def solve_partial_schedule(request: PartialSolverRequest):
 
     # ── 5. Cargar empleados desde DB, excluyendo despedidos ───────────────────
     try:
-        unified_emps = _plan_db.get_empleados(solo_activos=True)
+        unified_emps = plan_db.get_empleados(solo_activos=True)
     except Exception:
         unified_emps = []
 
-    use_tpl = _plan_db.get_use_pref_plantilla()
+    use_tpl = plan_db.get_use_pref_plantilla()
     employees_data = []
 
     for e in unified_emps:
@@ -927,7 +791,7 @@ def solve_partial_schedule(request: PartialSolverRequest):
         if name in departed_names:
             continue  # Excluir completamente del pool del solver
 
-        rp = _plan_db.resolve_prefs_for_solver(e, use_pref_plantilla=use_tpl)
+        rp = plan_db.resolve_prefs_for_solver(e, use_pref_plantilla=use_tpl)
         emp_fixed = dict(rp.get("fixed_shifts", {}))  # copia — no mutar el original
 
         # Inyectar OFFs fijos como fixed_shifts
@@ -959,7 +823,7 @@ def solve_partial_schedule(request: PartialSolverRequest):
 
     # ── 7. Preparar historial para el solver ──────────────────────────────────
     # Excluir el horario base de sí mismo para evitar auto-referencia circular
-    db = _load_db()
+    db = load_db()
     history_list = [
         h for h in db.get("history_log", [])
         if h.get("db_id") != request.base_history_db_id

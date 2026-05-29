@@ -1,43 +1,12 @@
 """API router for planillas and export endpoints."""
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
-import json
-import sys
-import os
 
-# Import from main module's context
-try:
-    from main import (
-        plan_db,
-        load_db,
-        _build_validation_rules_impl,
-        _normalize_special_days,
-    )
-except ImportError:
-    # Fallback
-    _backend_dir = os.path.dirname(os.path.abspath(__file__))
-    _root_dir = os.path.abspath(os.path.join(_backend_dir, ".."))
-    _planillas_dir = os.path.join(_root_dir, "planillas")
-    if os.path.exists(_planillas_dir) and _planillas_dir not in sys.path:
-        sys.path.insert(0, _planillas_dir)
-    import database as plan_db
-    
-    def _normalize_special_days(special_days):
-        return special_days if isinstance(special_days, dict) else {}
-    
-    def load_db():
-        return {"employees": [], "config": {}, "history_log": [], "last_result": {}}
-    
-    def _build_validation_rules_impl(special_days=None):
-        return {"shift_options": [], "bounds": {}}
+from .shared_models import ValidationRulesRequest
+from .helpers import _build_validation_rules_impl, load_db, save_db, _normalize_special_days
+import json
 
 router = APIRouter(prefix="/api", tags=["planillas"])
-
-
-# Models
-class ValidationRulesRequest(BaseModel):
-    special_days: Dict[str, str] = Field(default_factory=dict)
 
 
 # Endpoints
