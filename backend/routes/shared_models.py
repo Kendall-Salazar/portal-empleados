@@ -33,6 +33,9 @@ class Config(BaseModel):
     refuerzo_end: str = "12:00"
     refuerzo_days_mode: str = "auto"  # "auto" = solver decide, "manual" = usuario elige
     refuerzo_manual_days: List[str] = []  # Días específicos cuando refuerzo_days_mode="manual"
+    refuerzo_schedule: Optional[Dict[str, Dict[str, str]]] = None  # {day: {start, end}} per-day schedule
+    refuerzo_partial_mode: bool = False  # Treat refuerzo as partial employee
+    allow_global_quebrado: bool = True   # Master toggle for quebrado shifts
     allow_collision_quebrado: bool = False
     allow_quebrado_largo: bool = False
     collision_peak_priority: str = "pm"
