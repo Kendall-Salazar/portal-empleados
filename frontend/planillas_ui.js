@@ -1397,11 +1397,17 @@ async function loadVacSubPrestamos() {
 
                         </div>
 
+                        <div style="margin-left:auto;">
+                            <button class="vac-btn vac-btn-ghost" style="font-size:0.75rem; color:#ef4444; border-color:rgba(239,68,68,0.2); padding:6px 8px;" onclick="eliminarPrestamo(${p.id}, '${eName}')" title="Eliminar préstamo">
+                                <i class="fa-solid fa-trash-can"></i>
+                            </button>
+                        </div>
+
                     </div>
 
                     <!-- Montos -->
 
-                    <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:0.5rem; margin-top:0.7rem;">
+                    <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:0.5rem;">
 
                         <div style="text-align:center;">
 
@@ -1431,7 +1437,7 @@ async function loadVacSubPrestamos() {
 
                     <!-- Progress bar -->
 
-                    <div style="margin-top:0.6rem;">
+                    <div>
 
                         <div style="display:flex; justify-content:space-between; font-size:0.7rem; color:var(--text-muted); margin-bottom:3px;">
 
@@ -1451,7 +1457,7 @@ async function loadVacSubPrestamos() {
 
                     <!-- Actions -->
 
-                    <div style="display:flex; gap:0.5rem; margin-top:0.7rem; flex-wrap:wrap;">
+                    <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
 
                         <button class="vac-btn vac-btn-ghost" style="font-size:0.78rem;" onclick="verAbonosPrestamo(${p.id}, '${eName}')">
 
@@ -1467,11 +1473,6 @@ async function loadVacSubPrestamos() {
                         <button class="vac-btn vac-btn-ghost" style="font-size:0.78rem; color:#f59e0b; border-color:rgba(245,158,11,0.3);" onclick="registrarAbono(${p.id}, 0, '${eName}', 'extraordinario')">
                             <i class="fa-solid fa-star"></i> Extraordinario
                         </button>` : ''}
-                        <button class="vac-btn vac-btn-ghost" style="font-size:0.75rem; color:#ef4444; border-color:rgba(239,68,68,0.2);" onclick="eliminarPrestamo(${p.id}, '${eName}')">
-
-                            <i class="fa-solid fa-trash-can"></i>
-
-                        </button>
 
                     </div>
 
