@@ -528,6 +528,21 @@
                                                 <div class="toggle-slider"></div>
                                             </div>
                                         </label>
+                                        <label class="option-card hover-glow" style="margin-top: 0.5rem; padding: 0.8rem;">
+                                            <div class="opt-content">
+                                                <div class="opt-icon" style="background: rgba(124, 58, 237, 0.1); color: #7c3aed; width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
+                                                    <i class="fa-solid fa-bolt"></i>
+                                                </div>
+                                                <div class="opt-text">
+                                                    <strong style="font-size: 0.85rem;">Quebrado Largo (5-11 + 17-22)</strong>
+                                                    <small style="font-size: 0.7rem;">Turno de 11h que cubre hasta las 10pm</small>
+                                                </div>
+                                            </div>
+                                            <div class="toggle-container">
+                                                <input type="checkbox" id="allowQuebradoLargo" class="toggle-checkbox" onchange="updateConfig()">
+                                                <div class="toggle-slider"></div>
+                                            </div>
+                                        </label>
                                     </div>
                                 </div>
 
@@ -1932,19 +1947,62 @@
 
     <!-- MODAL: ABONO EXTRAORDINARIO DE PRÉSTAMO -->
     <div id="abonoExtraordinarioModal" class="modal-backdrop hidden">
-        <div class="modal-dialog" style="max-width: 460px;">
+        <div class="modal-dialog" style="max-width: 500px;">
             <div class="modal-header-simple">
                 <h3>
                     <i class="fa-solid fa-star" style="color:#f59e0b; margin-right:6px;"></i>
-                    Abono Extraordinario: <span id="abonoExtName" style="color: var(--primary);"></span>
+                    Abono: <span id="abonoExtName" style="color: var(--primary);"></span>
                 </h3>
                 <button class="close-icon" onclick="closeAbonoExtraordinarioModal()"><i class="fa-solid fa-xmark"></i></button>
             </div>
             <div class="modal-body-scroll">
                 <input type="hidden" id="abonoExtPrestamoId" value="">
                 <p style="font-size: 0.85rem; color: var(--text-muted); margin: 0 0 1rem;">
-                    Registra un abono fuera del rebajo semanal automático. El saldo se actualiza al instante.
+                    Registrá un abono al préstamo. Elegí el tipo y completá los datos.
                 </p>
+
+                <!-- Toggle: Planilla vs Directo -->
+                <div class="input-group">
+                    <label><i class="fa-solid fa-toggle-on" style="color:#8b5cf6; margin-right:4px;"></i> Tipo de abono</label>
+                    <div style="display:flex; gap:1rem; margin-top:0.3rem;">
+                        <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:0.88rem; color:var(--text-main);">
+                            <input type="radio" name="abonoExtTipo" value="planilla" id="abonoExtTipoPlanilla" onchange="onAbonoTipoChange()">
+                            Rebajado en planilla
+                        </label>
+                        <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:0.88rem; color:var(--text-main);">
+                            <input type="radio" name="abonoExtTipo" value="extraordinario" id="abonoExtTipoDirecto" checked onchange="onAbonoTipoChange()">
+                            Abono directo
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Selectores para planilla (oculto por defecto) -->
+                <div id="abonoExtPlanillaSelectors" style="display:none;">
+                    <div class="input-group">
+                        <label for="abonoExtMes"><i class="fa-solid fa-calendar" style="color:#6366f1; margin-right:4px;"></i> Mes de planilla</label>
+                        <select id="abonoExtMes" class="custom-input" style="width:100%; padding:0.7rem; background:var(--bg-app); border:1px solid var(--border); color:var(--text-main); border-radius:8px; font-size:0.9rem;" onchange="onAbonoExtMesChange()">
+                            <option value="">— Seleccioná un mes —</option>
+                        </select>
+                    </div>
+                    <div class="input-group">
+                        <label for="abonoExtSemana"><i class="fa-solid fa-list-ol" style="color:#6366f1; margin-right:4px;"></i> Semana</label>
+                        <select id="abonoExtSemana" class="custom-input" style="width:100%; padding:0.7rem; background:var(--bg-app); border:1px solid var(--border); color:var(--text-main); border-radius:8px; font-size:0.9rem;" onchange="onAbonoExtSemanaChange()">
+                            <option value="">— Seleccioná una semana —</option>
+                        </select>
+                    </div>
+                    <div id="abonoExtFechaCalculada" style="font-size:0.82rem; color:var(--text-muted); padding:0.3rem 0; display:none;">
+                        <i class="fa-solid fa-clock" style="margin-right:4px;"></i> Pago estimado: <span id="abonoExtFechaCalculadaText"></span>
+                    </div>
+                </div>
+
+                <!-- Date picker para abono directo -->
+                <div id="abonoExtDirectoDate" class="input-group">
+                    <label for="abonoExtFecha"><i class="fa-solid fa-calendar-day" style="color:#10b981; margin-right:4px;"></i> Fecha del abono</label>
+                    <input type="date" id="abonoExtFecha" class="custom-input"
+                        style="width:100%; padding:0.7rem; background:var(--bg-app); border:1px solid var(--border); color:var(--text-main); border-radius:8px; font-size:0.9rem;">
+                </div>
+
+                <!-- Monto -->
                 <div class="input-group">
                     <label for="abonoExtMonto">
                         <i class="fa-solid fa-coins" style="color:#10b981; margin-right:4px;"></i> Monto del abono
@@ -1957,6 +2015,8 @@
                     </div>
                     <small id="abonoExtSaldoPreview" style="display:block; margin-top:0.4rem; font-size:0.78rem; color:var(--text-muted);"></small>
                 </div>
+
+                <!-- Notas -->
                 <div class="input-group">
                     <label for="abonoExtNotas">
                         <i class="fa-solid fa-comment-dots" style="color:#6366f1; margin-right:4px;"></i> Nota (opcional)

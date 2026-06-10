@@ -217,6 +217,25 @@
         parts.push(`<p style="margin:0 0 0.5rem 0;font-weight:600;font-size:0.85rem;">${escapeHtml(row.nombre)}</p>`);
 
         parts.push(`<p class="gen-detail-shifts-title">Turnos fijos (semana tipo)</p>`);
+
+        // ── Selector tipo de quebrado (visible solo si forced_quebrado=true) ──
+        if (row.flags.forced_quebrado) {
+            const qpref_val = row.flags.quebrado_preferido || "auto";
+            const q_opts = [
+                { v: "auto",               l: "Automático" },
+                { v: "Q1_05-11+17-20",    l: "5am-11am + 5pm-8pm" },
+                { v: "Q2_07-11+17-20",    l: "7am-11am + 5pm-8pm" },
+                { v: "Q3_05-11+17-22",    l: "5am-11am + 5pm-10pm" },
+            ];
+            parts.push(`<p style="margin:0.5rem 0 0.25rem 0;font-weight:600;font-size:0.78rem;">Tipo de Quebrado</p>`);
+            parts.push(`<select id="genPanelQPref_${row.employee_id}" class="gen-detail-day-shift" style="width:100%;margin-bottom:0.5rem;" aria-label="Tipo de quebrado preferido">`);
+            q_opts.forEach(o => {
+                const sel = qpref_val === o.v ? " selected" : "";
+                parts.push(`<option value="${escapeHtml(o.v)}"${sel}>${escapeHtml(o.l)}</option>`);
+            });
+            parts.push(`</select>`);
+        }
+
         parts.push(`<div class="gen-detail-days-grid" id="genPanelDayShiftsGrid">`);
         for (const d of DAY_ORDER) {
             const opts = genPanelOptionsForDay(d);
@@ -276,6 +295,16 @@
                 window._genPanelReplaceRowTr(String(r.employee_id));
             });
         });
+
+        // Event listener for quebrado preference selector
+        const qSel = box.querySelector(`#genPanelQPref_${row.employee_id}`);
+        if (qSel) {
+            qSel.addEventListener("change", () => {
+                const r = genPanelRows[String(genPanelActiveId)];
+                if (!r) return;
+                r.flags.quebrado_preferido = qSel.value;
+            });
+        }
     };
 
     window.genPanelResetWeekAuto = function (empId) {
@@ -358,7 +387,10 @@
         if (!confirm(`¿Estás seguro de aplicar ${label} a TODOS los empleados visibles?`)) return;
         for (const id of Object.keys(genPanelRows)) {
             genPanelRows[id].flags.forced_quebrado = !!value;
-            if (value) genPanelRows[id].flags.forced_quebrado_partial = false;
+            if (value) {
+                genPanelRows[id].flags.forced_quebrado_partial = false;
+                genPanelRows[id].flags.quebrado_preferido = "auto";
+            }
         }
         window._genPanelSyncDomFromState();
     };

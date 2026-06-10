@@ -193,6 +193,7 @@ def init_db():
             refuerzo_manual_days TEXT DEFAULT '[]',
             allow_collision_quebrado INTEGER DEFAULT 0,
             collision_peak_priority TEXT DEFAULT 'pm',
+            allow_quebrado_largo INTEGER DEFAULT 0,
             sunday_cycle_index INTEGER DEFAULT 0,
             sunday_rotation_queue TEXT,
             use_history INTEGER DEFAULT 1,
@@ -324,6 +325,9 @@ def init_db():
     # Migration: add forced_quebrado_partial column
     _ensure_column("horario_empleados", "forced_quebrado_partial", "INTEGER DEFAULT 0")
 
+    # Migration: add quebrado_preferido column
+    _ensure_column("horario_empleados", "quebrado_preferido", "TEXT DEFAULT 'auto'")
+
     # Migration: scheduler config flags
     _scheduler_config_migrations = [
         ("horario_config", "use_history", "INTEGER DEFAULT 1"),
@@ -341,6 +345,14 @@ def init_db():
 
     # Migration: cleaning_tasks config column
     _ensure_column("horario_config", "cleaning_tasks", "TEXT DEFAULT '{}'")
+
+    # Migration: allow_quebrado_largo config column
+    try:
+        conn = get_conn()
+        conn.execute("ALTER TABLE horario_config ADD COLUMN allow_quebrado_largo INTEGER DEFAULT 0")
+        conn.close()
+    except Exception:
+        pass  # Column already exists
 
     # Migration: jefe_config (control de tareas del jefe de pista)
     _ensure_column("horario_config", "jefe_config", "TEXT DEFAULT '{}'")
@@ -443,7 +455,8 @@ def get_empleados(solo_activos=True):
                COALESCE(h.allow_no_rest, 0) as allow_no_rest,
                COALESCE(h.forced_libres, 0) as forced_libres,
                COALESCE(h.forced_quebrado, 0) as forced_quebrado,
-               COALESCE(h.forced_quebrado_partial, 0) as forced_quebrado_partial,
+                COALESCE(h.forced_quebrado_partial, 0) as forced_quebrado_partial,
+                COALESCE(h.quebrado_preferido, 'auto') as quebrado_preferido,
                COALESCE(h.es_jefe_pista, 0) as es_jefe_pista,
                COALESCE(h.es_practicante, 0) as es_practicante,
                 COALESCE(h.strict_preferences, 0) as strict_preferences,
@@ -573,6 +586,7 @@ def update_empleado(emp_id, nombre=None, tipo_pago=None, salario_fijo=None,
                     aplica_seguro=None, incluir_en_horario=None,
                     genero=None, puede_nocturno=None,
                     forced_libres=None, forced_quebrado=None, forced_quebrado_partial=None,
+                    quebrado_preferido=None,
                     allow_no_rest=None,
                     es_jefe_pista=None, es_practicante=None, strict_preferences=None,
                     turnos_fijos=None, pref_plantilla_id=_UNSET):
@@ -636,6 +650,8 @@ def update_empleado(emp_id, nombre=None, tipo_pago=None, salario_fijo=None,
             conn.execute("UPDATE horario_empleados SET forced_quebrado=? WHERE nombre=?", (forced_quebrado, old_name))
         if forced_quebrado_partial is not None:
             conn.execute("UPDATE horario_empleados SET forced_quebrado_partial=? WHERE nombre=?", (forced_quebrado_partial, old_name))
+        if quebrado_preferido is not None:
+            conn.execute("UPDATE horario_empleados SET quebrado_preferido=? WHERE nombre=?", (quebrado_preferido, old_name))
         if allow_no_rest is not None:
             conn.execute("UPDATE horario_empleados SET allow_no_rest=? WHERE nombre=?", (allow_no_rest, old_name))
         if es_jefe_pista is not None:
@@ -865,6 +881,7 @@ def resolve_prefs_for_solver(
                 "forced_libres": bool(_coerce_sql_int(tpl.get("forced_libres"), 0)),
                 "forced_quebrado": bool(_coerce_sql_int(tpl.get("forced_quebrado"), 0)),
                 "forced_quebrado_partial": bool(_coerce_sql_int(emp_row.get("forced_quebrado_partial"), 0)),
+                "quebrado_preferido": str(emp_row.get("quebrado_preferido", "auto")),
             }
 
     try:
@@ -880,6 +897,7 @@ def resolve_prefs_for_solver(
         "forced_libres": bool(_coerce_sql_int(emp_row.get("forced_libres"), 0)),
         "forced_quebrado": bool(_coerce_sql_int(emp_row.get("forced_quebrado"), 0)),
         "forced_quebrado_partial": bool(_coerce_sql_int(emp_row.get("forced_quebrado_partial"), 0)),
+        "quebrado_preferido": str(emp_row.get("quebrado_preferido", "auto")),
     }
 
 
@@ -1005,6 +1023,7 @@ def get_generator_employee_params(week_start: Optional[str] = None) -> Dict[str,
                     "forced_libres": bool(rp["forced_libres"]),
                     "forced_quebrado": bool(rp["forced_quebrado"]),
                     "forced_quebrado_partial": bool(rp["forced_quebrado_partial"]),
+                    "quebrado_preferido": str(rp.get("quebrado_preferido", "auto")),
                     "allow_no_rest": bool(rp["allow_no_rest"]),
                     "strict_preferences": bool(rp["strict_preferences"]),
                     "is_jefe_pista": bool(_coerce_sql_int(e.get("es_jefe_pista"), 0)),
@@ -1081,6 +1100,8 @@ def apply_generator_employee_params_batch(
                 kwargs["strict_preferences"] = 1 if flags["strict_preferences"] else 0
             if flags.get("is_jefe_pista") is not None:
                 kwargs["es_jefe_pista"] = 1 if flags["is_jefe_pista"] else 0
+            if flags.get("quebrado_preferido") is not None:
+                kwargs["quebrado_preferido"] = str(flags["quebrado_preferido"])
         if shifts_patch:
             try:
                 fs = json.loads(e.get("turnos_fijos") or "{}")
@@ -1718,6 +1739,51 @@ def get_abonos(prestamo_id):
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def update_abono_nota(abono_id, notas):
+    """Actualiza solo el campo notas de un abono."""
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            "UPDATE prestamo_abonos SET notas=? WHERE id=?",
+            (notas, abono_id)
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def delete_abono(abono_id):
+    """Elimina un abono y recalcula el saldo del préstamo asociado.
+    
+    Raises:
+        ValueError: Si el abono no existe.
+        PermissionError: Si el abono es de tipo 'planilla' (no se pueden borrar).
+    """
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT prestamo_id, tipo FROM prestamo_abonos WHERE id=?",
+            (abono_id,)
+        ).fetchone()
+        if not row:
+            raise ValueError("Abono no encontrado")
+        if row["tipo"] == "planilla":
+            raise PermissionError("No se puede eliminar un abono de planilla")
+
+        prestamo_id = row["prestamo_id"]
+        conn.execute("DELETE FROM prestamo_abonos WHERE id=?", (abono_id,))
+        _recalcular_prestamo_conn(conn, prestamo_id)
+        conn.commit()
+        return prestamo_id
+    except Exception:
+        conn.rollback()
+        conn.close()
+        raise
+    finally:
+        conn.close()
 
 
 def delete_prestamo(prestamo_id):

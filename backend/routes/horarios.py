@@ -32,6 +32,8 @@ def solve_schedule(request: SolverRequest):
         unified_emps = plan_db.get_empleados(solo_activos=True)
     except Exception:
         unified_emps = []
+    # Exclude employees not included in schedule (incluir_en_horario == 0)
+    unified_emps = [e for e in unified_emps if e.get("incluir_en_horario", 1) != 0]
     use_tpl = plan_db.get_use_pref_plantilla()
     employees_data = []
     for e in unified_emps:
@@ -43,10 +45,13 @@ def solve_schedule(request: SolverRequest):
             "allow_no_rest": rp["allow_no_rest"],
             "forced_libres": rp["forced_libres"],
             "forced_quebrado": rp["forced_quebrado"],
+            "forced_quebrado_partial": rp["forced_quebrado_partial"],
+            "quebrado_preferido": rp["quebrado_preferido"],
             "is_jefe_pista": bool(e.get("es_jefe_pista", 0)),
             "is_practicante": bool(e.get("es_practicante", 0)),
             "strict_preferences": rp["strict_preferences"],
             "fixed_shifts": rp["fixed_shifts"],
+            "incluir_en_horario": e.get("incluir_en_horario", 1),
         })
 
     config_data = request.config.dict()
@@ -472,7 +477,7 @@ def get_sunday_rotation():
     config = db.get("config", {})
     
     unified_emps = plan_db.get_empleados(solo_activos=True)
-    eligible = [e["nombre"] for e in unified_emps if not e.get("es_jefe_pista", False)]
+    eligible = [e["nombre"] for e in unified_emps if not e.get("es_jefe_pista", False) and e.get("incluir_en_horario", 1) != 0]
     
     # ── Intentar usar cola guardada en config ──
     saved_queue = config.get("sunday_rotation_queue")
@@ -580,6 +585,9 @@ def reassign_history_tasks(index: int):
     employees_data = []
     for e in employees_rows:
         e = dict(e)
+        # Exclude employees not included in schedule
+        if e.get("incluir_en_horario", 1) == 0:
+            continue
         try:
             fixed_shifts = json.loads(e["turnos_fijos"]) if e["turnos_fijos"] else {}
         except:
@@ -591,10 +599,13 @@ def reassign_history_tasks(index: int):
             "allow_no_rest": bool(e.get("allow_no_rest", 0)),
             "forced_libres": bool(e.get("forced_libres", 0)),
             "forced_quebrado": bool(e.get("forced_quebrado", 0)),
+            "forced_quebrado_partial": bool(e.get("forced_quebrado_partial", 0)),
+            "quebrado_preferido": str(e.get("quebrado_preferido", "auto")),
             "is_jefe_pista": bool(e.get("es_jefe_pista", 0)),
             "is_practicante": bool(e.get("es_practicante", 0)),
             "strict_preferences": bool(e.get("strict_preferences", 0)),
-            "fixed_shifts": fixed_shifts
+            "fixed_shifts": fixed_shifts,
+            "incluir_en_horario": e.get("incluir_en_horario", 1),
         })
     employee_names = {emp["name"] for emp in employees_data}
     for missing_name in sorted(name for name in schedule.keys() if name not in employee_names):
@@ -790,6 +801,9 @@ def solve_partial_schedule(request: PartialSolverRequest):
         name = e.get("nombre", "")
         if name in departed_names:
             continue  # Excluir completamente del pool del solver
+        # Exclude employees not included in schedule
+        if e.get("incluir_en_horario", 1) == 0:
+            continue
 
         rp = plan_db.resolve_prefs_for_solver(e, use_pref_plantilla=use_tpl)
         emp_fixed = dict(rp.get("fixed_shifts", {}))  # copia — no mutar el original
@@ -807,10 +821,13 @@ def solve_partial_schedule(request: PartialSolverRequest):
             "allow_no_rest": rp["allow_no_rest"],
             "forced_libres": rp["forced_libres"],
             "forced_quebrado": rp["forced_quebrado"],
+            "forced_quebrado_partial": rp["forced_quebrado_partial"],
+            "quebrado_preferido": rp["quebrado_preferido"],
             "is_jefe_pista": bool(e.get("es_jefe_pista", 0)),
             "is_practicante": bool(e.get("es_practicante", 0)),
             "strict_preferences": rp["strict_preferences"],
             "fixed_shifts": emp_fixed,
+            "incluir_en_horario": e.get("incluir_en_horario", 1),
         })
 
     # ── 6. Construir special_days: días pasados → "closed" ────────────────────

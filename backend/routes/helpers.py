@@ -418,6 +418,7 @@ def load_db():
             "forced_libres": bool(r["forced_libres"]),
             "forced_quebrado": bool(r["forced_quebrado"]),
             "forced_quebrado_partial": bool(r["forced_quebrado_partial"]) if "forced_quebrado_partial" in r.keys() else False,
+            "quebrado_preferido": str(r["quebrado_preferido"]) if "quebrado_preferido" in r.keys() else "auto",
             "is_jefe_pista": bool(r["es_jefe_pista"]),
             "is_practicante": bool(r["es_practicante"]) if "es_practicante" in r.keys() else False,
             "strict_preferences": bool(r["strict_preferences"]) if "strict_preferences" in r.keys() else False,
@@ -440,6 +441,7 @@ def load_db():
             "refuerzo_days_mode": cfg_row["refuerzo_days_mode"] if "refuerzo_days_mode" in cfg_row.keys() and cfg_row["refuerzo_days_mode"] else "auto",
             "refuerzo_manual_days": json.loads(cfg_row["refuerzo_manual_days"]) if "refuerzo_manual_days" in cfg_row.keys() and cfg_row["refuerzo_manual_days"] else [],
             "allow_collision_quebrado": bool(cfg_row["allow_collision_quebrado"]),
+            "allow_quebrado_largo": bool(cfg_row["allow_quebrado_largo"]) if "allow_quebrado_largo" in cfg_row.keys() else False,
             "collision_peak_priority": cfg_row["collision_peak_priority"],
             "sunday_cycle_index": cfg_row["sunday_cycle_index"] or 0,
             "sunday_rotation_queue": json.loads(cfg_row["sunday_rotation_queue"]) if cfg_row["sunday_rotation_queue"] else None,
@@ -508,7 +510,8 @@ def save_db(data):
                 conn.execute("""
                     UPDATE horario_empleados SET
                         genero=?, puede_nocturno=?, allow_no_rest=?, forced_libres=?,
-                        forced_quebrado=?, es_jefe_pista=?, es_practicante=?, strict_preferences=?, turnos_fijos=?, dia_libre_forzado=?, activo=1
+                        forced_quebrado=?, forced_quebrado_partial=?, quebrado_preferido=?,
+                        es_jefe_pista=?, es_practicante=?, strict_preferences=?, turnos_fijos=?, dia_libre_forzado=?, activo=1
                     WHERE nombre=?
                 """, (
                     emp.get("gender", "M"),
@@ -516,6 +519,8 @@ def save_db(data):
                     1 if emp.get("allow_no_rest", False) else 0,
                     1 if emp.get("forced_libres", False) else 0,
                     1 if emp.get("forced_quebrado", False) else 0,
+                    1 if emp.get("forced_quebrado_partial", False) else 0,
+                    emp.get("quebrado_preferido", "auto"),
                     1 if emp.get("is_jefe_pista", False) else 0,
                     1 if emp.get("is_practicante", False) else 0,
                     1 if emp.get("strict_preferences", False) else 0,
@@ -527,14 +532,17 @@ def save_db(data):
                 conn.execute("""
                     INSERT INTO horario_empleados
                     (nombre, genero, puede_nocturno, allow_no_rest, forced_libres,
-                     forced_quebrado, es_jefe_pista, es_practicante, strict_preferences, turnos_fijos, dia_libre_forzado, activo)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                     forced_quebrado, forced_quebrado_partial, quebrado_preferido,
+                     es_jefe_pista, es_practicante, strict_preferences, turnos_fijos, dia_libre_forzado, activo)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
                 """, (
                     emp["name"], emp.get("gender", "M"),
                     1 if emp.get("can_do_night", True) else 0,
                     1 if emp.get("allow_no_rest", False) else 0,
                     1 if emp.get("forced_libres", False) else 0,
                     1 if emp.get("forced_quebrado", False) else 0,
+                    1 if emp.get("forced_quebrado_partial", False) else 0,
+                    emp.get("quebrado_preferido", "auto"),
                     1 if emp.get("is_jefe_pista", False) else 0,
                     1 if emp.get("is_practicante", False) else 0,
                     1 if emp.get("strict_preferences", False) else 0,
@@ -550,9 +558,10 @@ def save_db(data):
             INSERT INTO horario_config
             (id, night_mode, fixed_night_person, allow_long_shifts, use_refuerzo,
              refuerzo_type, refuerzo_start, refuerzo_end, refuerzo_days_mode, refuerzo_manual_days,
-             allow_collision_quebrado, collision_peak_priority, sunday_cycle_index, sunday_rotation_queue, use_history, holidays,
+             allow_collision_quebrado, allow_quebrado_largo, collision_peak_priority, sunday_cycle_index,
+             sunday_rotation_queue, use_history, strict_weekly_alternation, holidays,
              jefe_base_shift, use_pref_plantilla, cleaning_tasks, jefe_config)
-            VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             cfg.get("night_mode", "rotation"),
             cfg.get("fixed_night_person"),
@@ -564,10 +573,12 @@ def save_db(data):
             cfg.get("refuerzo_days_mode", "auto"),
             json.dumps(cfg.get("refuerzo_manual_days", [])),
             1 if cfg.get("allow_collision_quebrado", False) else 0,
+            1 if cfg.get("allow_quebrado_largo", False) else 0,
             cfg.get("collision_peak_priority", "pm"),
             cfg.get("sunday_cycle_index", 0),
             json.dumps(cfg.get("sunday_rotation_queue")) if cfg.get("sunday_rotation_queue") else None,
             1 if cfg.get("use_history", True) else 0,
+            1 if cfg.get("strict_weekly_alternation", False) else 0,
             json.dumps(cfg.get("holidays", [])),
             str(cfg.get("jefe_base_shift", "J_06-16") or "J_06-16"),
             1 if cfg.get("use_pref_plantilla", False) else 0,

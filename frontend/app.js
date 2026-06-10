@@ -935,6 +935,10 @@ function renderConfig() {
     const cb = document.getElementById("allowLongShifts");
     if (cb) cb.checked = config.allow_long_shifts || false;
 
+    // Quebrado Largo Toggle
+    const q3Cb = document.getElementById("allowQuebradoLargo");
+    if (q3Cb) q3Cb.checked = config.allow_quebrado_largo || false;
+
     // Strict Preferences Checkbox
     const strictCb = document.getElementById("strictPreferencesGlobal");
     if (strictCb) strictCb.checked = config.strict_preferences || false;
@@ -1213,6 +1217,7 @@ async function updateConfig() {
     config.refuerzo_start = refuerzoStart;
     config.refuerzo_end = refuerzoEnd;
     config.allow_collision_quebrado = document.getElementById("allowCollisionQuebrado")?.checked || false;
+    config.allow_quebrado_largo = document.getElementById("allowQuebradoLargo")?.checked || false;
     config.collision_peak_priority = document.getElementById("collisionPeakPriority")?.value || "pm";
     config.use_history = document.getElementById("useHistoryContext")?.checked ?? true;
     config.rotation_enabled = document.getElementById("rotationEnabled")?.checked ?? true;
@@ -1775,6 +1780,7 @@ async function generateSchedule() {
     }
     
     config.allow_collision_quebrado = document.getElementById("allowCollisionQuebrado")?.checked || false;
+    config.allow_quebrado_largo = document.getElementById("allowQuebradoLargo")?.checked || false;
     config.collision_peak_priority = document.getElementById("collisionPeakPriority")?.value || "pm";
     config.use_history = document.getElementById("useHistoryContext")?.checked ?? true;
     config.rotation_enabled = document.getElementById("rotationEnabled")?.checked ?? true;
@@ -6206,19 +6212,19 @@ function getTaskLabelHTML(tasks, name, d) {
     } else if (base.includes("Oficina")) {
         let extra = base.replace("Oficina + Basureros + Baños", "").trim();
         if (extra.startsWith("+")) extra = extra.substring(1).trim();
-        label = `Oficina +<br>Basureros + Baños`;
-        if (extra) label += `<br><span class="task-extra">+ ${extra}</span>`;
+        label = `Oficina+Basureros+Baños`;
+        if (extra) label += ` <span class="task-extra">+${extra}</span>`;
     } else if (base === "Calibración") {
         label = "Calibración";
     } else if (base === "Caños") {
         label = "Caños";
     } else if (base === "Caños GLP") {
-        label = "Caños<br>GLP";
+        label = "Caños GLP";
     } else {
         label = base;
     }
 
-    if (suffix) label += `<br><span class="task-suffix">${suffix}</span>`;
+    if (suffix) label += ` <span class="task-suffix">${suffix}</span>`;
 
     const isHistory = tasks && tasks._is_history;
     const editableClass = isHistory ? " history-task-editable" : "";

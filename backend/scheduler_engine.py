@@ -360,7 +360,12 @@ HOMOGENEITY_MONITORED_SHIFTS = tuple(
     and not shift_name.startswith("X_")
 )
 SUNDAY_ABSENCE_REWARD = 20000
-SUNDAY_QUEUE_REWARDS = (18000, 12000, 8000, 5000, 3000, 2000)
+# FIX 2026-06-03: Recompensas muy bajas (18k→2k) eran irrelevantes frente a
+# otras penalizaciones del modelo (900k consistencia, 6M mujeres, etc.).
+# El solver elegía quién trabaja el domingo por otros criterios, ignorando
+# la cola de rotación. Ahora las recompensas son órdenes de magnitud mayores
+# para que la cola sea el factor determinante.
+SUNDAY_QUEUE_REWARDS = (5_000_000, 3_000_000, 2_000_000, 1_000_000, 500_000, 200_000)
 SUNDAY_CONGESTED_WEEKDAY_PENALTY = 8000
 SAME_SHIFT_STACK_PENALTY_3 = 6000
 SAME_SHIFT_STACK_PENALTY_4 = 25000
@@ -1372,6 +1377,9 @@ class ShiftScheduler:
             # Excluir Refuerzo del conteo
             if self.emp_data[e].get('is_refuerzo', False):
                 continue
+            # Safety net: exclude employees not included in schedule
+            if not self.emp_data[e].get('incluir_en_horario', True):
+                continue
             fixed = self.emp_data[e].get('fixed_shifts', {})
             all_absent = all(fixed.get(d) in ['VAC', 'PERM'] for d in DAYS)
             if not all_absent:
@@ -1560,6 +1568,12 @@ class ShiftScheduler:
                              if s.startswith("J_"):
                                  model.Add(x[(e, d, s)] == 0)
         
+        # Hard-block Q3 quebrado largo when toggle is off
+        if not self.config.get('allow_quebrado_largo', False):
+            for e in self.employees:
+                for d in DAYS:
+                    model.Add(x[(e, d, "Q3_05-11+17-22")] == 0)
+        
 
         # =========================
         # RESTRICCIÓN: ESTRICTAMENTE VACACIONES / PERMISOS (MANUAL)
@@ -1643,10 +1657,13 @@ class ShiftScheduler:
         # shifts (T2_06-14, T3_07-15 ...) before falling back to a PM shift.
         # Consistency across the week is automatically handled by turno_principal (50K/day).
         #
-        # Standard mode: 2M deviation keeps the preference strong vs. coverage needs.
-        # Short-staff:   600K so Q-shifts can still win against the soft preference.
-        PREF_DEVIATION_PENALTY = 2_000_000 if standard_mode else 600_000
-        PREF_FAMILY_PENALTY    = 400_000   # extra cost for crossing AM<->PM boundary
+        # FIX 2026-06-03: La consistencia semanal (500k/día) debe ser más importante
+        # que los turnos fijos no-estrictos. Si PREF_DEVIATION > CONSISTENCY,
+        # el solver rompe consistencia para cumplir el "capricho" de asignar un día.
+        # Ahora: consistencia > preferencia soft > nada.
+        # OFF/VAC/PERM siguen siendo hard constraints (se manejan arriba).
+        PREF_DEVIATION_PENALTY = 300_000 if standard_mode else 200_000
+        PREF_FAMILY_PENALTY    = 100_000   # extra cost for crossing AM<->PM boundary
 
         for (e, d), s_code in soft_preferences.items():
             pref_family = _am_pm_token(s_code)  # "AM", "PM", or None
@@ -2432,12 +2449,26 @@ class ShiftScheduler:
         # CONSTRAINT: Forced Quebrado (Hard)
         # If employee has forced_quebrado=True, they must work Q1/Q2/Q3 on ALL working days.
         # Exactly 1 OFF day (or VAC/PERM). No other shift types allowed.
+        # quebrado_preferido narrows allowed Q types to a specific one.
         # =========================
+        ALL_Q_SHIFTS = ["Q1_05-11+17-20", "Q2_07-11+17-20", "Q3_05-11+17-22"]
         for e in self.employees:
             if self.emp_data[e].get('forced_quebrado', False):
+                qpref = self.emp_data[e].get('quebrado_preferido', 'auto')
+                if qpref == 'auto' or qpref not in ALL_Q_SHIFTS:
+                    allowed_q = ALL_Q_SHIFTS  # comportamiento actual
+                else:
+                    allowed_q = [qpref]       # solo el Q preferido
                 for d in DAYS:
+                    if is_special_sunday_like(d):
+                        # Domingos: NO queremos que haga quebrado. Preferencia
+                        # fuerte (20M) para que haga turno normal de domingo.
+                        # Si cobertura obliga, el solver puede asignar Q igual.
+                        for qs in ALL_Q_SHIFTS:
+                            penalties.append(20_000_000 * x[(e, d, qs)])
+                        continue
                     for s in SHIFT_NAMES:
-                        if s not in ["OFF", "VAC", "PERM", "Q1_05-11+17-20", "Q2_07-11+17-20", "Q3_05-11+17-22"]:
+                        if s not in ["OFF", "VAC", "PERM"] + allowed_q:
                             model.Add(x[(e, d, s)] == 0)
                 model.Add(sum(x[(e, d, "OFF")] + x[(e, d, "VAC")] + x[(e, d, "PERM")] for d in DAYS) == 1)
 
@@ -3042,16 +3073,6 @@ class ShiftScheduler:
                 # for coverage without fighting the 900k consistency wall.
                 is_sunday_day = is_special_sunday_like(d)
 
-                # forced_quebrado_partial: on days where they work a Q shift
-                # they are exempt from the 900k consistency penalty — the whole
-                # point is that Q is assigned only when necessary, so we must
-                # not make it prohibitively expensive through consistency.
-                # O3. Consistency exemption for Q shifts (ALL employees, not just forced_quebrado_partial)
-                working_q_today = model.NewBoolVar(f"working_q_today_{e}_{d}")
-                q_sum_d = sum(x[(e, d, q)] for q in ["Q1_05-11+17-20", "Q2_07-11+17-20", "Q3_05-11+17-22"])
-                model.Add(q_sum_d >= 1).OnlyEnforceIf(working_q_today)
-                model.Add(q_sum_d == 0).OnlyEnforceIf(working_q_today.Not())
-
                 for s in turno_principal[e]:
                     usa_otro = model.NewBoolVar(f"usa_otro_{e}_{d}_{s}")
                     model.AddBoolAnd([x[(e, d, s)], turno_principal[e][s].Not()]).OnlyEnforceIf(usa_otro)
@@ -3066,8 +3087,7 @@ class ShiftScheduler:
                     if e in persona_hace_libres:
                         conditions_exento.append(persona_hace_libres[e])
 
-                    # Q-shift exemption: all employees exempt from consistency on Q days
-                    conditions_exento.append(working_q_today)
+
 
                     if primary_night and e == primary_night:
                         model.Add(exento == 1)
@@ -3088,17 +3108,29 @@ class ShiftScheduler:
                     penalties.append(penalizacion)
                     
         # O3. Broken shifts Q1/Q2/Q3 — penalty depends on mode and employee config.
-        # forced_quebrado_total: no penalty (they MUST work Q by hard constraint).
+        # forced_quebrado_total: no penalty for preferred Q type; normal penalty for others.
         # forced_quebrado_partial: moderate penalty so solver only uses Q when
         #   coverage gap cost (500k/hr) exceeds this penalty.  In short-staffed
         #   mode partial employees follow the same reward as everyone else.
         FQ_PARTIAL_Q_PENALTY = 200_000
+        ALL_Q_SHIFTS_PEN = ["Q1_05-11+17-20", "Q2_07-11+17-20", "Q3_05-11+17-22"]
         for e in self.employees:
             fq_total = self.emp_data[e].get('forced_quebrado', False)
             fq_partial = self.emp_data[e].get('forced_quebrado_partial', False)
+            qpref = self.emp_data[e].get('quebrado_preferido', 'auto')
             for d in DAYS:
                 if fq_total:
-                    pass  # No penalty — hard constraint already forces Q shifts
+                    if qpref == 'auto':
+                        # Auto: sin penalización (comportamiento original)
+                        pass
+                    else:
+                        # Preferencia específica: penalizar solo los Q NO elegidos
+                        for qs in ALL_Q_SHIFTS_PEN:
+                            if qs == qpref:
+                                pass  # sin penalty — es el tipo elegido
+                            else:
+                                p = q1_penalty if qs in ("Q1_05-11+17-20", "Q3_05-11+17-22") else q2_penalty
+                                penalties.append(p * x[(e, d, qs)])
                 elif fq_partial:
                     p = FQ_PARTIAL_Q_PENALTY if standard_mode else q1_penalty
                     penalties.append(p * x[(e, d, "Q1_05-11+17-20")])
@@ -3702,7 +3734,11 @@ class ShiftScheduler:
         if is_sunday_style_mode(day_modes.get("Dom", SPECIAL_DAY_MODE_NORMAL)):
             eligible = [e for e in sorted(self.employees)
                         if not self.emp_data[e].get('is_jefe_pista', False)
-                        and e not in sat_dom_only]
+                        and e not in sat_dom_only
+                        and not self.emp_data[e].get('forced_quebrado', False)
+                        and not self.emp_data[e].get('forced_quebrado_partial', False)
+                        and not self.emp_data[e].get('forced_libres', False)
+                        and (self.emp_data[e].get('fixed_shifts', {}) or {}).get('Dom') not in ('OFF', 'VAC', 'PERM')]
             
             # Scan history to find each employee's last Sunday OFF (index = recency).
             # Cap at ROTATION_HISTORY_WINDOW semanas para consistencia con el sistema de rachas.
@@ -3759,18 +3795,20 @@ class ShiftScheduler:
                         )
 
             if rotation_target and rotation_target in sunday_absence_vars:
-                # Antes: restricción dura Add(...==1). Con historial activo el primero en cola
-                # (quien "toca" libre por antigüedad) puede ser incompatible con cobertura
-                # domingo tipo domingo → modelo INFEASIBLE sin mensaje claro.
-                # Penalización fuerte (> 2M del segundo en cola) preserva el comportamiento
-                # habitual pero permite al solver violarla si es la única forma factible.
-                penalties.append(12_000_000 * sunday_absence_vars[rotation_target].Not())
+                # FIX 2026-06-03: Penalización masiva (500M) para que el primero en
+                # la cola de rotación tenga domingo libre de forma automática.
+                # Excluimos de la cola a quienes ya tienen OFF/VAC/PERM fijo en
+                # domingo, así que rotation_target SIEMPRE es quien debe tener libre.
+                # Si hay empate en antigüedad (varias personas con el mismo último
+                # domingo libre), la optimización del solver evalúa cuál opción
+                # genera el mejor horario.
+                penalties.append(500_000_000 * sunday_absence_vars[rotation_target].Not())
 
             # Second in queue: strongly prefer Sunday OFF for the next person
             if len(rotation_queue) >= 2:
                 second_target = rotation_queue[1]
                 if second_target in sunday_absence_vars:
-                    penalties.append(2000000 * sunday_absence_vars[second_target].Not())
+                    penalties.append(20_000_000 * sunday_absence_vars[second_target].Not())
 
             # O6. Sunday Rotation (Historial Compatibility)
             # Verify if they worked last Sunday.
@@ -3855,18 +3893,27 @@ class ShiftScheduler:
         else:
             solver.parameters.num_search_workers = 8
             
+        # PORTFOLIO_SEARCH + interleave_search: múltiples estrategias en paralelo con
+        # diversificación entre workers → mejores soluciones en el mismo tiempo.
+        # FIX 2026-06-03: hints conflictivos con fixed_shifts causaban crash
+        # (`fixed_search != nullptr`). Se filtran hints conflictivos abajo, así que
+        # PORTFOLIO + interleave ya es seguro.
         solver.parameters.search_branching = cp_model.PORTFOLIO_SEARCH
-        # interleave_search=True: permite que los workers diversifiquen su búsqueda
-        # en lugar de que todos converjan a la misma región (cerca de los hints del
-        # historial anterior). Mejora la calidad del óptimo encontrado en el tiempo límite.
         solver.parameters.interleave_search = True
 
-        # Add History Hints to start search close to previous state
+        # Add History Hints to start search close to previous state.
+        # FIX: filtrar hints que entran en conflicto con fixed_shifts del empleado.
+        # Cuando un usuario asigna "OFF" manual a un día, el hint de la semana anterior
+        # (ej. "T1_05-13") contradice la restricción dura → crash interno de OR-Tools.
         if most_recent_schedule:
             for e in self.employees:
                 last_sched = most_recent_schedule.get(e, {})
+                fixed_shifts = self.emp_data[e].get('fixed_shifts', {}) or {}
                 for d in DAYS:
                     s_prev = last_sched.get(d, "OFF")
+                    # Saltar hint si el empleado tiene fixed_shift para este día
+                    if d in fixed_shifts:
+                        continue
                     if s_prev in SHIFT_NAMES:
                         model.AddHint(x[(e, d, s_prev)], 1)
         

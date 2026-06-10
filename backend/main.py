@@ -70,6 +70,7 @@ import prestamo_sync
 
 # Import routers
 from routes import empleados_router, horarios_router, planillas_router, config_router
+from routes.horarios import save_history
 
 # Import shared models and helpers (deduplicated from routes/)
 from routes.shared_models import (
@@ -1670,6 +1671,7 @@ class PrestamoAbono(BaseModel):
     tipo: str = "planilla"
     semana_planilla: Optional[str] = None
     notas: Optional[str] = None
+    fecha: Optional[str] = None
 
 
 def _find_mes_for_sync(mes_id: Optional[int] = None):
@@ -1791,10 +1793,31 @@ def get_abonos_prestamo(prestamo_id: int):
 def add_abono_prestamo(prestamo_id: int, req: PrestamoAbono):
     abono_id = plan_db.add_abono(
         prestamo_id, req.monto, tipo=req.tipo,
-        semana_planilla=req.semana_planilla, notas=req.notas
+        semana_planilla=req.semana_planilla, notas=req.notas,
+        fecha=req.fecha
     )
     prestamo = plan_db.get_prestamo(prestamo_id)
     return {"status": "success", "id": abono_id, "nuevo_saldo": prestamo["saldo"], "estado": prestamo["estado"]}
+
+
+@app.patch("/api/planillas/abonos/{abono_id}")
+def update_abono_nota_endpoint(abono_id: int, body: dict):
+    """Actualiza solo el campo notas de un abono."""
+    plan_db.update_abono_nota(abono_id, body.get("notas", ""))
+    return {"status": "success"}
+
+
+@app.delete("/api/planillas/abonos/{abono_id}")
+def delete_abono_endpoint(abono_id: int):
+    """Elimina un abono extraordinario y recalcula el saldo."""
+    try:
+        prestamo_id = plan_db.delete_abono(abono_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Abono no encontrado")
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    prestamo = plan_db.get_prestamo(prestamo_id)
+    return {"status": "success", "nuevo_saldo": prestamo["saldo"], "estado": prestamo["estado"]}
 
 # ------------------------------------------------------------------------------
 # LIQUIDACIÓN — Cálculo automático según Ley Costarricense

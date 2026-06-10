@@ -2791,6 +2791,75 @@ async function registrarAbono(prestamoId, montoSugerido, empName, tipo) {
 // MODAL ABONO EXTRAORDINARIO
 // =============================================================================
 let _abonoExtSaldoActual = 0;
+let _abonoExtMesesCache = [];
+
+/** Calcula el viernes siguiente a una fecha ISO (YYYY-MM-DD). */
+function calcularViernesSiguiente(fechaIso) {
+    const d = new Date(fechaIso + 'T00:00:00');
+    const daysUntilFriday = (5 - d.getDay() + 7) % 7;
+    d.setDate(d.getDate() + daysUntilFriday + 7); // viernes siguiente
+    return d.toISOString().split('T')[0];
+}
+
+/** Formatea fecha ISO a formato legible ES. */
+function _formatFechaEs(fechaIso) {
+    if (!fechaIso) return '';
+    const d = new Date(fechaIso + 'T00:00:00');
+    return d.toLocaleDateString('es-CR', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+/** Handler: cambio de tipo de abono (planilla vs directo). */
+function onAbonoTipoChange() {
+    const isPlanilla = document.getElementById('abonoExtTipoPlanilla').checked;
+    document.getElementById('abonoExtPlanillaSelectors').style.display = isPlanilla ? 'block' : 'none';
+    document.getElementById('abonoExtDirectoDate').style.display = isPlanilla ? 'none' : 'block';
+}
+
+/** Handler: cambio de mes — carga semanas. */
+async function onAbonoExtMesChange() {
+    const mesId = document.getElementById('abonoExtMes').value;
+    const semSelect = document.getElementById('abonoExtSemana');
+    semSelect.innerHTML = '<option value="">— Seleccioná una semana —</option>';
+    document.getElementById('abonoExtFechaCalculada').style.display = 'none';
+
+    if (!mesId) return;
+
+    try {
+        const res = await fetch(`/api/planillas/meses/${mesId}/semanas`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+        // GET semanas del mes
+        const mesesRes = await fetch('/api/planillas/meses');
+        const meses = await mesesRes.json();
+        const mes = meses.find(m => m.id == mesId);
+        if (mes && mes.semanas) {
+            mes.semanas.forEach(s => {
+                const opt = document.createElement('option');
+                opt.value = s.id;
+                opt.textContent = `Semana ${s.num_semana} — Vie ${_formatFechaEs(s.viernes)}`;
+                opt.dataset.viernes = s.viernes;
+                semSelect.appendChild(opt);
+            });
+        }
+    } catch (_) {
+        semSelect.innerHTML = '<option value="">Error cargando semanas</option>';
+    }
+}
+
+/** Handler: cambio de semana — calcula fecha de pago. */
+function onAbonoExtSemanaChange() {
+    const semSelect = document.getElementById('abonoExtSemana');
+    const opt = semSelect.options[semSelect.selectedIndex];
+    const fechaCalcDiv = document.getElementById('abonoExtFechaCalculada');
+    const fechaCalcText = document.getElementById('abonoExtFechaCalculadaText');
+
+    if (!opt || !opt.dataset.viernes) {
+        fechaCalcDiv.style.display = 'none';
+        return;
+    }
+
+    const fechaPago = calcularViernesSiguiente(opt.dataset.viernes);
+    fechaCalcText.textContent = _formatFechaEs(fechaPago);
+    fechaCalcDiv.style.display = 'block';
+}
 
 async function openAbonoExtraordinarioModal(prestamoId, empName) {
     document.getElementById('abonoExtPrestamoId').value = prestamoId;
@@ -2799,6 +2868,19 @@ async function openAbonoExtraordinarioModal(prestamoId, empName) {
     document.getElementById('abonoExtNotas').value = '';
     const errEl = document.getElementById('abonoExtError');
     if (errEl) errEl.style.display = 'none';
+
+    // Reset to directo mode
+    document.getElementById('abonoExtTipoDirecto').checked = true;
+    onAbonoTipoChange();
+
+    // Set default date to today
+    const today = new Date().toISOString().split('T')[0];
+    document.getElementById('abonoExtFecha').value = today;
+
+    // Clear planilla selectors
+    document.getElementById('abonoExtMes').innerHTML = '<option value="">— Seleccioná un mes —</option>';
+    document.getElementById('abonoExtSemana').innerHTML = '<option value="">— Seleccioná una semana —</option>';
+    document.getElementById('abonoExtFechaCalculada').style.display = 'none';
 
     // Cargar saldo actual para preview
     _abonoExtSaldoActual = 0;
@@ -2815,6 +2897,25 @@ async function openAbonoExtraordinarioModal(prestamoId, empName) {
         }
     } catch (_) {
         if (previewEl) previewEl.textContent = '';
+    }
+
+    // Cargar meses activos para selector de planilla
+    try {
+        const mesesRes = await fetch('/api/planillas/meses');
+        if (mesesRes.ok) {
+            _abonoExtMesesCache = await mesesRes.json();
+            const mesSelect = document.getElementById('abonoExtMes');
+            mesSelect.innerHTML = '<option value="">— Seleccioná un mes —</option>';
+            _abonoExtMesesCache.forEach(m => {
+                const opt = document.createElement('option');
+                opt.value = m.id;
+                const mesesNombres = ['','Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+                opt.textContent = `${mesesNombres[m.mes] || m.mes} ${m.anio}${m.cerrado ? ' (cerrado)' : ''}`;
+                mesSelect.appendChild(opt);
+            });
+        }
+    } catch (_) {
+        // Silently fail — user can still use directo mode
     }
 
     const inp = document.getElementById('abonoExtMonto');
@@ -2851,11 +2952,34 @@ async function confirmAbonoExtraordinario() {
         return;
     }
 
+    const isPlanilla = document.getElementById('abonoExtTipoPlanilla').checked;
+    let tipo = isPlanilla ? 'planilla' : 'extraordinario';
+    let fecha = null;
+    let semanaPlanilla = null;
+
+    if (isPlanilla) {
+        const semSelect = document.getElementById('abonoExtSemana');
+        const opt = semSelect.options[semSelect.selectedIndex];
+        if (!opt || !opt.value) {
+            if (errEl) {
+                errEl.textContent = 'Seleccioná una semana de planilla.';
+                errEl.style.display = 'block';
+            }
+            return;
+        }
+        semanaPlanilla = opt.textContent;
+        if (opt.dataset.viernes) {
+            fecha = calcularViernesSiguiente(opt.dataset.viernes);
+        }
+    } else {
+        fecha = document.getElementById('abonoExtFecha').value || new Date().toISOString().split('T')[0];
+    }
+
     try {
         const res = await fetch(`/api/planillas/prestamos/${prestamoId}/abono`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ monto, tipo: 'extraordinario', notas })
+            body: JSON.stringify({ monto, tipo, fecha, semana_planilla: semanaPlanilla, notas })
         });
         if (!res.ok) {
             const errBody = await res.json().catch(() => ({}));
@@ -2881,6 +3005,9 @@ async function confirmAbonoExtraordinario() {
 window.openAbonoExtraordinarioModal = openAbonoExtraordinarioModal;
 window.closeAbonoExtraordinarioModal = closeAbonoExtraordinarioModal;
 window.confirmAbonoExtraordinario = confirmAbonoExtraordinario;
+window.onAbonoTipoChange = onAbonoTipoChange;
+window.onAbonoExtMesChange = onAbonoExtMesChange;
+window.onAbonoExtSemanaChange = onAbonoExtSemanaChange;
 
 
 
@@ -2893,125 +3020,205 @@ async function verAbonosPrestamo(prestamoId, empName) {
 
         const prest = data.prestamo;
 
-
-
         const content = document.getElementById('vacSubTabContent');
 
         let html = `
-
-        <div style="max-width:600px; margin:0 auto;">
-
+        <div style="max-width:650px; margin:0 auto;">
             <div style="display:flex; align-items:center; gap:10px; margin-bottom:1.5rem;">
-
                 <button class="vac-btn vac-btn-ghost" onclick="loadVacSubPrestamos()" style="padding:6px 10px;">
-
                     <i class="fa-solid fa-arrow-left"></i>
-
                 </button>
-
                 <h3 style="color:var(--text-main); margin:0;">
-
                     <i class="fa-solid fa-list" style="color:#8b5cf6;"></i> Historial de Abonos — ${empName}
-
                 </h3>
-
             </div>
-
             <div class="vac-emp-card" style="margin-bottom:1rem;">
-
                 <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:0.5rem;">
-
                     <div style="text-align:center;">
-
                         <div style="font-size:0.65rem; color:var(--text-muted); text-transform:uppercase;">Total</div>
-
                         <div style="font-size:1.1rem; font-weight:800; color:var(--text-main);">₡${_fmtMoney(prest.monto_total)}</div>
-
                     </div>
-
                     <div style="text-align:center;">
-
                         <div style="font-size:0.65rem; color:var(--text-muted); text-transform:uppercase;">Abonado</div>
-
                         <div style="font-size:1.1rem; font-weight:800; color:#10b981;">₡${_fmtMoney(prest.monto_total - prest.saldo)}</div>
-
                     </div>
-
                     <div style="text-align:center;">
-
                         <div style="font-size:0.65rem; color:var(--text-muted); text-transform:uppercase;">Saldo</div>
-
                         <div style="font-size:1.1rem; font-weight:800; color:#ef4444;">₡${_fmtMoney(prest.saldo)}</div>
-
                     </div>
-
                 </div>
-
             </div>`;
-
-
 
         if (abonos.length === 0) {
-
             html += '<p style="text-align:center; color:var(--text-muted); padding:2rem;">No hay abonos registrados aún.</p>';
-
         } else {
+            html += `<div style="display:flex; flex-direction:column; gap:6px;">`;
+            abonos.forEach(a => {
+                const fechaDisplay = a.fecha || a.fecha_registro || 'Sin fecha';
+                const fechaFormateada = _formatDateEs(fechaDisplay);
+                const tipoLabel = a.tipo === 'planilla'
+                    ? (a.semana_planilla
+                        ? `<span style="background:rgba(139,92,246,0.15); color:#8b5cf6; padding:2px 8px; border-radius:5px; font-size:0.68rem; font-weight:600;">${a.semana_planilla}</span>`
+                        : '<span style="background:rgba(139,92,246,0.15); color:#8b5cf6; padding:2px 8px; border-radius:5px; font-size:0.68rem; font-weight:600;">Planilla manual</span>')
+                    : '<span style="background:rgba(245,158,11,0.15); color:#f59e0b; padding:2px 8px; border-radius:5px; font-size:0.68rem; font-weight:600;">Extraordinario</span>';
 
-            html += `
-
-            <div class="vac-emp-card" style="padding:0; overflow:hidden;">
-
-                <table style="width:100%; font-size:0.82rem; border-collapse:collapse;">
-
-                    <thead><tr style="background:rgba(255,255,255,0.03); color:var(--text-muted); font-size:0.7rem; text-transform:uppercase; letter-spacing:0.5px;">
-
-                        <th style="text-align:left; padding:10px 12px;">Fecha</th>
-
-                        <th style="text-align:right; padding:10px 12px;">Monto</th>
-
-                        <th style="text-align:center; padding:10px 12px;">Tipo</th>
-
-
-                    </tr></thead>
-
-                    <tbody>
-
-                    ${abonos.map(a => `
-
-                    <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
-
-                        <td style="padding:8px 12px;">${(a.notas && a.notas.trim()) ? `<span style="color:#8b5cf6; cursor:pointer; text-decoration:underline dotted; font-weight:600;" title="${(a.notas||'').replace(/"/g,'&quot;')}" onclick="_mostrarNotaAbono('${(a.notas||'').replace(/'/g,"\\'").replace(/\n/g,' ')}','${a.fecha}')">${_formatDateEs(a.fecha)} <i class='fa-solid fa-note-sticky' style='font-size:0.65rem;'></i></span>` : `<span style='color:var(--text-main);'>${_formatDateEs(a.fecha)}</span>`}</td>
-
-                        <td style="padding:8px 12px; text-align:right; font-weight:700; color:#10b981;">₡${_fmtMoney(a.monto)}</td>
-                        <td style="padding:8px 12px; text-align:center;">
-                            ${a.tipo === 'planilla' ?
-                    (a.semana_planilla
-                        ? '<span style="background:rgba(139,92,246,0.15); color:#8b5cf6; padding:2px 8px; border-radius:5px; font-size:0.68rem; font-weight:600;">Planilla auto</span>'
-                        : '<span style="background:rgba(139,92,246,0.15); color:#8b5cf6; padding:2px 8px; border-radius:5px; font-size:0.68rem; font-weight:600;">Planilla manual</span>') :
-                    '<span style="background:rgba(245,158,11,0.15); color:#f59e0b; padding:2px 8px; border-radius:5px; font-size:0.68rem; font-weight:600;">Extraordinario</span>'
-                }
-                        </td>
-                    </tr>`).join('')}
-
-                    </tbody>
-
-                </table>
-
-            </div>`;
-
+                html += `
+                <div class="vac-emp-card" style="padding:0; overflow:hidden; cursor:pointer;" onclick="toggleAbonoDetalle(${a.id})">
+                    <div style="display:flex; align-items:center; justify-content:space-between; padding:10px 14px; border-bottom:1px solid rgba(255,255,255,0.05);">
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <i class="fa-solid fa-chevron-right" id="abonoChevron${a.id}" style="color:var(--text-muted); font-size:0.7rem; transition:transform 0.2s;"></i>
+                            <span style="font-size:0.85rem; color:var(--text-main);">${fechaFormateada}</span>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            ${tipoLabel}
+                            <span style="font-size:0.9rem; font-weight:700; color:#10b981;">₡${_fmtMoney(a.monto)}</span>
+                        </div>
+                    </div>
+                    <div id="abonoDetalle${a.id}" style="display:none; padding:12px 14px; background:rgba(0,0,0,0.15); border-top:1px solid rgba(255,255,255,0.05);" onclick="event.stopPropagation()">
+                        <div style="display:grid; grid-template-columns:auto 1fr; gap:6px 12px; font-size:0.82rem; margin-bottom:10px;">
+                            <span style="color:var(--text-muted);">Fecha:</span>
+                            <span style="color:var(--text-main);">${fechaFormateada}</span>
+                            <span style="color:var(--text-muted);">Tipo:</span>
+                            <span style="color:var(--text-main);">${a.tipo === 'planilla' ? 'Rebajo en planilla' : 'Abono directo'}</span>
+                            ${a.semana_planilla ? `<span style="color:var(--text-muted);">Planilla:</span><span style="color:var(--text-main);">${a.semana_planilla}</span>` : ''}
+                            <span style="color:var(--text-muted);">Monto:</span>
+                            <span style="color:#10b981; font-weight:700;">₡${_fmtMoney(a.monto)}</span>
+                        </div>
+                        <div style="margin-bottom:10px;">
+                            <div style="font-size:0.75rem; color:var(--text-muted); margin-bottom:4px;">Nota:</div>
+                            <div id="abonoNotaDisplay${a.id}" style="font-size:0.85rem; color:var(--text-main); padding:6px 8px; background:rgba(255,255,255,0.03); border-radius:6px; min-height:28px; cursor:text;" onclick="event.stopPropagation(); editarNotaAbono(${a.id})">
+                                ${a.notas ? a.notas.replace(/</g,'&lt;').replace(/>/g,'&gt;') : '<span style="color:var(--text-muted); font-style:italic;">Sin nota</span>'}
+                            </div>
+                        </div>
+                        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                            <button onclick="event.stopPropagation(); editarNotaAbono(${a.id})" style="padding:5px 12px; font-size:0.78rem; border:1px solid var(--border); background:transparent; color:var(--text-main); border-radius:6px; cursor:pointer;">
+                                <i class="fa-solid fa-pen" style="margin-right:4px;"></i>Editar nota
+                            </button>
+                            ${a.tipo !== 'planilla' ? `
+                            <button onclick="event.stopPropagation(); eliminarAbonoIndividual(${a.id}, ${prestamoId}, '${empName.replace(/'/g, "\\'")}')" style="padding:5px 12px; font-size:0.78rem; border:1px solid rgba(239,68,68,0.3); background:rgba(239,68,68,0.08); color:#ef4444; border-radius:6px; cursor:pointer;">
+                                <i class="fa-solid fa-trash" style="margin-right:4px;"></i>Borrar
+                            </button>` : ''}
+                        </div>
+                    </div>
+                </div>`;
+            });
+            html += `</div>`;
         }
 
-
-
         html += '</div>';
-
         content.innerHTML = html;
 
-
-
     } catch (e) { alert(e.message); }
-
 }
+
+/** Toggle expand/collapse de detalle de abono. */
+function toggleAbonoDetalle(abonoId) {
+    const detalle = document.getElementById(`abonoDetalle${abonoId}`);
+    const chevron = document.getElementById(`abonoChevron${abonoId}`);
+    if (!detalle) return;
+
+    if (detalle.style.display === 'none') {
+        detalle.style.display = 'block';
+        if (chevron) chevron.style.transform = 'rotate(90deg)';
+    } else {
+        detalle.style.display = 'none';
+        if (chevron) chevron.style.transform = 'rotate(0deg)';
+    }
+}
+
+/** Editar nota inline de un abono. */
+async function editarNotaAbono(abonoId) {
+    const displayEl = document.getElementById(`abonoNotaDisplay${abonoId}`);
+    if (!displayEl) return;
+
+    // Guard: if textarea already exists, just focus it — don't re-render
+    const existingTextarea = document.getElementById(`abonoNotaEdit${abonoId}`);
+    if (existingTextarea) {
+        existingTextarea.focus();
+        return;
+    }
+
+    // Replace display with textarea + save button
+    const currentNota = displayEl.textContent.trim() === 'Sin nota' ? '' : displayEl.textContent.trim();
+    displayEl.innerHTML = `
+        <div style="display:flex; gap:6px; align-items:flex-start;">
+            <textarea id="abonoNotaEdit${abonoId}" rows="2" style="flex:1; padding:6px 8px; background:var(--bg-app); border:1px solid var(--border); color:var(--text-main); border-radius:6px; font-size:0.85rem; resize:vertical; font-family:inherit;">${currentNota.replace(/"/g, '&quot;')}</textarea>
+            <button onclick="event.stopPropagation(); guardarNotaAbono(${abonoId})" style="padding:5px 10px; font-size:0.78rem; background:#10b981; color:white; border:none; border-radius:6px; cursor:pointer; white-space:nowrap;">
+                <i class="fa-solid fa-check"></i> Guardar
+            </button>
+            <button onclick="event.stopPropagation(); cancelarNotaAbono(${abonoId})" style="padding:5px 10px; font-size:0.78rem; background:transparent; color:var(--text-muted); border:1px solid var(--border); border-radius:6px; cursor:pointer; white-space:nowrap;">
+                Cancelar
+            </button>
+        </div>
+    `;
+    document.getElementById(`abonoNotaEdit${abonoId}`).focus();
+}
+
+/** Guardar nota editada vía PATCH. */
+async function guardarNotaAbono(abonoId) {
+    const textarea = document.getElementById(`abonoNotaEdit${abonoId}`);
+    if (!textarea) return;
+    const nuevaNota = textarea.value.trim();
+
+    try {
+        const res = await fetch(`/api/planillas/abonos/${abonoId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ notas: nuevaNota || null })
+        });
+        if (!res.ok) throw new Error('Error al actualizar nota');
+
+        // Restore display with new note
+        const displayEl = document.getElementById(`abonoNotaDisplay${abonoId}`);
+        if (displayEl) {
+            displayEl.innerHTML = nuevaNota
+                ? nuevaNota.replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                : '<span style="color:var(--text-muted); font-style:italic;">Sin nota</span>';
+        }
+        if (typeof showToast === 'function') showToast('Nota actualizada', 'success');
+    } catch (e) {
+        alert('Error: ' + e.message);
+    }
+}
+
+/** Cancelar edición de nota — restore original display. */
+function cancelarNotaAbono(abonoId) {
+    // Re-render the abonos list to restore original state
+    const prestamoId = document.getElementById('abonoExtPrestamoId').value;
+    // We need the empName — extract from the heading
+    const heading = document.querySelector('#vacSubTabContent h3');
+    const empName = heading ? heading.textContent.replace('Historial de Abonos — ', '') : '';
+    if (prestamoId) {
+        verAbonosPrestamo(parseInt(prestamoId), empName);
+    }
+}
+
+/** Eliminar un abono individual (solo extraordinario). */
+async function eliminarAbonoIndividual(abonoId, prestamoId, empName) {
+    if (!confirm('¿Estás seguro de eliminar este abono? El saldo del préstamo se recalculará.')) return;
+
+    try {
+        const res = await fetch(`/api/planillas/abonos/${abonoId}`, { method: 'DELETE' });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || 'Error al eliminar abono');
+        }
+        const result = await res.json();
+        // Re-render the abonos list
+        verAbonosPrestamo(prestamoId, empName);
+        if (typeof showToast === 'function') {
+            showToast(`Abono eliminado. Nuevo saldo: ₡${_fmtMoney(result.nuevo_saldo)}`, 'success');
+        }
+    } catch (e) {
+        alert('Error: ' + e.message);
+    }
+}
+
+window.toggleAbonoDetalle = toggleAbonoDetalle;
+window.editarNotaAbono = editarNotaAbono;
+window.guardarNotaAbono = guardarNotaAbono;
+window.cancelarNotaAbono = cancelarNotaAbono;
+window.eliminarAbonoIndividual = eliminarAbonoIndividual;
 
 async function generarCartaPrestamo(prestamoId) {
     try {

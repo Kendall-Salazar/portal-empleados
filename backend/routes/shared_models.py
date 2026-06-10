@@ -14,6 +14,7 @@ class Employee(BaseModel):
     forced_libres: bool = False
     forced_quebrado: bool = False
     forced_quebrado_partial: bool = False
+    quebrado_preferido: str = "auto"
     is_jefe_pista: bool = False
     is_practicante: bool = False
     strict_preferences: bool = False
@@ -33,6 +34,7 @@ class Config(BaseModel):
     refuerzo_days_mode: str = "auto"  # "auto" = solver decide, "manual" = usuario elige
     refuerzo_manual_days: List[str] = []  # Días específicos cuando refuerzo_days_mode="manual"
     allow_collision_quebrado: bool = False
+    allow_quebrado_largo: bool = False
     collision_peak_priority: str = "pm"
     use_history: bool = True
     sunday_cycle_index: int = 0  # Legacy, kept for backwards compat
@@ -186,6 +188,7 @@ class GeneratorParamFlags(BaseModel):
     forced_libres: Optional[bool] = None
     forced_quebrado: Optional[bool] = None
     forced_quebrado_partial: Optional[bool] = None
+    quebrado_preferido: Optional[str] = None
     allow_no_rest: Optional[bool] = None
     strict_preferences: Optional[bool] = None
     is_jefe_pista: Optional[bool] = None
