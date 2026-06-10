@@ -116,6 +116,7 @@ async function updateConfig() {
     });
     config.refuerzo_schedule = Object.keys(schedule).length > 0 ? schedule : null;
     config.refuerzo_partial_mode = document.getElementById("refuerzoPartialMode")?.checked || false;
+    config.allow_global_quebrado = document.getElementById("allowGlobalQuebrado")?.checked ?? true;
     config.allow_collision_quebrado = document.getElementById("allowCollisionQuebrado")?.checked || false;
     config.allow_quebrado_largo = document.getElementById("allowQuebradoLargo")?.checked || false;
     config.collision_peak_priority = document.getElementById("collisionPeakPriority")?.value || "pm";

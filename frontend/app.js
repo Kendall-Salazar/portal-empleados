@@ -981,6 +981,10 @@ function renderConfig() {
 
     toggleRefuerzoConfig();
 
+    // Global quebrado toggle
+    const globalQCb = document.getElementById("allowGlobalQuebrado");
+    if (globalQCb) globalQCb.checked = config.allow_global_quebrado !== false;
+
     // Collision Q-shift Config
     const collisionCb = document.getElementById("allowCollisionQuebrado");
     if (collisionCb) collisionCb.checked = config.allow_collision_quebrado || false;
@@ -1795,6 +1799,7 @@ async function generateSchedule() {
     });
     config.refuerzo_schedule = Object.keys(schedule).length > 0 ? schedule : null;
     config.refuerzo_partial_mode = document.getElementById("refuerzoPartialMode")?.checked || false;
+    config.allow_global_quebrado = document.getElementById("allowGlobalQuebrado")?.checked ?? true;
 
     config.allow_collision_quebrado = document.getElementById("allowCollisionQuebrado")?.checked || false;
     config.allow_quebrado_largo = document.getElementById("allowQuebradoLargo")?.checked || false;

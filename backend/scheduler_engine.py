@@ -1727,6 +1727,36 @@ class ShiftScheduler:
             for s in SHIFT_NAMES:
                 model.Add(x[(e, d, s)] == (1 if s == s_code else 0))
 
+        # =========================
+        # DIRECT REFUERZO CONSTRAINTS (partial mode)
+        # Bypass all conditional logic — enforce schedule directly.
+        # =========================
+        if self.config.get('use_refuerzo', False) and self.config.get('refuerzo_partial_mode', False):
+            ref_schedule = self.config.get('refuerzo_schedule', {}) or {}
+            if ref_schedule and "Refuerzo" in self.employees:
+                ref_emp = "Refuerzo"
+                for d in DAYS:
+                    if d in ref_schedule:
+                        times = ref_schedule[d]
+                        if isinstance(times, dict) and times.get("start") and times.get("end"):
+                            sh = _parse_refuerzo_hour(times.get("start"), 7)
+                            eh = _parse_refuerzo_hour(times.get("end"), 12)
+                            if eh == sh:
+                                eh = (sh + 5) % 24
+                            code = f"{MANUAL_SHIFT_PREFIX}{sh:02d}-{eh:02d}"
+                            if code in SHIFT_NAMES:
+                                for s in SHIFT_NAMES:
+                                    model.Add(x[(ref_emp, d, s)] == (1 if s == code else 0))
+                            else:
+                                # Fallback: just force NOT OFF (must work)
+                                model.Add(x[(ref_emp, d, "OFF")] == 0)
+                    else:
+                        # Day not in schedule → MUST be OFF
+                        model.Add(x[(ref_emp, d, "OFF")] == 1)
+                        for s in SHIFT_NAMES:
+                            if s != "OFF":
+                                model.Add(x[(ref_emp, d, s)] == 0)
+
         closed_days = [d for d in DAYS if is_special_closed(d)]
         for e in self.employees:
             for d in closed_days:
@@ -2839,6 +2869,24 @@ class ShiftScheduler:
                 model.Add(shortfall_pm >= 0)
                 peak_penalties.append(2000000 * shortfall_pm)
         
+        # =========================
+        # GLOBAL QUEBRADO TOGGLE
+        # When disabled, block ALL quebrado shifts for everyone except
+        # forced_quebrado/forced_quebrado_partial employees (params panel override).
+        # If coverage fails without Q, the solver returns INFEASIBLE.
+        # =========================
+        allow_global_q = self.config.get('allow_global_quebrado', True)
+        if not allow_global_q:
+            ALL_Q = ["Q1_05-11+17-20", "Q2_07-11+17-20", "Q3_05-11+17-22"]
+            for e in self.employees:
+                is_forced_q = self.emp_data[e].get('forced_quebrado', False)
+                is_forced_qp = self.emp_data[e].get('forced_quebrado_partial', False)
+                if is_forced_q or is_forced_qp:
+                    continue  # Respect params panel override
+                for d in DAYS:
+                    for qs in ALL_Q:
+                        model.Add(x[(e, d, qs)] == 0)
+
         # =========================
         # REFUERZO LOGIC
         # =========================

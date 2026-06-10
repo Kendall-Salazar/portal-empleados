@@ -692,6 +692,9 @@ function renderConfig() {
     const partialCb = document.getElementById("refuerzoPartialMode");
     if (partialCb) partialCb.checked = config.refuerzo_partial_mode || false;
 
+    const globalQCb = document.getElementById("allowGlobalQuebrado");
+    if (globalQCb) globalQCb.checked = config.allow_global_quebrado !== false;
+
     toggleRefuerzoConfig();
     const collisionCb = document.getElementById("allowCollisionQuebrado");
     if (collisionCb) collisionCb.checked = config.allow_collision_quebrado || false;
