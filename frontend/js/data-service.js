@@ -664,19 +664,32 @@ function renderConfig() {
     if (refuerzoCb) refuerzoCb.checked = config.use_refuerzo || false;
     const refuerzoTypeSel = document.getElementById("refuerzoTypeSelect");
     if (refuerzoTypeSel) refuerzoTypeSel.value = config.refuerzo_type || "personalizado";
-    const refuerzoStartInput = document.getElementById("refuerzoStartTime");
-    if (refuerzoStartInput) refuerzoStartInput.value = config.refuerzo_start || "07:00";
-    const refuerzoEndInput = document.getElementById("refuerzoEndTime");
-    if (refuerzoEndInput) refuerzoEndInput.value = config.refuerzo_end || "12:00";
-    const refuerzoDaysModeSel = document.getElementById("refuerzoDaysMode");
-    if (refuerzoDaysModeSel) refuerzoDaysModeSel.value = config.refuerzo_days_mode || "auto";
-    const manualDays = config.refuerzo_manual_days || [];
-    ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"].forEach(day => {
-        const cb = document.getElementById("refuerzoDay" + day);
-        if (cb) cb.checked = manualDays.includes(day);
+
+    // Load per-day schedule (or build from legacy format)
+    const refDays = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+    const schedule = config.refuerzo_schedule || {};
+    const hasLegacy = config.refuerzo_manual_days && config.refuerzo_manual_days.length > 0;
+    refDays.forEach(day => {
+        const cb = document.getElementById("refDayActive" + day);
+        const startInput = document.getElementById("refDayStart" + day);
+        const endInput = document.getElementById("refDayEnd" + day);
+        if (!cb || !startInput || !endInput) return;
+
+        if (schedule[day]) {
+            cb.checked = true;
+            startInput.value = schedule[day].start || "07:00";
+            endInput.value = schedule[day].end || "12:00";
+        } else if (hasLegacy && config.refuerzo_manual_days.includes(day)) {
+            cb.checked = true;
+            startInput.value = config.refuerzo_start || "07:00";
+            endInput.value = config.refuerzo_end || "12:00";
+        } else {
+            cb.checked = false;
+            startInput.value = "07:00";
+            endInput.value = "12:00";
+        }
     });
     toggleRefuerzoConfig();
-    toggleRefuerzoDaysConfig();
     const collisionCb = document.getElementById("allowCollisionQuebrado");
     if (collisionCb) collisionCb.checked = config.allow_collision_quebrado || false;
     const q3Cb = document.getElementById("allowQuebradoLargo");

@@ -101,7 +101,20 @@ async function updateConfig() {
     const refuerzoStart = document.getElementById("refuerzoStartTime")?.value || "07:00";
     const refuerzoEnd = document.getElementById("refuerzoEndTime")?.value || "12:00";
     config.night_mode = mode; config.fixed_night_person = person; config.allow_long_shifts = allowLong;
-    config.use_refuerzo = useRefuerzo; config.refuerzo_type = refuerzoType; config.refuerzo_start = refuerzoStart; config.refuerzo_end = refuerzoEnd;
+    config.use_refuerzo = useRefuerzo; config.refuerzo_type = refuerzoType;
+
+    // Per-day refuerzo schedule
+    const refDays = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+    const schedule = {};
+    refDays.forEach(day => {
+        const cb = document.getElementById("refDayActive" + day);
+        if (cb && cb.checked) {
+            const start = document.getElementById("refDayStart" + day)?.value || "07:00";
+            const end = document.getElementById("refDayEnd" + day)?.value || "12:00";
+            schedule[day] = { start, end };
+        }
+    });
+    config.refuerzo_schedule = Object.keys(schedule).length > 0 ? schedule : null;
     config.allow_collision_quebrado = document.getElementById("allowCollisionQuebrado")?.checked || false;
     config.allow_quebrado_largo = document.getElementById("allowQuebradoLargo")?.checked || false;
     config.collision_peak_priority = document.getElementById("collisionPeakPriority")?.value || "pm";

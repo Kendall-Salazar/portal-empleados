@@ -36,16 +36,19 @@ async function generateSchedule() {
     config.allow_long_shifts = document.getElementById("allowLongShifts").checked;
     config.use_refuerzo = document.getElementById("useRefuerzo")?.checked || false;
     config.refuerzo_type = document.getElementById("refuerzoTypeSelect")?.value || "personalizado";
-    config.refuerzo_start = document.getElementById("refuerzoStartTime")?.value || "07:00";
-    config.refuerzo_end = document.getElementById("refuerzoEndTime")?.value || "12:00";
-    config.refuerzo_days_mode = document.getElementById("refuerzoDaysMode")?.value || "auto";
-    if (config.refuerzo_days_mode === "manual") {
-        const selectedDays = [];
-        ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"].forEach(day => {
-            const cb = document.getElementById("refuerzoDay" + day); if (cb && cb.checked) selectedDays.push(day);
-        });
-        config.refuerzo_manual_days = selectedDays;
-    } else { config.refuerzo_manual_days = []; }
+
+    // Per-day refuerzo schedule
+    const refDays = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+    const schedule = {};
+    refDays.forEach(day => {
+        const cb = document.getElementById("refDayActive" + day);
+        if (cb && cb.checked) {
+            const start = document.getElementById("refDayStart" + day)?.value || "07:00";
+            const end = document.getElementById("refDayEnd" + day)?.value || "12:00";
+            schedule[day] = { start, end };
+        }
+    });
+    config.refuerzo_schedule = Object.keys(schedule).length > 0 ? schedule : null;
     config.allow_collision_quebrado = document.getElementById("allowCollisionQuebrado")?.checked || false;
     config.allow_quebrado_largo = document.getElementById("allowQuebradoLargo")?.checked || false;
     config.collision_peak_priority = document.getElementById("collisionPeakPriority")?.value || "pm";

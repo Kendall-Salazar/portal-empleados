@@ -583,62 +583,73 @@
                                             <option value="sabado">Solo Sábado</option>
                                         </select>
                                         <div id="refuerzoCustomTimeContainer" class="fade-in" style="margin-top: 0.85rem;">
-                                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
-                                                <div class="input-group">
-                                                    <label style="font-size: 0.8rem; color: var(--text-muted);">Hora inicio</label>
-                                                    <input type="time" id="refuerzoStartTime" step="3600" value="07:00" onchange="updateConfig()">
+                                            <label style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.5rem; display: block;">Horario por día <span style="color:var(--text-dim);font-weight:400;">— solo los días activos serán trabajados</span></label>
+                                            <div style="display:flex; flex-direction:column; gap:0.3rem;">
+                                                <div style="display:grid; grid-template-columns:55px 1fr 1fr; gap:0.4rem; align-items:center; padding:0.25rem 0; border-bottom:1px solid var(--border-color); font-size:0.7rem; color:var(--text-muted); font-weight:600;">
+                                                    <span>Día</span>
+                                                    <span>Inicio</span>
+                                                    <span>Final</span>
                                                 </div>
-                                                <div class="input-group">
-                                                    <label style="font-size: 0.8rem; color: var(--text-muted);">Hora final</label>
-                                                    <input type="time" id="refuerzoEndTime" step="3600" value="12:00" onchange="updateConfig()">
+                                                <!-- Lun -->
+                                                <div style="display:grid; grid-template-columns:55px 1fr 1fr; gap:0.4rem; align-items:center;">
+                                                    <label style="cursor:pointer; display:flex; align-items:center; gap:0.35rem; font-size:0.82rem; color:var(--text-main); font-weight:500;">
+                                                        <input type="checkbox" id="refDayActiveLun" onchange="updateConfig()" style="accent-color:#6366f1; width:14px; height:14px;"> Lun
+                                                    </label>
+                                                    <input type="time" id="refDayStartLun" step="3600" value="07:00" onchange="updateConfig()" style="width:100%; padding:0.35rem 0.45rem; border-radius:6px; border:1px solid var(--border-color); background:var(--surface-2); color:var(--text-main); font-size:0.8rem;">
+                                                    <input type="time" id="refDayEndLun" step="3600" value="12:00" onchange="updateConfig()" style="width:100%; padding:0.35rem 0.45rem; border-radius:6px; border:1px solid var(--border-color); background:var(--surface-2); color:var(--text-main); font-size:0.8rem;">
+                                                </div>
+                                                <!-- Mar -->
+                                                <div style="display:grid; grid-template-columns:55px 1fr 1fr; gap:0.4rem; align-items:center;">
+                                                    <label style="cursor:pointer; display:flex; align-items:center; gap:0.35rem; font-size:0.82rem; color:var(--text-main); font-weight:500;">
+                                                        <input type="checkbox" id="refDayActiveMar" onchange="updateConfig()" style="accent-color:#6366f1; width:14px; height:14px;"> Mar
+                                                    </label>
+                                                    <input type="time" id="refDayStartMar" step="3600" value="07:00" onchange="updateConfig()" style="width:100%; padding:0.35rem 0.45rem; border-radius:6px; border:1px solid var(--border-color); background:var(--surface-2); color:var(--text-main); font-size:0.8rem;">
+                                                    <input type="time" id="refDayEndMar" step="3600" value="12:00" onchange="updateConfig()" style="width:100%; padding:0.35rem 0.45rem; border-radius:6px; border:1px solid var(--border-color); background:var(--surface-2); color:var(--text-main); font-size:0.8rem;">
+                                                </div>
+                                                <!-- Mié -->
+                                                <div style="display:grid; grid-template-columns:55px 1fr 1fr; gap:0.4rem; align-items:center;">
+                                                    <label style="cursor:pointer; display:flex; align-items:center; gap:0.35rem; font-size:0.82rem; color:var(--text-main); font-weight:500;">
+                                                        <input type="checkbox" id="refDayActiveMié" onchange="updateConfig()" style="accent-color:#6366f1; width:14px; height:14px;"> Mié
+                                                    </label>
+                                                    <input type="time" id="refDayStartMié" step="3600" value="07:00" onchange="updateConfig()" style="width:100%; padding:0.35rem 0.45rem; border-radius:6px; border:1px solid var(--border-color); background:var(--surface-2); color:var(--text-main); font-size:0.8rem;">
+                                                    <input type="time" id="refDayEndMié" step="3600" value="12:00" onchange="updateConfig()" style="width:100%; padding:0.35rem 0.45rem; border-radius:6px; border:1px solid var(--border-color); background:var(--surface-2); color:var(--text-main); font-size:0.8rem;">
+                                                </div>
+                                                <!-- Jue -->
+                                                <div style="display:grid; grid-template-columns:55px 1fr 1fr; gap:0.4rem; align-items:center;">
+                                                    <label style="cursor:pointer; display:flex; align-items:center; gap:0.35rem; font-size:0.82rem; color:var(--text-main); font-weight:500;">
+                                                        <input type="checkbox" id="refDayActiveJue" onchange="updateConfig()" style="accent-color:#6366f1; width:14px; height:14px;"> Jue
+                                                    </label>
+                                                    <input type="time" id="refDayStartJue" step="3600" value="07:00" onchange="updateConfig()" style="width:100%; padding:0.35rem 0.45rem; border-radius:6px; border:1px solid var(--border-color); background:var(--surface-2); color:var(--text-main); font-size:0.8rem;">
+                                                    <input type="time" id="refDayEndJue" step="3600" value="12:00" onchange="updateConfig()" style="width:100%; padding:0.35rem 0.45rem; border-radius:6px; border:1px solid var(--border-color); background:var(--surface-2); color:var(--text-main); font-size:0.8rem;">
+                                                </div>
+                                                <!-- Vie -->
+                                                <div style="display:grid; grid-template-columns:55px 1fr 1fr; gap:0.4rem; align-items:center;">
+                                                    <label style="cursor:pointer; display:flex; align-items:center; gap:0.35rem; font-size:0.82rem; color:var(--text-main); font-weight:500;">
+                                                        <input type="checkbox" id="refDayActiveVie" onchange="updateConfig()" style="accent-color:#6366f1; width:14px; height:14px;"> Vie
+                                                    </label>
+                                                    <input type="time" id="refDayStartVie" step="3600" value="07:00" onchange="updateConfig()" style="width:100%; padding:0.35rem 0.45rem; border-radius:6px; border:1px solid var(--border-color); background:var(--surface-2); color:var(--text-main); font-size:0.8rem;">
+                                                    <input type="time" id="refDayEndVie" step="3600" value="12:00" onchange="updateConfig()" style="width:100%; padding:0.35rem 0.45rem; border-radius:6px; border:1px solid var(--border-color); background:var(--surface-2); color:var(--text-main); font-size:0.8rem;">
+                                                </div>
+                                                <!-- Sáb -->
+                                                <div style="display:grid; grid-template-columns:55px 1fr 1fr; gap:0.4rem; align-items:center;">
+                                                    <label style="cursor:pointer; display:flex; align-items:center; gap:0.35rem; font-size:0.82rem; color:var(--text-main); font-weight:500;">
+                                                        <input type="checkbox" id="refDayActiveSáb" onchange="updateConfig()" style="accent-color:#6366f1; width:14px; height:14px;"> Sáb
+                                                    </label>
+                                                    <input type="time" id="refDayStartSáb" step="3600" value="07:00" onchange="updateConfig()" style="width:100%; padding:0.35rem 0.45rem; border-radius:6px; border:1px solid var(--border-color); background:var(--surface-2); color:var(--text-main); font-size:0.8rem;">
+                                                    <input type="time" id="refDayEndSáb" step="3600" value="12:00" onchange="updateConfig()" style="width:100%; padding:0.35rem 0.45rem; border-radius:6px; border:1px solid var(--border-color); background:var(--surface-2); color:var(--text-main); font-size:0.8rem;">
+                                                </div>
+                                                <!-- Dom -->
+                                                <div style="display:grid; grid-template-columns:55px 1fr 1fr; gap:0.4rem; align-items:center;">
+                                                    <label style="cursor:pointer; display:flex; align-items:center; gap:0.35rem; font-size:0.82rem; color:var(--text-main); font-weight:500;">
+                                                        <input type="checkbox" id="refDayActiveDom" onchange="updateConfig()" style="accent-color:#6366f1; width:14px; height:14px;"> Dom
+                                                    </label>
+                                                    <input type="time" id="refDayStartDom" step="3600" value="07:00" onchange="updateConfig()" style="width:100%; padding:0.35rem 0.45rem; border-radius:6px; border:1px solid var(--border-color); background:var(--surface-2); color:var(--text-main); font-size:0.8rem;">
+                                                    <input type="time" id="refDayEndDom" step="3600" value="12:00" onchange="updateConfig()" style="width:100%; padding:0.35rem 0.45rem; border-radius:6px; border:1px solid var(--border-color); background:var(--surface-2); color:var(--text-main); font-size:0.8rem;">
                                                 </div>
                                             </div>
-                                            <small style="display:block; margin-top: 0.45rem; font-size: 0.72rem; color: var(--text-muted);">Rango en que el refuerzo estará disponible.</small>
-
-                                            <!-- Modo de días del refuerzo -->
-                                            <div style="margin-top: 1rem; padding-top: 0.85rem; border-top: 1px solid var(--border-color);">
-                                                <label style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.5rem; display: block;">Modo de días</label>
-                                                <select id="refuerzoDaysMode" onchange="toggleRefuerzoDaysConfig(); updateConfig()" style="width: 100%; padding: 0.5rem; border-radius: 8px; border: 1px solid var(--border-color); background: var(--surface-2); color: var(--text-main); font-size: 0.85rem;">
-                                                    <option value="auto">Automático (Solver decide)</option>
-                                                    <option value="manual">Manual (Elegir días)</option>
-                                                </select>
-                                            </div>
-
-                                            <!-- Días manuales del refuerzo -->
-                                            <div id="refuerzoManualDaysContainer" class="hidden fade-in" style="margin-top: 0.85rem;">
-                                                <label style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.5rem; display: block;">Días de trabajo del refuerzo</label>
-                                                <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-                                                    <label class="day-checkbox" style="cursor: pointer;">
-                                                        <input type="checkbox" id="refuerzoDayLun" value="Lun" onchange="updateConfig()" style="display: none;">
-                                                        <span class="day-checkbox-label" style="padding: 0.4rem 0.8rem; border-radius: 6px; border: 1px solid var(--border-color); font-size: 0.8rem; display: inline-block;">Lun</span>
-                                                    </label>
-                                                    <label class="day-checkbox" style="cursor: pointer;">
-                                                        <input type="checkbox" id="refuerzoDayMar" value="Mar" onchange="updateConfig()" style="display: none;">
-                                                        <span class="day-checkbox-label" style="padding: 0.4rem 0.8rem; border-radius: 6px; border: 1px solid var(--border-color); font-size: 0.8rem; display: inline-block;">Mar</span>
-                                                    </label>
-                                                    <label class="day-checkbox" style="cursor: pointer;">
-                                                        <input type="checkbox" id="refuerzoDayMié" value="Mié" onchange="updateConfig()" style="display: none;">
-                                                        <span class="day-checkbox-label" style="padding: 0.4rem 0.8rem; border-radius: 6px; border: 1px solid var(--border-color); font-size: 0.8rem; display: inline-block;">Mié</span>
-                                                    </label>
-                                                    <label class="day-checkbox" style="cursor: pointer;">
-                                                        <input type="checkbox" id="refuerzoDayJue" value="Jue" onchange="updateConfig()" style="display: none;">
-                                                        <span class="day-checkbox-label" style="padding: 0.4rem 0.8rem; border-radius: 6px; border: 1px solid var(--border-color); font-size: 0.8rem; display: inline-block;">Jue</span>
-                                                    </label>
-                                                    <label class="day-checkbox" style="cursor: pointer;">
-                                                        <input type="checkbox" id="refuerzoDayVie" value="Vie" onchange="updateConfig()" style="display: none;">
-                                                        <span class="day-checkbox-label" style="padding: 0.4rem 0.8rem; border-radius: 6px; border: 1px solid var(--border-color); font-size: 0.8rem; display: inline-block;">Vie</span>
-                                                    </label>
-                                                    <label class="day-checkbox" style="cursor: pointer;">
-                                                        <input type="checkbox" id="refuerzoDaySáb" value="Sáb" onchange="updateConfig()" style="display: none;">
-                                                        <span class="day-checkbox-label" style="padding: 0.4rem 0.8rem; border-radius: 6px; border: 1px solid var(--border-color); font-size: 0.8rem; display: inline-block;">Sáb</span>
-                                                    </label>
-                                                    <label class="day-checkbox" style="cursor: pointer;">
-                                                        <input type="checkbox" id="refuerzoDayDom" value="Dom" onchange="updateConfig()" style="display: none;">
-                                                        <span class="day-checkbox-label" style="padding: 0.4rem 0.8rem; border-radius: 6px; border: 1px solid var(--border-color); font-size: 0.8rem; display: inline-block;">Dom</span>
-                                                    </label>
-                                                </div>
-                                                <small style="display:block; margin-top: 0.45rem; font-size: 0.72rem; color: var(--text-muted);">Selecciona los días específicos donde trabaja el refuerzo.</small>
-                                            </div>
+                                            <small style="display:block; margin-top: 0.6rem; font-size: 0.72rem; color: var(--text-muted); line-height:1.4;">
+                                                <i class="fa-solid fa-circle-info" style="color:#6366f1;"></i> Marcá el día y definí su horario. El refuerzo <strong>DEBE</strong> trabajar los días activos con el horario indicado. Si un día no está marcado, el refuerzo no trabaja.
+                                            </small>
                                         </div>
                                     </div>
                                     </div>

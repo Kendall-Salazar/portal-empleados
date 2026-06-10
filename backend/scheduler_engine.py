@@ -424,6 +424,12 @@ def _parse_refuerzo_hour(value, default_hour):
 
 
 def sync_refuerzo_custom_shift(config):
+    """Creates per-day shift codes for refuerzo schedule.
+
+    Returns dict {day: shift_code} for personalizado with schedules,
+    a single shift code string for legacy format,
+    or None if not personalizado / no schedule.
+    """
     global SHIFT_NAMES
 
     dynamic_codes = [code for code in list(SHIFTS.keys()) if code.startswith(MANUAL_SHIFT_PREFIX)]
@@ -435,6 +441,37 @@ def sync_refuerzo_custom_shift(config):
     if (config or {}).get("refuerzo_type") != "personalizado":
         return None
 
+    schedule = (config or {}).get("refuerzo_schedule", None)
+
+    # New per-day schedule format
+    if schedule and isinstance(schedule, dict) and len(schedule) > 0:
+        day_shift_map = {}
+        created = {}  # (start_hour, end_hour) -> code
+        for day, times in schedule.items():
+            if not isinstance(times, dict):
+                continue
+            start_hour = _parse_refuerzo_hour(times.get("start"), 7)
+            end_hour = _parse_refuerzo_hour(times.get("end"), 12)
+            if end_hour == start_hour:
+                end_hour = (start_hour + 5) % 24
+
+            key = (start_hour, end_hour)
+            if key not in created:
+                code = f"{MANUAL_SHIFT_PREFIX}{start_hour:02d}-{end_hour:02d}"
+                effective_end = end_hour + 24 if end_hour <= start_hour else end_hour
+                SHIFTS[code] = set(range(start_hour, effective_end))
+                if code not in SHIFT_NAMES:
+                    SHIFT_NAMES.append(code)
+                created[key] = code
+
+            day_shift_map[day] = created[key]
+
+        # Remove duplicate entries in SHIFT_NAMES (keep order)
+        seen = set()
+        SHIFT_NAMES = [s for s in SHIFT_NAMES if not (s in seen or seen.add(s))]
+        return day_shift_map
+
+    # Legacy format: single start/end + manual_days
     start_hour = _parse_refuerzo_hour((config or {}).get("refuerzo_start"), 7)
     end_hour = _parse_refuerzo_hour((config or {}).get("refuerzo_end"), 12)
     if end_hour == start_hour:
@@ -2736,7 +2773,7 @@ class ShiftScheduler:
                 peak_penalties.append(2000000 * shortfall_pm)
         
         # =========================
-        # REFUERZO LOGIC - Puede ser automático (solver decide) o manual (usuario elige días)
+        # REFUERZO LOGIC
         # =========================
         if use_refuerzo:
             refuerzo = "Refuerzo"
@@ -2745,13 +2782,22 @@ class ShiftScheduler:
             ref_manual_days = self.config.get('refuerzo_manual_days', [])
             saturday_only_refuerzo = ref_type == "sabado"
             effective_ref_type = "automatico" if saturday_only_refuerzo else ref_type
-            
+
+            # Detect per-day schedule (new format) vs legacy single shift
+            has_per_day_schedule = isinstance(current_refuerzo_custom_shift, dict)
+            has_legacy_shift = isinstance(current_refuerzo_custom_shift, str)
+
             # Determinar días activos del refuerzo
             refuerzo_active_days = {}
-            
+
             # Si modo manual, usar días específicos; sino usar collision days
-            use_manual_days = ref_days_mode == "manual" and ref_manual_days
-            
+            if has_per_day_schedule:
+                # NEW: per-day schedule — schedule keys ARE the manual days
+                use_manual_days = True
+                ref_manual_days = list(current_refuerzo_custom_shift.keys())
+            else:
+                use_manual_days = ref_days_mode == "manual" and ref_manual_days
+
             for d in DAYS:
                 if is_special_closed(d) or is_special_sunday_like(d):
                     model.Add(x[(refuerzo, d, "OFF")] == 1)
@@ -2768,7 +2814,7 @@ class ShiftScheduler:
                     continue
 
                 if use_manual_days:
-                    # Modo manual: Refuerzo trabaja solo en días seleccionados por usuario
+                    # Modo manual: Refuerzo trabaja solo en días seleccionados
                     if d in ref_manual_days:
                         model.Add(x[(refuerzo, d, "OFF")] == 0)
                         refuerzo_active_days[d] = model.NewConstant(1)
@@ -2776,48 +2822,59 @@ class ShiftScheduler:
                         model.Add(x[(refuerzo, d, "OFF")] == 1)
                         refuerzo_active_days[d] = model.NewConstant(0)
                 else:
-                    # Modo automático: Refuerzo trabaja en collision days (default)
-                    # HARD: If collision day -> Refuerzo MUST work
+                    # Modo automático: Refuerzo trabaja en collision days
                     model.Add(x[(refuerzo, d, "OFF")] == 0).OnlyEnforceIf(collision_vars[d])
-                    # HARD: If NOT collision day -> Refuerzo MUST be OFF
                     model.Add(x[(refuerzo, d, "OFF")] == 1).OnlyEnforceIf(collision_vars[d].Not())
-                    
                     refuerzo_active_days[d] = collision_vars[d]
-            
-            # Turnos Permitidos segun preferencia
-            allowed_shifts_refuerzo = ["OFF"]
-            if effective_ref_type == 'personalizado' and current_refuerzo_custom_shift:
-                allowed_shifts_refuerzo.append(current_refuerzo_custom_shift)
-            elif standard_mode:
-                if effective_ref_type == 'nocturno':
-                    allowed_shifts_refuerzo.extend(["R2_16-20"])
-                elif effective_ref_type == 'diurno':
-                    allowed_shifts_refuerzo.extend([default_diurno_refuerzo_shift])
-                else: # automatico
-                    allowed_shifts_refuerzo.extend([default_diurno_refuerzo_shift, "R2_16-20"])
+
+            # Turnos Permitidos — per-day schedule gets its own shift per day
+            if has_per_day_schedule:
+                for d in DAYS:
+                    # If day is active, only allow its specific shift + OFF
+                    if d in current_refuerzo_custom_shift:
+                        day_shift = current_refuerzo_custom_shift[d]
+                        for s in SHIFT_NAMES:
+                            if s != day_shift and s != "OFF":
+                                model.Add(x[(refuerzo, d, s)] == 0)
+                    else:
+                        # Day is OFF — only allow OFF
+                        for s in SHIFT_NAMES:
+                            if s != "OFF":
+                                model.Add(x[(refuerzo, d, s)] == 0)
             else:
-                if effective_ref_type == 'nocturno':
-                    allowed_shifts_refuerzo.extend(["R2_16-20", "T17_16-23", "N_22-05", "T10_15-22", "T12_14-22", "T13_16-22", "D2_14-22", "D3_15-23"])
-                elif effective_ref_type == 'diurno':
-                    allowed_shifts_refuerzo.extend([
-                        default_diurno_refuerzo_shift, "T1_05-13", "T16_05-14", "T2_06-14", "D1_05-13",
-                        "T3_07-15", "T5_09-17",
-                        "T8_13-20", "T13_16-22", "D2_14-22"
-                    ])
-                else: # automatico
-                    # Allowed to pick either 4-hour shifts OR standard 8-hour shifts
-                    allowed_shifts_refuerzo.extend([
-                        default_diurno_refuerzo_shift, "R2_16-20",
-                        "T1_05-13", "T16_05-14", "T2_06-14", "D1_05-13",
-                        "T3_07-15", "T5_09-17", "T17_16-23",
-                        "T8_13-20", "T13_16-22", "T12_14-22", "D2_14-22", "D3_15-23", 
-                        "N_22-05", "Q3_05-11+17-22"
-                    ])
-                
-            for d in DAYS:
-                for s in SHIFT_NAMES:
-                    if s not in allowed_shifts_refuerzo:
-                        model.Add(x[(refuerzo, d, s)] == 0)
+                # Legacy: single shift code or automatic/diurno/nocturno/sabado
+                allowed_shifts_refuerzo = ["OFF"]
+                if effective_ref_type == 'personalizado' and has_legacy_shift:
+                    allowed_shifts_refuerzo.append(current_refuerzo_custom_shift)
+                elif standard_mode:
+                    if effective_ref_type == 'nocturno':
+                        allowed_shifts_refuerzo.extend(["R2_16-20"])
+                    elif effective_ref_type == 'diurno':
+                        allowed_shifts_refuerzo.extend([default_diurno_refuerzo_shift])
+                    else: # automatico
+                        allowed_shifts_refuerzo.extend([default_diurno_refuerzo_shift, "R2_16-20"])
+                else:
+                    if effective_ref_type == 'nocturno':
+                        allowed_shifts_refuerzo.extend(["R2_16-20", "T17_16-23", "N_22-05", "T10_15-22", "T12_14-22", "T13_16-22", "D2_14-22", "D3_15-23"])
+                    elif effective_ref_type == 'diurno':
+                        allowed_shifts_refuerzo.extend([
+                            default_diurno_refuerzo_shift, "T1_05-13", "T16_05-14", "T2_06-14", "D1_05-13",
+                            "T3_07-15", "T5_09-17",
+                            "T8_13-20", "T13_16-22", "D2_14-22"
+                        ])
+                    else: # automatico
+                        allowed_shifts_refuerzo.extend([
+                            default_diurno_refuerzo_shift, "R2_16-20",
+                            "T1_05-13", "T16_05-14", "T2_06-14", "D1_05-13",
+                            "T3_07-15", "T5_09-17", "T17_16-23",
+                            "T8_13-20", "T13_16-22", "T12_14-22", "D2_14-22", "D3_15-23",
+                            "N_22-05", "Q3_05-11+17-22"
+                        ])
+
+                for d in DAYS:
+                    for s in SHIFT_NAMES:
+                        if s not in allowed_shifts_refuerzo:
+                            model.Add(x[(refuerzo, d, s)] == 0)
 
         # =========================
         # SOFT: Seamless Handoffs (Relevos Continuos)
@@ -3154,10 +3211,17 @@ class ShiftScheduler:
 
         # O5. Preference for Refuerzo to take 4-hour shifts over 8-hour shifts
         if "Refuerzo" in self.employees:
+            # Collect refuerzo shift codes (dict or single string)
+            refuerzo_shifts = set()
+            if isinstance(current_refuerzo_custom_shift, dict):
+                refuerzo_shifts = set(current_refuerzo_custom_shift.values())
+            elif isinstance(current_refuerzo_custom_shift, str):
+                refuerzo_shifts.add(current_refuerzo_custom_shift)
+            refuerzo_shifts.update(["OFF", "VAC", "PERM", "R1_07-11", "R2_16-20", default_diurno_refuerzo_shift])
             for d in DAYS:
                 for s in SHIFT_NAMES:
                     # If shift is NOT OFF and NOT a 4-hour shift and NOT VAC/PERM
-                    if s not in ["OFF", "VAC", "PERM", "R1_07-11", "R2_16-20", current_refuerzo_custom_shift, default_diurno_refuerzo_shift]:
+                    if s not in refuerzo_shifts:
                         # Much higher penalty (3000) to force Refuerzo to stay 4-hours (R1/R2)
                         # unless coverage needs are absolutely desperate.
                         penalties.append(3000 * x[("Refuerzo", d, s)])
