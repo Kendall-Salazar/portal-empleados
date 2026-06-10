@@ -400,9 +400,11 @@ async function loadVacSubEquipo() {
 
             const card = document.createElement('div');
 
-            card.className = 'ecard';
+            card.className = 'ecard ecard-collapsed';
 
             card.style.animationDelay = `${idx * 0.04}s`;
+
+            card.setAttribute('onclick', "event.currentTarget.classList.toggle('ecard-collapsed')");
 
             card.innerHTML = `
 
@@ -426,7 +428,9 @@ async function loadVacSubEquipo() {
 
                     <div class="ecard-actions">
 
-                        <button class="ecard-btn" onclick='openUnifiedEmpModal(${_esc(JSON.stringify(emp))})' title="Editar"><i class="fa-solid fa-pen-to-square"></i></button>
+                        <button class="ecard-btn" onclick="event.stopPropagation(); openUnifiedEmpModal(${_esc(JSON.stringify(emp))})" title="Editar"><i class="fa-solid fa-pen-to-square"></i></button>
+
+                        <span class="ecard-chevron"><i class="fa-solid fa-chevron-down"></i></span>
 
                     </div>
 
@@ -546,13 +550,15 @@ async function loadVacSubInactivos() {
 
             const card = document.createElement('div');
 
-            card.className = 'ecard';
+            card.className = 'ecard ecard-collapsed';
 
             card.style.animationDelay = `${idx * 0.04}s`;
 
             card.style.opacity = '0.6';
 
             card.style.border = '1px solid rgba(239, 68, 68, 0.3)';
+
+            card.setAttribute('onclick', "event.currentTarget.classList.toggle('ecard-collapsed')");
 
 
 
@@ -576,9 +582,11 @@ async function loadVacSubInactivos() {
 
                     <div class="ecard-actions">
 
-                        <button class="ecard-btn" onclick='openUnifiedEmpModal(${_esc(JSON.stringify(emp))})' title="Reactivar / Editar"><i class="fa-solid fa-rotate-left"></i></button>
+                        <button class="ecard-btn" onclick="event.stopPropagation(); openUnifiedEmpModal(${_esc(JSON.stringify(emp))})" title="Reactivar / Editar"><i class="fa-solid fa-rotate-left"></i></button>
 
-                        <button class="ecard-btn ecard-btn-danger" style="background: rgba(239, 68, 68, 0.15);" onclick="deletePlanillaEmp(${emp.id})" title="Borrado Permanente"><i class="fa-solid fa-trash-can"></i></button>
+                        <button class="ecard-btn ecard-btn-danger" style="background: rgba(239, 68, 68, 0.15);" onclick="event.stopPropagation(); deletePlanillaEmp(${emp.id})" title="Borrado Permanente"><i class="fa-solid fa-trash-can"></i></button>
+
+                        <span class="ecard-chevron"><i class="fa-solid fa-chevron-down"></i></span>
 
                     </div>
 
