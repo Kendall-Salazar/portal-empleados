@@ -1727,36 +1727,6 @@ class ShiftScheduler:
             for s in SHIFT_NAMES:
                 model.Add(x[(e, d, s)] == (1 if s == s_code else 0))
 
-        # =========================
-        # DIRECT REFUERZO CONSTRAINTS (partial mode)
-        # Bypass all conditional logic — enforce schedule directly.
-        # =========================
-        if self.config.get('use_refuerzo', False) and self.config.get('refuerzo_partial_mode', False):
-            ref_schedule = self.config.get('refuerzo_schedule', {}) or {}
-            if ref_schedule and "Refuerzo" in self.employees:
-                ref_emp = "Refuerzo"
-                for d in DAYS:
-                    if d in ref_schedule:
-                        times = ref_schedule[d]
-                        if isinstance(times, dict) and times.get("start") and times.get("end"):
-                            sh = _parse_refuerzo_hour(times.get("start"), 7)
-                            eh = _parse_refuerzo_hour(times.get("end"), 12)
-                            if eh == sh:
-                                eh = (sh + 5) % 24
-                            code = f"{MANUAL_SHIFT_PREFIX}{sh:02d}-{eh:02d}"
-                            if code in SHIFT_NAMES:
-                                for s in SHIFT_NAMES:
-                                    model.Add(x[(ref_emp, d, s)] == (1 if s == code else 0))
-                            else:
-                                # Fallback: just force NOT OFF (must work)
-                                model.Add(x[(ref_emp, d, "OFF")] == 0)
-                    else:
-                        # Day not in schedule → MUST be OFF
-                        model.Add(x[(ref_emp, d, "OFF")] == 1)
-                        for s in SHIFT_NAMES:
-                            if s != "OFF":
-                                model.Add(x[(ref_emp, d, s)] == 0)
-
         closed_days = [d for d in DAYS if is_special_closed(d)]
         for e in self.employees:
             for d in closed_days:
