@@ -1550,7 +1550,16 @@ class ShiftScheduler:
         
         candidates = [e for e in self.flexibles if e in self.night_replacements]
         if candidates:
-            model.Add(sum(persona_hace_libres[e] for e in candidates) == 1)
+            forced_libres_set = [e for e in candidates if self.emp_data[e].get('forced_libres', False)]
+            if forced_libres_set:
+                # Forced libres: all flagged employees MUST be libres persons
+                for e in forced_libres_set:
+                    model.Add(persona_hace_libres[e] == 1)
+                # Total: at least all forced, at most forced + 1 extra
+                model.Add(sum(persona_hace_libres[e] for e in candidates) >= len(forced_libres_set))
+                model.Add(sum(persona_hace_libres[e] for e in candidates) <= len(forced_libres_set) + 1)
+            else:
+                model.Add(sum(persona_hace_libres[e] for e in candidates) == 1)
         
         # =========================
         # RESTRICCIÓN: HORARIOS CONSISTENTES
