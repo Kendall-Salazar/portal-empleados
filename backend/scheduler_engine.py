@@ -3776,10 +3776,13 @@ class ShiftScheduler:
                 # Caso exacto de Keilor: T3_07-15 configurado → no dejar que el historial
                 # PM lo arrastre a tarde. SOFT_PREF_BOOST (3M) > penalty_same típica (600K-1.2M).
                 soft_pref_token = None
-                emp_soft_prefs = {
-                    d: s for (emp_k, d), s in soft_preferences.items()
-                    if emp_k == e and _am_pm_token(s) is not None
-                }
+                emp_soft_prefs = {}
+                for (pref_key, s_code) in soft_preferences.items():
+                    if not isinstance(pref_key, tuple) or len(pref_key) != 2:
+                        continue  # skip (e, d, alt_s) fallback keys
+                    emp_k, d = pref_key
+                    if emp_k == e and _am_pm_token(s_code) is not None:
+                        emp_soft_prefs[d] = s_code
                 if emp_soft_prefs:
                     am_days = sum(1 for s in emp_soft_prefs.values() if _am_pm_token(s) == "AM")
                     pm_days = sum(1 for s in emp_soft_prefs.values() if _am_pm_token(s) == "PM")
