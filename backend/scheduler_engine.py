@@ -959,7 +959,8 @@ class ShiftScheduler:
                 "can_do_night": True,
                 "fixed_shifts": ref_fixed,
                 "strict_preferences": True,  # Always hard constraints — MUST work selected days
-                "is_refuerzo": not ref_partial,  # partial mode → behaves as regular employee
+                "is_refuerzo": True,  # Always flagged — controls OFF/flex_off exclusions
+                                     # Partial mode includes it explicitly in active_count + flexibles
             }
 
             # In partial mode, OFF the refuerzo on non-active days
@@ -971,7 +972,12 @@ class ShiftScheduler:
         
         # Determine roles based on input data
         # Refuerzo is NOT flexible for Sunday rotation, NOT night replacement, etc.
-        self.flexibles = [e for e in self.employees if not self.emp_data[e].get('is_refuerzo')] 
+        # UNLESS refuerzo_partial_mode is active — then it joins flexibles (but not night replacements).
+        ref_partial = self.config.get('refuerzo_partial_mode', False)
+        self.flexibles = [
+            e for e in self.employees
+            if not self.emp_data[e].get('is_refuerzo') or (ref_partial and e == "Refuerzo")
+        ]
         self.night_replacements = [e for e in self.employees if self.emp_data[e].get('can_do_night', True) and not self.emp_data[e].get('is_refuerzo')]
 
     def _clone_employee_configs(self):
@@ -1445,9 +1451,10 @@ class ShiftScheduler:
         # =========================
         # Count active employees (not on VAC/PERM all week)
         active_count = 0
+        ref_partial_count = self.config.get('refuerzo_partial_mode', False)
         for e in self.employees:
-            # Excluir Refuerzo del conteo
-            if self.emp_data[e].get('is_refuerzo', False):
+            # Excluir Refuerzo del conteo (salvo que esté en modo parcial)
+            if self.emp_data[e].get('is_refuerzo', False) and not (ref_partial_count and e == "Refuerzo"):
                 continue
             # Safety net: exclude employees not included in schedule
             if not self.emp_data[e].get('incluir_en_horario', True):
