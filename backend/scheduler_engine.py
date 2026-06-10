@@ -243,6 +243,7 @@ SHIFTS = {
     "D2_14-22": set(range(14, 22)),    # 14:00-22:00 (8h)
     "D3_15-23": set(range(15, 23)),    # 15:00-23:00 (8h)
     "D4_13-22": set(range(13, 22)),    # 13:00-22:00 (9h, Dominical PM)
+    "T13_13-22": set(range(13, 22)),   # 13:00-22:00 (9h) - Manual-only, same hours as D4
     "R1_07-11": set(range(7, 11)),     # 07:00-11:00 (4h) - Refuerzo Medio Tiempo
     "R2_16-20": set(range(16, 20)),    # 16:00-20:00 (4h) - Refuerzo Medio Tiempo
     "Q1_05-11+17-20": set(range(5, 11)) | set(range(17, 20)),  # 5am-11am + 5pm-8pm
@@ -250,6 +251,16 @@ SHIFTS = {
     "Q3_05-11+17-22": set(range(5, 11)) | set(range(17, 22)),  # 5am-11am + 5pm-10pm (11h, covers night)
 }
 SHIFT_NAMES = list(SHIFTS.keys())
+
+# Shifts that must NEVER be auto-assigned by the solver.
+# Only assignable via fixed_shifts (manual assignment from params panel).
+MANUAL_ONLY_SHIFTS = {"T13_13-22", "VAC", "PERM"}
+
+# Fallback groups: when a manual-only shift is infeasible,
+# the solver tries these alternatives with similar entry hours.
+SIMILAR_ENTRY_SHIFTS = {
+    "T13_13-22": ["T8_13-20", "D4_13-22", "T10_15-22"],
+}
 
 def _parse_manual_time_token(token):
     raw = str(token or "").strip().lower().replace(".", "")
@@ -925,14 +936,37 @@ class ShiftScheduler:
         
         # INJECT REFUERZO si está activado
         if self.config.get('use_refuerzo', False):
+            ref_partial = self.config.get('refuerzo_partial_mode', False)
             self.employees.append("Refuerzo")
+
+            # Build fixed_shifts from per-day schedule for partial mode
+            ref_fixed = {}
+            if ref_partial:
+                schedule = self.config.get('refuerzo_schedule', {}) or {}
+                manual_only_allowed = list(MANUAL_ONLY_SHIFTS)
+                for day, times in schedule.items():
+                    if isinstance(times, dict) and times.get("start") and times.get("end"):
+                        start_h = _parse_refuerzo_hour(times.get("start"), 7)
+                        end_h = _parse_refuerzo_hour(times.get("end"), 12)
+                        if end_h == start_h:
+                            end_h = (start_h + 5) % 24
+                        code = f"{MANUAL_SHIFT_PREFIX}{start_h:02d}-{end_h:02d}"
+                        ref_fixed[day] = code
+
             self.emp_data["Refuerzo"] = {
                 "name": "Refuerzo",
-                "gender": "M",  # Doesn't matter for Refuerzo
-                "can_do_night": True, # Managed specifically by constraints
-                "fixed_shifts": {},
-                "is_refuerzo": True # Custom flag
+                "gender": "M",
+                "can_do_night": True,
+                "fixed_shifts": ref_fixed,
+                "is_refuerzo": not ref_partial,  # partial mode → behaves as regular employee
             }
+
+            # In partial mode, OFF the refuerzo on non-active days
+            if ref_partial and ref_fixed:
+                all_days = ["Vie", "Sáb", "Dom", "Lun", "Mar", "Mié", "Jue"]
+                for d in all_days:
+                    if d not in ref_fixed:
+                        ref_fixed[d] = "OFF"
         
         # Determine roles based on input data
         # Refuerzo is NOT flexible for Sunday rotation, NOT night replacement, etc.
@@ -1613,16 +1647,16 @@ class ShiftScheduler:
         
 
         # =========================
-        # RESTRICCIÓN: ESTRICTAMENTE VACACIONES / PERMISOS (MANUAL)
+        # RESTRICCIÓN: TURNOS MANUAL-ONLY (VACACIONES / PERMISOS / T13_13-22)
         # =========================
-        # VAC and PERM can ONLY be assigned if they are in fixed_shifts.
+        # VAC, PERM, T13_13-22 (and any other manual-only shifts) can ONLY be
+        # assigned if they are in fixed_shifts. Otherwise they = 0.
         for e in self.employees:
              fixed_map = self.emp_data[e].get('fixed_shifts', {})
              for d in DAYS:
-                  if fixed_map.get(d) != "VAC":
-                      model.Add(x[(e, d, "VAC")] == 0)
-                  if fixed_map.get(d) != "PERM":
-                      model.Add(x[(e, d, "PERM")] == 0)
+                  for ms in MANUAL_ONLY_SHIFTS:
+                      if fixed_map.get(d) != ms:
+                          model.Add(x[(e, d, ms)] == 0)
 
 
         # =========================
@@ -1663,6 +1697,18 @@ class ShiftScheduler:
                     # VAC, PERM, OFF are ALWAYS hard constraints (pills / manual)
                     if s_code in ["VAC", "PERM", "OFF"]:
                         fixed_constraints[(e, d)] = s_code
+                    elif s_code in MANUAL_ONLY_SHIFTS:
+                        # Manual-only shifts (e.g. T13_13-22): if strict, hard constraint;
+                        # otherwise soft with fallback to similar-entry shifts.
+                        if force_strict:
+                            fixed_constraints[(e, d)] = s_code
+                        else:
+                            soft_preferences[(e, d)] = s_code
+                            # Also add similar-entry shifts as weaker preferences
+                            similar = SIMILAR_ENTRY_SHIFTS.get(s_code, [])
+                            for alt_s in similar:
+                                if alt_s in SHIFT_NAMES:
+                                    soft_preferences[(e, d, alt_s)] = s_code
                     elif force_strict:
                         fixed_constraints[(e, d)] = s_code
                     else:
@@ -1702,7 +1748,19 @@ class ShiftScheduler:
         PREF_DEVIATION_PENALTY = 300_000 if standard_mode else 200_000
         PREF_FAMILY_PENALTY    = 100_000   # extra cost for crossing AM<->PM boundary
 
-        for (e, d), s_code in soft_preferences.items():
+        for key, s_code in soft_preferences.items():
+            # Support both (e, d) and (e, d, alt_s) keys
+            if len(key) == 3:
+                e, d, alt_s = key
+                # Fallback alternative for manual-only shifts: lower penalty than primary
+                # This is weaker than the primary preference for the actual manual shift.
+                pref_violated = model.NewBoolVar(f"pref_fallback_{e}_{d}_{alt_s}")
+                model.Add(x[(e, d, alt_s)] == 0).OnlyEnforceIf(pref_violated)
+                model.Add(x[(e, d, alt_s)] == 1).OnlyEnforceIf(pref_violated.Not())
+                penalties.append(int(PREF_DEVIATION_PENALTY * 1.5) * pref_violated)
+                continue
+
+            e, d = key
             pref_family = _am_pm_token(s_code)  # "AM", "PM", or None
 
             # Level 1: penalize when the exact preferred shift is NOT used
@@ -2627,8 +2685,9 @@ class ShiftScheduler:
 
         # HARD: Each weekday, allow up to max_off conditionally.
         for d in weekdays:
-            # Tope = al menos 2, o ausencias obligatorias VAC/PERM, o todas las ausencias flex en duro.
-            max_off = max(2, mandatory_absent[d], hard_flex_absent_per_day.get(d, 0))
+            # Tope = al menos 3, o ausencias obligatorias VAC/PERM, o todas las ausencias flex en duro.
+            # Se subió de 2 a 3 para permitir hasta 3 OFF en domingo cuando la cobertura lo permite.
+            max_off = max(3, mandatory_absent[d], hard_flex_absent_per_day.get(d, 0))
             model.Add(flex_off_per_day[d] <= max_off)
             
             collision_vars[d] = model.NewBoolVar(f"collision_{d}")
@@ -2775,7 +2834,10 @@ class ShiftScheduler:
         # =========================
         # REFUERZO LOGIC
         # =========================
-        if use_refuerzo:
+        # When refuerzo_partial_mode is active, the refuerzo uses fixed_shifts
+        # like a regular employee — no special refuerzo logic needed.
+        ref_partial_mode = self.config.get('refuerzo_partial_mode', False)
+        if use_refuerzo and not ref_partial_mode:
             refuerzo = "Refuerzo"
             ref_type = self.config.get('refuerzo_type', 'personalizado')
             ref_days_mode = self.config.get('refuerzo_days_mode', 'auto')
@@ -3210,7 +3272,8 @@ class ShiftScheduler:
                      penalties.append(-10000 * x[(e, d, "D4_13-22")])
 
         # O5. Preference for Refuerzo to take 4-hour shifts over 8-hour shifts
-        if "Refuerzo" in self.employees:
+        # Skip in partial mode — refuerzo behaves as regular employee with fixed_shifts.
+        if "Refuerzo" in self.employees and not self.config.get('refuerzo_partial_mode', False):
             # Collect refuerzo shift codes (dict or single string)
             refuerzo_shifts = set()
             if isinstance(current_refuerzo_custom_shift, dict):

@@ -689,6 +689,9 @@ function renderConfig() {
             endInput.value = "12:00";
         }
     });
+    const partialCb = document.getElementById("refuerzoPartialMode");
+    if (partialCb) partialCb.checked = config.refuerzo_partial_mode || false;
+
     toggleRefuerzoConfig();
     const collisionCb = document.getElementById("allowCollisionQuebrado");
     if (collisionCb) collisionCb.checked = config.allow_collision_quebrado || false;

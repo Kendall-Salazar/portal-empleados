@@ -650,6 +650,13 @@
                                             <small style="display:block; margin-top: 0.6rem; font-size: 0.72rem; color: var(--text-muted); line-height:1.4;">
                                                 <i class="fa-solid fa-circle-info" style="color:#6366f1;"></i> Marcá el día y definí su horario. El refuerzo <strong>DEBE</strong> trabajar los días activos con el horario indicado. Si un día no está marcado, el refuerzo no trabaja.
                                             </small>
+                                            <div style="margin-top: 0.75rem; padding-top: 0.65rem; border-top: 1px solid var(--border-color); display:flex; align-items:center; gap:0.65rem;">
+                                                <input type="checkbox" id="refuerzoPartialMode" onchange="updateConfig()" style="accent-color:#6366f1; width:16px; height:16px;">
+                                                <div>
+                                                    <strong style="font-size: 0.82rem; color:var(--text-main);">Incluir como empleado parcial</strong>
+                                                    <small style="display:block; font-size: 0.7rem; color:var(--text-muted);">Cuenta para active_count y rotación de OFFs. Permite redistribuir personal los días que el refuerzo cubre.</small>
+                                                </div>
+                                            </div>
                                         </div>
                                     </div>
                                     </div>
