@@ -428,7 +428,7 @@ async function loadVacSubEquipo() {
 
                     <div class="ecard-actions">
 
-                        <button class="ecard-btn" onclick="event.stopPropagation(); openUnifiedEmpModal(${_esc(JSON.stringify(emp))})" title="Editar"><i class="fa-solid fa-pen-to-square"></i></button>
+                        <button class="ecard-btn" onclick='event.stopPropagation(); openUnifiedEmpModal(${_esc(JSON.stringify(emp))})' title="Editar"><i class="fa-solid fa-pen-to-square"></i></button>
 
                         <span class="ecard-chevron"><i class="fa-solid fa-chevron-down"></i></span>
 
@@ -447,8 +447,6 @@ async function loadVacSubEquipo() {
                     ? '<span class="ebadge ebadge-ok"><i class="fa-solid fa-shield-halved"></i>Seguro</span>'
 
                     : '<span class="ebadge ebadge-warn"><i class="fa-solid fa-shield-xmark"></i>Sin Seguro</span>'}
-
-                        ${emp.puede_nocturno ? '<span class="ebadge ebadge-night"><i class="fa-solid fa-moon"></i>Nocturno</span>' : ''}
 
                     </div>
 
@@ -582,9 +580,9 @@ async function loadVacSubInactivos() {
 
                     <div class="ecard-actions">
 
-                        <button class="ecard-btn" onclick="event.stopPropagation(); openUnifiedEmpModal(${_esc(JSON.stringify(emp))})" title="Reactivar / Editar"><i class="fa-solid fa-rotate-left"></i></button>
+                        <button class="ecard-btn" onclick='event.stopPropagation(); openUnifiedEmpModal(${_esc(JSON.stringify(emp))})' title="Reactivar / Editar"><i class="fa-solid fa-rotate-left"></i></button>
 
-                        <button class="ecard-btn ecard-btn-danger" style="background: rgba(239, 68, 68, 0.15);" onclick="event.stopPropagation(); deletePlanillaEmp(${emp.id})" title="Borrado Permanente"><i class="fa-solid fa-trash-can"></i></button>
+                        <button class="ecard-btn ecard-btn-danger" style="background: rgba(239, 68, 68, 0.15);" onclick='event.stopPropagation(); deletePlanillaEmp(${emp.id})' title="Borrado Permanente"><i class="fa-solid fa-trash-can"></i></button>
 
                         <span class="ecard-chevron"><i class="fa-solid fa-chevron-down"></i></span>
 
