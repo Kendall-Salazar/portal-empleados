@@ -357,6 +357,11 @@ def init_db():
     # Migration: jefe_config (control de tareas del jefe de pista)
     _ensure_column("horario_config", "jefe_config", "TEXT DEFAULT '{}'")
 
+    # Migration: refuerzo per-day schedule + partial mode + global quebrado toggle
+    _ensure_column("horario_config", "refuerzo_schedule", "TEXT DEFAULT NULL")
+    _ensure_column("horario_config", "refuerzo_partial_mode", "INTEGER DEFAULT 0")
+    _ensure_column("horario_config", "allow_global_quebrado", "INTEGER DEFAULT 1")
+
     # Migration: soft delete for history entries (papelera de reciclaje)
     _ensure_column("horarios_generados", "deleted", "INTEGER DEFAULT 0")
     _ensure_column("horarios_generados", "deleted_at", "TEXT")

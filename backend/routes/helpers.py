@@ -440,6 +440,9 @@ def load_db():
             "refuerzo_end": cfg_row["refuerzo_end"] if "refuerzo_end" in cfg_row.keys() and cfg_row["refuerzo_end"] else "12:00",
             "refuerzo_days_mode": cfg_row["refuerzo_days_mode"] if "refuerzo_days_mode" in cfg_row.keys() and cfg_row["refuerzo_days_mode"] else "auto",
             "refuerzo_manual_days": json.loads(cfg_row["refuerzo_manual_days"]) if "refuerzo_manual_days" in cfg_row.keys() and cfg_row["refuerzo_manual_days"] else [],
+            "refuerzo_schedule": json.loads(cfg_row["refuerzo_schedule"]) if "refuerzo_schedule" in cfg_row.keys() and cfg_row["refuerzo_schedule"] else None,
+            "refuerzo_partial_mode": bool(cfg_row["refuerzo_partial_mode"]) if "refuerzo_partial_mode" in cfg_row.keys() else False,
+            "allow_global_quebrado": bool(cfg_row["allow_global_quebrado"]) if "allow_global_quebrado" in cfg_row.keys() else True,
             "allow_collision_quebrado": bool(cfg_row["allow_collision_quebrado"]),
             "allow_quebrado_largo": bool(cfg_row["allow_quebrado_largo"]) if "allow_quebrado_largo" in cfg_row.keys() else False,
             "collision_peak_priority": cfg_row["collision_peak_priority"],
@@ -558,10 +561,11 @@ def save_db(data):
             INSERT INTO horario_config
             (id, night_mode, fixed_night_person, allow_long_shifts, use_refuerzo,
              refuerzo_type, refuerzo_start, refuerzo_end, refuerzo_days_mode, refuerzo_manual_days,
+             refuerzo_schedule, refuerzo_partial_mode, allow_global_quebrado,
              allow_collision_quebrado, allow_quebrado_largo, collision_peak_priority, sunday_cycle_index,
              sunday_rotation_queue, use_history, strict_weekly_alternation, holidays,
              jefe_base_shift, use_pref_plantilla, cleaning_tasks, jefe_config)
-            VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             cfg.get("night_mode", "rotation"),
             cfg.get("fixed_night_person"),
@@ -571,7 +575,10 @@ def save_db(data):
             cfg.get("refuerzo_start", "07:00"),
             cfg.get("refuerzo_end", "12:00"),
             cfg.get("refuerzo_days_mode", "auto"),
-            json.dumps(cfg.get("refuerzo_manual_days", [])),
+            json.dumps(            cfg.get("refuerzo_manual_days", [])),
+            json.dumps(cfg.get("refuerzo_schedule")) if cfg.get("refuerzo_schedule") else None,
+            1 if cfg.get("refuerzo_partial_mode", False) else 0,
+            1 if cfg.get("allow_global_quebrado", True) else 0,
             1 if cfg.get("allow_collision_quebrado", False) else 0,
             1 if cfg.get("allow_quebrado_largo", False) else 0,
             cfg.get("collision_peak_priority", "pm"),
