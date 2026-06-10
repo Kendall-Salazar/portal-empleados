@@ -958,6 +958,7 @@ class ShiftScheduler:
                 "gender": "M",
                 "can_do_night": True,
                 "fixed_shifts": ref_fixed,
+                "strict_preferences": True,  # Always hard constraints — MUST work selected days
                 "is_refuerzo": not ref_partial,  # partial mode → behaves as regular employee
             }
 
