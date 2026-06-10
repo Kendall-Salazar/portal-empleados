@@ -2702,9 +2702,10 @@ class ShiftScheduler:
 
         # HARD: Each weekday, allow up to max_off conditionally.
         for d in weekdays:
-            # Tope = al menos 3, o ausencias obligatorias VAC/PERM, o todas las ausencias flex en duro.
-            # Se subió de 2 a 3 para permitir hasta 3 OFF en domingo cuando la cobertura lo permite.
-            max_off = max(3, mandatory_absent[d], hard_flex_absent_per_day.get(d, 0))
+            # Tope = al menos 4, o ausencias obligatorias VAC/PERM, o ausencias flex en duro.
+            # Se usa 4 para dar holgura al LP relaxation de OR-Tools (evita fixed_search crash
+            # cuando hay 3+ OFF fijos combinados con refuerzo parcial).
+            max_off = max(4, mandatory_absent[d], hard_flex_absent_per_day.get(d, 0))
             model.Add(flex_off_per_day[d] <= max_off)
             
             collision_vars[d] = model.NewBoolVar(f"collision_{d}")
