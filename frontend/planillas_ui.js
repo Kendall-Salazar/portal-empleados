@@ -1314,6 +1314,13 @@ async function syncPrestamoRebajosPlanilla(mesId = null) {
     }
 }
 
+let _prestamoFilter = 'activos';
+
+function switchPrestamoFilter(filter) {
+    _prestamoFilter = filter;
+    loadVacSubPrestamos();
+}
+
 async function loadVacSubPrestamos() {
     const content = document.getElementById('vacSubTabContent');
     content.innerHTML = '<div class="portal-loading"><div class="portal-spinner"></div><span>Cargando...</span></div>';
@@ -1325,18 +1332,28 @@ async function loadVacSubPrestamos() {
         const emps = await empsRes.json();
 
 
+        const filtroActivo = _prestamoFilter === 'activos';
+
         let html = `
 
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.6rem;">
 
-            <h3 style="color:var(--text-main); margin:0;"><i class="fa-solid fa-hand-holding-dollar" style="color:#8b5cf6;"></i> Préstamos Activos</h3>
+            <h3 style="color:var(--text-main); margin:0;"><i class="fa-solid fa-hand-holding-dollar" style="color:#8b5cf6;"></i> Préstamos</h3>
 
+            ${filtroActivo ? `
             <button class="vac-btn vac-btn-primary" onclick="openNuevoPrestamo()">
-
                 <i class="fa-solid fa-plus"></i> Nuevo Préstamo
+            </button>` : ''}
 
+        </div>
+
+        <div style="display:flex; gap:0.5rem; margin-bottom:1rem; border-bottom:1px solid var(--border);">
+            <button class="vac-subtab${filtroActivo ? ' active' : ''}" style="flex:none; padding:0.5rem 1rem; font-size:0.82rem;" onclick="switchPrestamoFilter('activos')">
+                <i class="fa-solid fa-circle-check" style="color:#8b5cf6;font-size:0.7rem;"></i> Activos
             </button>
-
+            <button class="vac-subtab${_prestamoFilter === 'liquidados' ? ' active' : ''}" style="flex:none; padding:0.5rem 1rem; font-size:0.82rem;" onclick="switchPrestamoFilter('liquidados')">
+                <i class="fa-solid fa-circle-check" style="color:#10b981;font-size:0.7rem;"></i> Liquidados
+            </button>
         </div>`;
 
 
@@ -1363,9 +1380,13 @@ async function loadVacSubPrestamos() {
 
 
             for (const p of prestamos) {
+                const isLiquidado = p.estado === 'liquidado';
+
+                // Apply filter: skip loans that don't match the current filter
+                if ((_prestamoFilter === 'activos' && isLiquidado) || (_prestamoFilter === 'liquidados' && !isLiquidado)) continue;
+
                 tienePrestamos = true;
                 const progreso = p.monto_total > 0 ? Math.round(((p.monto_total - p.saldo) / p.monto_total) * 100) : 0;
-                const isLiquidado = p.estado === 'liquidado';
 
                 const statusColor = isLiquidado ? '#10b981' : '#8b5cf6';
 
@@ -1486,18 +1507,24 @@ async function loadVacSubPrestamos() {
 
 
 
-        // If no loans exist at all
+        // If no loans match the current filter
 
         if (!tienePrestamos) {
+            const emptyTitle = _prestamoFilter === 'activos' ? 'Sin préstamos activos' : 'Sin préstamos liquidados';
+            const emptyDesc = _prestamoFilter === 'activos'
+                ? 'Registra un nuevo préstamo para comenzar el seguimiento.'
+                : 'No hay préstamos que hayan sido cancelados aún.';
+            const emptyIcon = _prestamoFilter === 'activos' ? 'fa-hand-holding-dollar' : 'fa-circle-check';
+
             html += `
 
             <div class="portal-empty-box" style="padding:40px 20px; text-align:center;">
 
-                <i class="fa-solid fa-hand-holding-dollar" style="font-size:2.5rem; color:var(--text-muted); opacity:0.3; margin-bottom:15px;"></i>
+                <i class="fa-solid ${emptyIcon}" style="font-size:2.5rem; color:var(--text-muted); opacity:0.3; margin-bottom:15px;"></i>
 
-                <h3 style="color:var(--text-main); font-size:1rem; margin-bottom:8px;">Sin préstamos activos</h3>
+                <h3 style="color:var(--text-main); font-size:1rem; margin-bottom:8px;">${emptyTitle}</h3>
 
-                <p style="color:var(--text-muted); font-size:0.85rem;">Registra un nuevo préstamo para comenzar el seguimiento.</p>
+                <p style="color:var(--text-muted); font-size:0.85rem;">${emptyDesc}</p>
 
             </div>`;
 
@@ -3220,6 +3247,7 @@ window.editarNotaAbono = editarNotaAbono;
 window.guardarNotaAbono = guardarNotaAbono;
 window.cancelarNotaAbono = cancelarNotaAbono;
 window.eliminarAbonoIndividual = eliminarAbonoIndividual;
+window.switchPrestamoFilter = switchPrestamoFilter;
 
 async function generarCartaPrestamo(prestamoId) {
     try {
