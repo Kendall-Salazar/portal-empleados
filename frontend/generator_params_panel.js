@@ -371,7 +371,7 @@
 
     window.genPanelOpenEmpModal = async function (empId) {
         try {
-            const res = await fetch("/cronos/api/planillas/empleados");
+            const res = await fetch("/api/planillas/empleados");
             if (!res.ok) return;
             const list = await res.json();
             const emp = list.find((e) => e.id === empId);
@@ -434,7 +434,7 @@
             };
         });
         try {
-            const res = await fetch("/cronos/api/generator/employee-params", {
+            const res = await fetch("/api/generator/employee-params", {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -465,7 +465,7 @@
         }
         if (!confirm("¿Sincronizar vacaciones y permisos de RR.HH. hacia turnos fijos de todos los colaboradores para esta semana?")) return;
         try {
-            const res = await fetch("/cronos/api/generator/sync-rrhh-to-shifts", {
+            const res = await fetch("/api/generator/sync-rrhh-to-shifts", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ week_start: ws }),

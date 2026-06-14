@@ -324,7 +324,7 @@ async function loadVacSubEquipo() {
 
     try {
 
-        const res = await fetch('/cronos/api/planillas/empleados');
+        const res = await fetch('/api/planillas/empleados');
 
         const emps = await res.json();
 
@@ -508,7 +508,7 @@ async function loadVacSubInactivos() {
 
     try {
 
-        const res = await fetch('/cronos/api/planillas/empleados?solo_activos=false');
+        const res = await fetch('/api/planillas/empleados?solo_activos=false');
 
         const allEmps = await res.json();
 
@@ -996,7 +996,7 @@ async function loadVacSubVacaciones() {
 
     try {
 
-        const res = await fetch('/cronos/api/planillas/empleados');
+        const res = await fetch('/api/planillas/empleados');
 
         const emps = await res.json();
 
@@ -1176,7 +1176,7 @@ async function loadVacSubPermisos() {
 
     try {
 
-        const res = await fetch('/cronos/api/planillas/empleados');
+        const res = await fetch('/api/planillas/empleados');
 
         const emps = await res.json();
 
@@ -1334,7 +1334,7 @@ async function loadVacSubPrestamos() {
     try {
         await syncPrestamoRebajosPlanilla();
 
-        const empsRes = await fetch('/cronos/api/planillas/empleados');
+        const empsRes = await fetch('/api/planillas/empleados');
         const emps = await empsRes.json();
 
 
@@ -2578,7 +2578,7 @@ async function descontarPermisos(empId, empName, pendientes, anio) {
 
     try {
 
-        const res = await fetch('/cronos/api/planillas/permisos/descontar-vacaciones', {
+        const res = await fetch('/api/planillas/permisos/descontar-vacaciones', {
 
             method: 'POST',
 
@@ -2620,7 +2620,7 @@ async function openNuevoPrestamo() {
 
     // Build employee select
 
-    const res = await fetch('/cronos/api/planillas/empleados');
+    const res = await fetch('/api/planillas/empleados');
 
     const emps = await res.json();
 
@@ -2772,7 +2772,7 @@ async function guardarNuevoPrestamo() {
 
     try {
 
-        const res = await fetch('/cronos/api/planillas/prestamos', {
+        const res = await fetch('/api/planillas/prestamos', {
 
             method: 'POST',
 
@@ -2861,7 +2861,7 @@ async function onAbonoExtMesChange() {
     try {
         const res = await fetch(`/api/planillas/meses/${mesId}/semanas`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
         // GET semanas del mes
-        const mesesRes = await fetch('/cronos/api/planillas/meses');
+        const mesesRes = await fetch('/api/planillas/meses');
         const meses = await mesesRes.json();
         const mes = meses.find(m => m.id == mesId);
         if (mes && mes.semanas) {
@@ -2935,7 +2935,7 @@ async function openAbonoExtraordinarioModal(prestamoId, empName) {
 
     // Cargar meses activos para selector de planilla
     try {
-        const mesesRes = await fetch('/cronos/api/planillas/meses');
+        const mesesRes = await fetch('/api/planillas/meses');
         if (mesesRes.ok) {
             _abonoExtMesesCache = await mesesRes.json();
             const mesSelect = document.getElementById('abonoExtMes');
@@ -3700,7 +3700,7 @@ async function loadPlanillaMensualTab() {
 
     try {
 
-        const res = await fetch('/cronos/api/planillas/meses/activo');
+        const res = await fetch('/api/planillas/meses/activo');
 
         const data = await res.json();
 
@@ -3926,7 +3926,7 @@ async function abrirConfigTarifas() {
 
     try {
 
-        const res = await fetch('/cronos/api/planillas/tarifas');
+        const res = await fetch('/api/planillas/tarifas');
 
         const t = await res.json();
 
@@ -4011,7 +4011,7 @@ async function guardarTarifas() {
 
     try {
 
-        const res = await fetch('/cronos/api/planillas/tarifas', {
+        const res = await fetch('/api/planillas/tarifas', {
 
             method: 'POST', headers: { 'Content-Type': 'application/json' },
 
@@ -4069,7 +4069,7 @@ async function crearNuevoMes() {
 
     try {
 
-        const res = await fetch('/cronos/api/planillas/meses', {
+        const res = await fetch('/api/planillas/meses', {
 
             method: 'POST', headers: { 'Content-Type': 'application/json' },
 
@@ -4117,7 +4117,7 @@ async function abrirExcel() {
 
     try {
 
-        const res = await fetch('/cronos/api/planillas/excel/abrir');
+        const res = await fetch('/api/planillas/excel/abrir');
 
         if (!res.ok) {
 
@@ -4169,7 +4169,7 @@ async function guardarNuevaSemana() {
 
     try {
 
-        const actRes = await fetch('/cronos/api/planillas/meses/activo');
+        const actRes = await fetch('/api/planillas/meses/activo');
 
         const actData = await actRes.json();
 
@@ -4199,7 +4199,7 @@ async function guardarNuevaSemana() {
 
 
 
-        const res = await fetch('/cronos/api/planillas/semanas', {
+        const res = await fetch('/api/planillas/semanas', {
 
             method: 'POST', headers: { 'Content-Type': 'application/json' },
 
@@ -4307,7 +4307,7 @@ async function ejecutarBoletas() {
     }
 
     try {
-        const res = await fetch('/cronos/api/planillas/boletas/generar', {
+        const res = await fetch('/api/planillas/boletas/generar', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ 
                 semana_nombre: semName,
@@ -4376,7 +4376,7 @@ async function abrirImportarHorarioModal(semanaId, numSemana) {
 
     try {
 
-        const res = await fetch('/cronos/api/planillas/horarios-disponibles');
+        const res = await fetch('/api/planillas/horarios-disponibles');
 
         if (!res.ok) throw new Error("No se pudo cargar los horarios");
 
@@ -4460,7 +4460,7 @@ async function ejecutarImportarHorario() {
 
     try {
 
-        const res = await fetch('/cronos/api/planillas/semanas/importar', {
+        const res = await fetch('/api/planillas/semanas/importar', {
 
             method: 'POST', headers: { 'Content-Type': 'application/json' },
 
@@ -4530,7 +4530,7 @@ async function loadUtilidadesTab() {
 
     try {
 
-        const res = await fetch('/cronos/api/planillas/empleados');
+        const res = await fetch('/api/planillas/empleados');
 
         _utilEmpleados = await res.json();
 
@@ -5301,7 +5301,7 @@ async function generarPrestamo() {
 
     try {
 
-        const res = await fetch('/cronos/api/utilidades/prestamo', {
+        const res = await fetch('/api/utilidades/prestamo', {
 
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
 
@@ -5511,7 +5511,7 @@ async function generarAmonestacion() {
 
     try {
 
-        const res = await fetch('/cronos/api/utilidades/amonestacion', {
+        const res = await fetch('/api/utilidades/amonestacion', {
 
             method: 'POST', headers: { 'Content-Type': 'application/json' },
 
@@ -5757,7 +5757,7 @@ async function generarRecomendacion() {
 
     try {
 
-        const res = await fetch('/cronos/api/utilidades/recomendacion', {
+        const res = await fetch('/api/utilidades/recomendacion', {
 
             method: 'POST',
 
@@ -5910,7 +5910,7 @@ async function generarVacaciones() {
 
     try {
 
-        const res = await fetch('/cronos/api/utilidades/vacaciones', {
+        const res = await fetch('/api/utilidades/vacaciones', {
 
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
 
@@ -5968,7 +5968,7 @@ async function abrirPlanillasHistorial() {
 
     try {
 
-        const res = await fetch('/cronos/api/planillas/meses');
+        const res = await fetch('/api/planillas/meses');
 
         const meses = await res.json();
 
@@ -6392,7 +6392,7 @@ async function abrirImportarHorarioHistorico(mesId, semanaNombre, mesNombre) {
 
     try {
 
-        const r = await fetch('/cronos/api/planillas/horarios-disponibles');
+        const r = await fetch('/api/planillas/horarios-disponibles');
 
         const d = await r.json();
 
@@ -6868,7 +6868,7 @@ async function loadInventarioBaseSection() {
 
     try {
 
-        const res = await fetch('/cronos/api/inventario/base');
+        const res = await fetch('/api/inventario/base');
 
         inventarioBaseState = await res.json();
 
@@ -6988,7 +6988,7 @@ async function loadInventarioDashboard() {
 
     try {
 
-        const res = await fetch('/cronos/api/inventario/diff');
+        const res = await fetch('/api/inventario/diff');
 
         const data = await res.json();
 
@@ -7286,7 +7286,7 @@ async function loadInventarioHistory() {
 
     try {
 
-        const res = await fetch('/cronos/api/inventario/history');
+        const res = await fetch('/api/inventario/history');
 
         const history = await res.json();
 
@@ -7414,7 +7414,7 @@ async function uploadInventarioExcel(file) {
 
 
 
-        const res = await fetch('/cronos/api/inventario/upload', {
+        const res = await fetch('/api/inventario/upload', {
 
             method: 'POST',
 
@@ -7686,7 +7686,7 @@ window.openInventarioBaseEditor = async function openInventarioBaseEditor() {
 
             for (const item of items) {
 
-                const res = await fetch('/cronos/api/inventario/base/articulo', {
+                const res = await fetch('/api/inventario/base/articulo', {
 
                     method: 'POST',
 
@@ -7748,7 +7748,7 @@ window.reimportInventarioBaseDefault = async function reimportInventarioBaseDefa
 
     try {
 
-        const res = await fetch('/cronos/api/inventario/base/import-default', { method: 'POST' });
+        const res = await fetch('/api/inventario/base/import-default', { method: 'POST' });
 
         const data = await res.json();
 

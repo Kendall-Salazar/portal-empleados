@@ -194,7 +194,7 @@ window.manualSchedSave = async function () {
     const entry = { name, schedule, daily_tasks: dailyTasks, week_dates: weekDates, special_days: { ..._manualSchedState.specialDays }, holiday_days: { ..._manualSchedState.holidayDays }, timestamp: new Date().toISOString() };
     _manualSchedSetStatus("Guardando...", "info");
     try {
-        const res = await fetch('/cronos/api/history', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(entry) });
+        const res = await fetch('/api/history', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(entry) });
         if (!res.ok) throw new Error("Error al guardar");
         _manualSchedSetStatus(`Guardado al historial: "${name}".`, "success");
         if (typeof loadHistory === "function") await loadHistory(true);

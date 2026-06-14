@@ -1,4 +1,4 @@
-const API_URL = "/cronos/api";
+const API_URL = "/api";
 
 // STATE
 let employees = [];
@@ -215,7 +215,7 @@ function setStatusMessage(message, kind = "info", timeoutMs = 2600) {
 }
 
 async function fetchValidationRules(specialDays = {}) {
-    const res = await fetch("/cronos/api/validation_rules", {
+    const res = await fetch("/api/validation_rules", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ special_days: specialDays || {} })
@@ -362,7 +362,7 @@ async function saveCustomShiftsToConfig() {
     try {
         const config = getCurrentConfig();
         config.custom_shifts = customShiftsData;
-        await fetch('/cronos/api/config', {
+        await fetch('/api/config', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(config)
@@ -374,7 +374,7 @@ async function saveCustomShiftsToConfig() {
 
 async function loadCustomShiftsFromConfig() {
     try {
-        const res = await fetch('/cronos/api/config');
+        const res = await fetch('/api/config');
         if (res.ok) {
             const config = await res.json();
             if (config.custom_shifts && Array.isArray(config.custom_shifts)) {
@@ -545,11 +545,11 @@ function clearAllHolidays() {
 
 async function saveHolidaysToConfig() {
     try {
-        const res = await fetch('/cronos/api/config');
+        const res = await fetch('/api/config');
         if (res.ok) {
             const currentConfig = await res.json();
             currentConfig.holidays = holidaysData;
-            await fetch('/cronos/api/config', {
+            await fetch('/api/config', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(currentConfig)
@@ -562,7 +562,7 @@ async function saveHolidaysToConfig() {
 
 async function loadHolidaysFromConfig() {
     try {
-        const res = await fetch('/cronos/api/config');
+        const res = await fetch('/api/config');
         if (res.ok) {
             const config = await res.json();
             if (config.holidays && Array.isArray(config.holidays)) {
@@ -1948,7 +1948,7 @@ async function generateSchedule() {
         const weekEnd = document.getElementById("weekEndDate")?.value;
         if (weekStart && weekEnd) {
             status.innerHTML = '<i class="fa-solid fa-sync fa-spin"></i> Sincronizando vacaciones...';
-            const syncRes = await fetch('/cronos/api/sync_vac_fixed_shifts', {
+            const syncRes = await fetch('/api/sync_vac_fixed_shifts', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ fecha_inicio: weekStart, fecha_fin: weekEnd })
@@ -2677,7 +2677,7 @@ async function fetchHistoryEntries(forceRefresh = false) {
         return historyEntriesCache;
     }
 
-    const res = await fetch('/cronos/api/history');
+    const res = await fetch('/api/history');
     if (!res.ok) {
         throw new Error(`API returned ${res.status}`);
     }
@@ -2896,7 +2896,7 @@ async function onImportHorarioExcelHistorialFileChange(ev) {
     fd.append("file", f);
     fd.append("sheets", "[]");
     try {
-        const res = await fetch("/cronos/api/history/import-horario-excel/preview", { method: "POST", body: fd });
+        const res = await fetch("/api/history/import-horario-excel/preview", { method: "POST", body: fd });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(_importHorarioExcelApiErrorMessage(data, res.statusText));
         if (st) st.textContent = `Archivo: ${f.name} — elija pestañas y pulse Vista previa.`;
@@ -2954,7 +2954,7 @@ async function runImportHorarioExcelHistorialPreview() {
     fd.append("file", importHorarioExcelHistorialFile);
     fd.append("sheets", JSON.stringify(sheets));
     try {
-        const res = await fetch("/cronos/api/history/import-horario-excel/preview", { method: "POST", body: fd });
+        const res = await fetch("/api/history/import-horario-excel/preview", { method: "POST", body: fd });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(_importHorarioExcelApiErrorMessage(data, res.statusText));
         importHorarioExcelHistorialDrafts = data.drafts || [];
@@ -3133,7 +3133,7 @@ async function confirmImportHorarioExcelHistorial() {
     }
     if (st) st.textContent = "Guardando…";
     try {
-        const res = await fetch("/cronos/api/history/import-horario-excel/confirm", {
+        const res = await fetch("/api/history/import-horario-excel/confirm", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ items }),
@@ -3625,7 +3625,7 @@ function _manualSchedBuildRow(name, isEditable) {
 
 async function _manualSchedFetchActiveEmployees() {
     try {
-        const res = await fetch('/cronos/api/planillas/empleados');
+        const res = await fetch('/api/planillas/empleados');
         if (!res.ok) return [];
         const all = await res.json();
         return all
@@ -3789,7 +3789,7 @@ window.manualSchedSave = async function () {
 
     _manualSchedSetStatus("Guardando...", "info");
     try {
-        const res = await fetch('/cronos/api/history', {
+        const res = await fetch('/api/history', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
@@ -4261,7 +4261,7 @@ let _historyNameModalState = {
 
 async function _loadHistoryNameSuggestions() {
     try {
-        const res = await fetch('/cronos/api/planillas/empleados');
+        const res = await fetch('/api/planillas/empleados');
         if (!res.ok) return [];
         const all = await res.json();
         return all
@@ -4509,7 +4509,7 @@ async function renameHistory(i, event) {
                 entry.db_id != null
                     ? { db_id: entry.db_id, name: newName.trim() }
                     : { index: i, name: newName.trim() };
-            const res = await fetch('/cronos/api/history', {
+            const res = await fetch('/api/history', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body)
@@ -4635,7 +4635,7 @@ let trashCache = [];
 
 async function loadTrash() {
     try {
-        const res = await fetch('/cronos/api/history/trash');
+        const res = await fetch('/api/history/trash');
         if (!res.ok) return;
         trashCache = await res.json();
     } catch (err) {
@@ -4701,7 +4701,7 @@ async function purgeTrash(event) {
     }
     if (!confirm('¿Eliminar permanentemente todas las entradas con más de 7 días en la papelera?')) return;
 
-    const res = await fetch('/cronos/api/history/trash/purge', { method: 'POST' });
+    const res = await fetch('/api/history/trash/purge', { method: 'POST' });
     if (!res.ok) {
         alert("No se pudo purgar la papelera.");
         return;
@@ -4861,7 +4861,7 @@ function closeExportConfirmModal() {
 
 async function openExportFolder() {
     try {
-        await fetch("/cronos/api/open_export_folder", { method: "POST" });
+        await fetch("/api/open_export_folder", { method: "POST" });
     } catch (e) {
         console.error("Error opening export folder:", e);
     }
@@ -6221,7 +6221,7 @@ async function confirmSaveSchedule(event) {
     };
 
     try {
-        const res = await fetch('/cronos/api/save-history-with-folder-check', {
+        const res = await fetch('/api/save-history-with-folder-check', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -6854,7 +6854,7 @@ const PartialGenerator = {
         if (!resultsEl) return;
 
         try {
-            const history = await fetch("/cronos/api/history").then(r => r.json());
+            const history = await fetch("/api/history").then(r => r.json());
             this._searchCache = history
                 .filter(h => (h.name || "").toLowerCase().includes((query || "").toLowerCase()))
                 .slice(0, 12);
@@ -7347,7 +7347,7 @@ const PartialGenerator = {
         if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Generando...'; }
 
         try {
-            const result = await fetch("/cronos/api/solve-partial", {
+            const result = await fetch("/api/solve-partial", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(payload),
@@ -7525,7 +7525,7 @@ const PartialGenerator = {
         };
 
         try {
-            const res = await fetch("/cronos/api/history", {
+            const res = await fetch("/api/history", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(entry),
@@ -7989,7 +7989,7 @@ async function createFolder() {
     const name = input.value.trim();
     if (!name) { alert("Ingresá un nombre para la carpeta (ej: 2026)."); return; }
     try {
-        const res = await fetch('/cronos/api/folders', {
+        const res = await fetch('/api/folders', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name })
@@ -8009,7 +8009,7 @@ async function loadFolders() {
     const container = document.getElementById("foldersList");
     if (!container) return;
     try {
-        const res = await fetch('/cronos/api/folders');
+        const res = await fetch('/api/folders');
         const folders = await res.json();
         foldersCache = folders;
         if (!folders.length) {

@@ -549,7 +549,7 @@ window.showExportConfirmationModal = showExportConfirmationModal;
 function closeExportConfirmModal() { const modal = document.getElementById("exportConfirmModal"); if (modal) modal.remove(); }
 window.closeExportConfirmModal = closeExportConfirmModal;
 
-async function openExportFolder() { try { await fetch("/cronos/api/open_export_folder", { method: "POST" }); } catch (e) { console.error("Error opening export folder:", e); } }
+async function openExportFolder() { try { await fetch("/api/open_export_folder", { method: "POST" }); } catch (e) { console.error("Error opening export folder:", e); } }
 window.openExportFolder = openExportFolder;
 
 function exportHistoryExcel(index, event) {

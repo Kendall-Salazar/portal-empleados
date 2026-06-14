@@ -14,7 +14,7 @@ const PartialGenerator = {
     async searchHistory(query) {
         const resultsEl = document.getElementById("partialSearchResults"); if (!resultsEl) return;
         try {
-            const history = await fetch("/cronos/api/history").then(r => r.json());
+            const history = await fetch("/api/history").then(r => r.json());
             this._searchCache = history.filter(h => (h.name || "").toLowerCase().includes((query || "").toLowerCase())).slice(0, 12);
             if (this._searchCache.length === 0) { resultsEl.innerHTML = '<p style="padding:0.75rem 1rem; font-size:0.82rem; color:var(--text-muted); margin:0;">Sin resultados.</p>'; resultsEl.style.display = "block"; return; }
             resultsEl.innerHTML = this._searchCache.map((h, idx) => {
@@ -170,7 +170,7 @@ const PartialGenerator = {
         const btn = document.getElementById("btnGeneratePartial");
         if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Generando...'; }
         try {
-            const result = await fetch("/cronos/api/solve-partial", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }).then(r => r.json());
+            const result = await fetch("/api/solve-partial", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }).then(r => r.json());
             if (result.status !== "Success") { const detail = result.status || result.detail || "Error desconocido"; setStatusMessage(`Error: ${detail}`, "error", 5000); return; }
             this.lastResult = result; this._renderPreview(result); setStatusMessage("Horario parcial generado ✓", "success");
         } catch (e) { console.error("[PartialGenerator] generate error:", e); setStatusMessage("Error al conectar con el servidor", "error"); }
@@ -216,7 +216,7 @@ const PartialGenerator = {
         const name = baseName.endsWith("(parcial)") ? baseName : `${baseName} (parcial)`;
         const entry = { name, schedule: this.lastResult.schedule || {}, daily_tasks: this.lastResult.daily_tasks || {}, week_dates: this.lastResult.metadata?.week_dates || {}, special_days: this.lastResult.metadata?.special_days || {}, timestamp: new Date().toISOString() };
         try {
-            const res = await fetch("/cronos/api/history", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(entry) });
+            const res = await fetch("/api/history", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(entry) });
             if (res.ok) setStatusMessage(`"${name}" guardado en el historial ✓`, "success");
             else setStatusMessage("Error al guardar en el historial", "error");
         } catch (e) { console.error("[PartialGenerator] save error:", e); setStatusMessage("Error al conectar con el servidor", "error"); }
