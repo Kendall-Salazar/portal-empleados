@@ -30,6 +30,20 @@
 
             <div class="sidebar-content">
                 <div class="sidebar-menu">
+                    <!-- Back to Portal — only visible when served under /cronos -->
+                    <button
+                        id="nav-back-portal"
+                        class="nav-btn"
+                        style="display:none; background: var(--primary, #0d9488); color: #fff; margin-bottom: 8px;"
+                        onclick="window.location = '/'"
+                    >
+                        <i class="fa-solid fa-arrow-left"></i> Portal
+                    </button>
+                    <script>
+                        if (window.location.pathname.startsWith('/cronos')) {
+                            document.getElementById('nav-back-portal').style.display = '';
+                        }
+                    </script>
                     <!-- PORTAL SECTION -->
                     <button id="nav-gestion" class="nav-btn active" onclick="switchMainTab('gestion')">
                         <i class="fa-solid fa-users-gear"></i> Gestión de Personal
@@ -589,6 +603,9 @@
                                             </div>
                                         </label>
                                         <div id="refuerzoTypeContainer" class="select-wrapper hidden fade-in">
+                                        <label style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.3rem; display: block;">Nombre del refuerzo</label>
+                                        <input type="text" id="refuerzoNombre" value="Refuerzo" onchange="updateConfig()"
+                                            style="width: 100%; padding: 0.45rem 0.6rem; border-radius: 8px; border: 1px solid var(--border-color); background: var(--surface-2); color: var(--text-main); font-size: 0.85rem; margin-bottom: 0.75rem; box-sizing: border-box;">
                                         <label style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem; display: block;">Tipo de cobertura</label>
                                         <select id="refuerzoTypeSelect" onchange="updateConfig()" style="width: 100%; padding: 0.5rem; border-radius: 8px; border: 1px solid var(--border-color); background: var(--surface-2); color: var(--text-main); font-size: 0.85rem;">
                                             <option value="personalizado">Personalizado (Elegir Horas)</option>
@@ -673,6 +690,13 @@
                                                 </div>
                                             </div>
                                         </div>
+                                        <div style="margin-top: 0.85rem; padding-top: 0.65rem; border-top: 1px solid var(--border-color); display:flex; align-items:center; justify-content:space-between; gap:0.5rem;">
+                                            <label style="font-size: 0.8rem; color: var(--text-muted); margin: 0;">Refuerzos adicionales</label>
+                                            <button type="button" class="btn-icon-sm" onclick="addRefuerzoItem()" title="Agregar refuerzo" style="flex-shrink:0;">
+                                                <i class="fa-solid fa-plus"></i>
+                                            </button>
+                                        </div>
+                                        <div id="refuerzosListContainer"></div>
                                     </div>
                                     </div>
                                 </div>

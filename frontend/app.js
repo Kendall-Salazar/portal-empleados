@@ -1,10 +1,11 @@
-const API_URL = "/api";
+const API_URL = "/cronos/api";
 
 // STATE
 let employees = [];
 window.__pillEditorMode = window.__pillEditorMode || "employee";
 
 let config = {};
+let _refuerzosData = [];
 let currentGeneratedSchedule = null;
 let currentDailyTasks = null;
 let currentMetadata = null;
@@ -214,7 +215,7 @@ function setStatusMessage(message, kind = "info", timeoutMs = 2600) {
 }
 
 async function fetchValidationRules(specialDays = {}) {
-    const res = await fetch("/api/validation_rules", {
+    const res = await fetch("/cronos/api/validation_rules", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ special_days: specialDays || {} })
@@ -361,7 +362,7 @@ async function saveCustomShiftsToConfig() {
     try {
         const config = getCurrentConfig();
         config.custom_shifts = customShiftsData;
-        await fetch('/api/config', {
+        await fetch('/cronos/api/config', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(config)
@@ -373,7 +374,7 @@ async function saveCustomShiftsToConfig() {
 
 async function loadCustomShiftsFromConfig() {
     try {
-        const res = await fetch('/api/config');
+        const res = await fetch('/cronos/api/config');
         if (res.ok) {
             const config = await res.json();
             if (config.custom_shifts && Array.isArray(config.custom_shifts)) {
@@ -544,11 +545,11 @@ function clearAllHolidays() {
 
 async function saveHolidaysToConfig() {
     try {
-        const res = await fetch('/api/config');
+        const res = await fetch('/cronos/api/config');
         if (res.ok) {
             const currentConfig = await res.json();
             currentConfig.holidays = holidaysData;
-            await fetch('/api/config', {
+            await fetch('/cronos/api/config', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(currentConfig)
@@ -561,7 +562,7 @@ async function saveHolidaysToConfig() {
 
 async function loadHolidaysFromConfig() {
     try {
-        const res = await fetch('/api/config');
+        const res = await fetch('/cronos/api/config');
         if (res.ok) {
             const config = await res.json();
             if (config.holidays && Array.isArray(config.holidays)) {
@@ -981,6 +982,23 @@ function renderConfig() {
 
     toggleRefuerzoConfig();
 
+    // Load legacy refuerzo name
+    const refNombreEl = document.getElementById("refuerzoNombre");
+    if (refNombreEl) refNombreEl.value = config.refuerzo_nombre || 'Refuerzo';
+
+    // Load additional refuerzos list
+    if (Array.isArray(config.refuerzos) && config.refuerzos.length > 0) {
+        _refuerzosData = config.refuerzos.map(r => ({
+            nombre: r.nombre || '',
+            activo: r.activo !== false,
+            tipo: r.tipo || 'personalizado',
+            schedule: r.schedule || {}
+        }));
+    } else {
+        _refuerzosData = [];
+    }
+    renderRefuerzosUI();
+
     // Global quebrado toggle
     const globalQCb = document.getElementById("allowGlobalQuebrado");
     if (globalQCb) globalQCb.checked = config.allow_global_quebrado !== false;
@@ -1129,6 +1147,117 @@ function toggleRefuerzoDaysConfig() {
     }
 }
 
+/* ── Refuerzos Adicionales ── */
+function renderRefuerzosUI() {
+    const container = document.getElementById('refuerzosListContainer');
+    if (!container) return;
+    container.innerHTML = '';
+    if (_refuerzosData.length === 0) return;
+    const days = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+    const tipoLabels = { personalizado: 'Personalizado (Elegir Horas)', diurno: 'Diurno (Cubre Mañana)', nocturno: 'Nocturno (Cubre Tarde/Noche)', automatico: 'Automático (Mejor Opción)', sabado: 'Solo Sábado' };
+    _refuerzosData.forEach((ref, idx) => {
+        const tipo = ref.tipo || 'personalizado';
+        const isPersonalizado = tipo === 'personalizado';
+        const isSabado = tipo === 'sabado';
+
+        let scheduleHtml = '';
+        if (isPersonalizado) {
+            // Full day + time grid
+            const header = `<div style="display:grid; grid-template-columns:55px 1fr 1fr; gap:0.4rem; align-items:center; padding:0.25rem 0; border-bottom:1px solid var(--border-color); font-size:0.7rem; color:var(--text-muted); font-weight:600;"><span>Día</span><span>Inicio</span><span>Final</span></div>`;
+            const rows = days.map(d => {
+                const t = (ref.schedule || {})[d] || {};
+                const active = !!(t.start);
+                return `<div style="display:grid; grid-template-columns:55px 1fr 1fr; gap:0.4rem; align-items:center;">
+                    <label style="cursor:pointer; display:flex; align-items:center; gap:0.35rem; font-size:0.82rem; color:var(--text-main); font-weight:500;">
+                        <input type="checkbox" ${active ? 'checked' : ''} onchange="toggleRefuerzoDayItem(${idx}, '${d}', this.checked)" style="accent-color:#6366f1; width:14px; height:14px;"> ${d}
+                    </label>
+                    <input type="time" value="${t.start || '07:00'}" ${!active ? 'disabled' : ''} step="3600"
+                        onchange="updateRefuerzoDayTime(${idx}, '${d}', 'start', this.value)"
+                        style="width:100%; padding:0.35rem 0.45rem; border-radius:6px; border:1px solid var(--border-color); background:var(--surface-2); color:var(--text-main); font-size:0.8rem; opacity:${active ? '1' : '0.4'};">
+                    <input type="time" value="${t.end || '12:00'}" ${!active ? 'disabled' : ''} step="3600"
+                        onchange="updateRefuerzoDayTime(${idx}, '${d}', 'end', this.value)"
+                        style="width:100%; padding:0.35rem 0.45rem; border-radius:6px; border:1px solid var(--border-color); background:var(--surface-2); color:var(--text-main); font-size:0.8rem; opacity:${active ? '1' : '0.4'};">
+                </div>`;
+            }).join('');
+            scheduleHtml = `<div style="display:flex; flex-direction:column; gap:0.3rem; margin-top:0.4rem;">${header}${rows}</div>`;
+        } else if (!isSabado) {
+            // Day-only checkboxes — solver picks the shift
+            const rows = days.map(d => {
+                const active = !!(ref.schedule || {})[d];
+                return `<label style="display:flex; align-items:center; gap:0.35rem; font-size:0.82rem; color:var(--text-main); cursor:pointer;">
+                    <input type="checkbox" ${active ? 'checked' : ''} onchange="toggleRefuerzoDayItem(${idx}, '${d}', this.checked)" style="accent-color:#6366f1; width:14px; height:14px;"> ${d}
+                </label>`;
+            }).join('');
+            scheduleHtml = `<div style="margin-top:0.4rem;"><div style="font-size:0.72rem; color:var(--text-muted); margin-bottom:0.3rem;">Días activos</div><div style="display:flex; flex-wrap:wrap; gap:0.5rem 0.8rem;">${rows}</div></div>`;
+        }
+        // sabado: no day selector (always Saturday)
+
+        const tipoOptions = Object.entries(tipoLabels).map(([v, l]) =>
+            `<option value="${v}" ${tipo === v ? 'selected' : ''}>${l}</option>`).join('');
+
+        const block = document.createElement('div');
+        block.style.cssText = 'margin-top:0.65rem; padding-top:0.6rem; border-top:1px solid var(--border-color);';
+        block.innerHTML = `
+            <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.45rem;">
+                <input type="text" value="${escapeHtmlSimple(ref.nombre || '')}" placeholder="Nombre del refuerzo"
+                    onchange="_refuerzosData[${idx}].nombre = this.value; updateConfig();"
+                    style="flex:1; padding:0.3rem 0.55rem; border-radius:6px; border:1px solid var(--border-color); background:var(--surface-2); color:var(--text-main); font-size:0.82rem;">
+                <label style="display:flex; align-items:center; gap:0.3rem; font-size:0.75rem; color:var(--text-muted); cursor:pointer; white-space:nowrap;">
+                    <input type="checkbox" ${ref.activo !== false ? 'checked' : ''} onchange="_refuerzosData[${idx}].activo = this.checked; updateConfig();" style="accent-color:#6366f1; width:13px; height:13px;"> Activo
+                </label>
+                <button type="button" onclick="removeRefuerzoItem(${idx})" title="Eliminar" style="border:none; background:transparent; color:var(--text-muted); cursor:pointer; padding:0.2rem 0.35rem; border-radius:5px; line-height:1;" onmouseover="this.style.color='#f87171'" onmouseout="this.style.color='var(--text-muted)'">
+                    <i class="fa-solid fa-trash" style="font-size:0.75rem;"></i>
+                </button>
+            </div>
+            <select onchange="_refuerzosData[${idx}].tipo = this.value; if(this.value !== 'personalizado') _refuerzosData[${idx}].schedule = {}; renderRefuerzosUI(); updateConfig();"
+                style="width:100%; padding:0.35rem 0.5rem; border-radius:6px; border:1px solid var(--border-color); background:var(--surface-2); color:var(--text-main); font-size:0.8rem; margin-bottom:0.1rem;">
+                ${tipoOptions}
+            </select>
+            ${scheduleHtml}`;
+        container.appendChild(block);
+    });
+}
+
+function escapeHtmlSimple(str) {
+    return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function toggleRefuerzoDayItem(idx, day, checked) {
+    if (!_refuerzosData[idx].schedule) _refuerzosData[idx].schedule = {};
+    if (checked) {
+        _refuerzosData[idx].schedule[day] = _refuerzosData[idx].schedule[day] || { start: '07:00', end: '12:00' };
+    } else {
+        delete _refuerzosData[idx].schedule[day];
+    }
+    renderRefuerzosUI();
+    updateConfig();
+}
+
+function updateRefuerzoDayTime(idx, day, field, value) {
+    if (!_refuerzosData[idx].schedule) _refuerzosData[idx].schedule = {};
+    if (!_refuerzosData[idx].schedule[day]) _refuerzosData[idx].schedule[day] = { start: '07:00', end: '12:00' };
+    _refuerzosData[idx].schedule[day][field] = value;
+    updateConfig();
+}
+
+function addRefuerzoItem() {
+    _refuerzosData.push({ nombre: `Refuerzo ${_refuerzosData.length + 1}`, activo: true, tipo: 'personalizado', schedule: {} });
+    renderRefuerzosUI();
+    updateConfig();
+}
+
+function removeRefuerzoItem(idx) {
+    _refuerzosData.splice(idx, 1);
+    renderRefuerzosUI();
+    updateConfig();
+}
+
+function getRefuerzosFromUI() {
+    return _refuerzosData
+        .map(r => ({ nombre: (r.nombre || '').trim(), activo: r.activo !== false, tipo: r.tipo || 'personalizado', schedule: r.schedule || {} }))
+        .filter(r => r.nombre);
+}
+
 function toggleJefeConfig() {
     const enabled = document.getElementById("jefeEnabled")?.checked;
     const body = document.getElementById("jefeConfigBody");
@@ -1240,6 +1369,8 @@ async function updateConfig() {
     });
     config.refuerzo_schedule = Object.keys(schedule).length > 0 ? schedule : null;
     config.refuerzo_partial_mode = document.getElementById("refuerzoPartialMode")?.checked || false;
+    config.refuerzo_nombre = document.getElementById("refuerzoNombre")?.value?.trim() || 'Refuerzo';
+    config.refuerzos = getRefuerzosFromUI();
     config.allow_collision_quebrado = document.getElementById("allowCollisionQuebrado")?.checked || false;
     config.allow_quebrado_largo = document.getElementById("allowQuebradoLargo")?.checked || false;
     config.collision_peak_priority = document.getElementById("collisionPeakPriority")?.value || "pm";
@@ -1799,6 +1930,8 @@ async function generateSchedule() {
     });
     config.refuerzo_schedule = Object.keys(schedule).length > 0 ? schedule : null;
     config.refuerzo_partial_mode = document.getElementById("refuerzoPartialMode")?.checked || false;
+    config.refuerzo_nombre = document.getElementById("refuerzoNombre")?.value?.trim() || 'Refuerzo';
+    config.refuerzos = getRefuerzosFromUI();
     config.allow_global_quebrado = document.getElementById("allowGlobalQuebrado")?.checked ?? true;
 
     config.allow_collision_quebrado = document.getElementById("allowCollisionQuebrado")?.checked || false;
@@ -1815,7 +1948,7 @@ async function generateSchedule() {
         const weekEnd = document.getElementById("weekEndDate")?.value;
         if (weekStart && weekEnd) {
             status.innerHTML = '<i class="fa-solid fa-sync fa-spin"></i> Sincronizando vacaciones...';
-            const syncRes = await fetch('/api/sync_vac_fixed_shifts', {
+            const syncRes = await fetch('/cronos/api/sync_vac_fixed_shifts', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ fecha_inicio: weekStart, fecha_fin: weekEnd })
@@ -2305,7 +2438,8 @@ function renderSchedule(
 
                     if (belongsInRow) {
                         const emp = employees.find(e => e.name === name);
-                        const role = name === "Refuerzo" ? "REF" : (emp && sqlIntFlagOn(emp.is_jefe_pista) ? "JEFE" : (emp && emp.is_practicante ? "PRACT" : ""));
+                        const isRefuerzoEmp = (currentMetadata?.refuerzo_employees || []).includes(name);
+                        const role = isRefuerzoEmp ? "REF" : (emp && sqlIntFlagOn(emp.is_jefe_pista) ? "JEFE" : (emp && emp.is_practicante ? "PRACT" : ""));
                         const nightBadge = emp && emp.can_do_night ? '<i class="fa-solid fa-moon" style="font-size:0.7em;"></i> ' : '';
 
                         let info = getShiftInfo(s); // To get colors
@@ -2423,13 +2557,14 @@ function renderSchedule(
             const aliasIndicator = isHistory && historyAliases[name] && historyAliases[name] !== name
                 ? `<i class="fa-solid fa-link" style="font-size:0.65em; margin-left:4px; color:var(--text-muted);" title="Vinculado a ${escapeHtmlAttr(name)}"></i>`
                 : '';
-            const initials = name === "Refuerzo" ? "RF" : (displayName || name).substring(0, 2).toUpperCase();
+            const initials = (displayName || name).substring(0, 2).toUpperCase();
             const emp = employees.find(e => e.name === name);
+            const isRefuerzoRow = (currentMetadata?.refuerzo_employees || []).includes(name);
             const nightBadge = emp && emp.can_do_night ? '<i class="fa-solid fa-moon" style="font-size:0.7em; margin-left:4px; color:#6366f1;" title="Turno Noche"></i>' : '';
             const noRestBadge = emp && emp.allow_no_rest ? '<i class="fa-solid fa-battery-empty" style="font-size:0.7em; margin-left:4px; color:#ef4444;" title="Sin Descanso"></i>' : '';
             const forcedLibresBadge = emp && emp.forced_libres ? '<i class="fa-solid fa-thumbtack forced-libres-icon" title="Rol Libres Forzado"></i>' : '';
             const forcedQuebradoBadge = emp && emp.forced_quebrado ? '<i class="fa-solid fa-bolt" style="font-size:0.7em; margin-left:4px; color:#7c3aed;" title="Forzar Quebrado"></i>' : '';
-            const refBadge = name === "Refuerzo" ? '<span class="tag night" style="font-size:0.6em; margin-left:4px;">REF</span>' : '';
+            const refBadge = isRefuerzoRow ? '<span class="tag night" style="font-size:0.6em; margin-left:4px;">REF</span>' : '';
             // Libres person badge for current week (from metadata)
             const libresPerson = currentMetadata?.libres_person || "";
             const libresWeekBadge = name === libresPerson
@@ -2444,10 +2579,10 @@ function renderSchedule(
             row.innerHTML = `
                 <td>
                     <div class="emp-cell-content">
-                        <div class="emp-avatar" style="${name === "Refuerzo" ? 'background: var(--accent-color);' : ''}">${initials}</div>
+                        <div class="emp-avatar" style="${isRefuerzoRow ? 'background: var(--accent-color);' : ''}">${initials}</div>
                         <div class="emp-details">
                             <span ${nameClickAttrs}>${displayName}${aliasIndicator} ${nightBadge} ${noRestBadge} ${forcedLibresBadge} ${forcedQuebradoBadge} ${libresWeekBadge} ${refBadge}</span>
-                            <span class="emp-role">${name === "Refuerzo" ? 'Apoyo Extra' : (emp && sqlIntFlagOn(emp.is_jefe_pista) ? 'Jefe de Pista' : (emp && emp.is_practicante ? 'Practicante' : 'Colaborador'))}</span>
+                            <span class="emp-role">${isRefuerzoRow ? 'Apoyo Extra' : (emp && sqlIntFlagOn(emp.is_jefe_pista) ? 'Jefe de Pista' : (emp && emp.is_practicante ? 'Practicante' : 'Colaborador'))}</span>
                         </div>
                     </div>
                 </td>
@@ -2542,7 +2677,7 @@ async function fetchHistoryEntries(forceRefresh = false) {
         return historyEntriesCache;
     }
 
-    const res = await fetch('/api/history');
+    const res = await fetch('/cronos/api/history');
     if (!res.ok) {
         throw new Error(`API returned ${res.status}`);
     }
@@ -2761,7 +2896,7 @@ async function onImportHorarioExcelHistorialFileChange(ev) {
     fd.append("file", f);
     fd.append("sheets", "[]");
     try {
-        const res = await fetch("/api/history/import-horario-excel/preview", { method: "POST", body: fd });
+        const res = await fetch("/cronos/api/history/import-horario-excel/preview", { method: "POST", body: fd });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(_importHorarioExcelApiErrorMessage(data, res.statusText));
         if (st) st.textContent = `Archivo: ${f.name} — elija pestañas y pulse Vista previa.`;
@@ -2819,7 +2954,7 @@ async function runImportHorarioExcelHistorialPreview() {
     fd.append("file", importHorarioExcelHistorialFile);
     fd.append("sheets", JSON.stringify(sheets));
     try {
-        const res = await fetch("/api/history/import-horario-excel/preview", { method: "POST", body: fd });
+        const res = await fetch("/cronos/api/history/import-horario-excel/preview", { method: "POST", body: fd });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(_importHorarioExcelApiErrorMessage(data, res.statusText));
         importHorarioExcelHistorialDrafts = data.drafts || [];
@@ -2998,7 +3133,7 @@ async function confirmImportHorarioExcelHistorial() {
     }
     if (st) st.textContent = "Guardando…";
     try {
-        const res = await fetch("/api/history/import-horario-excel/confirm", {
+        const res = await fetch("/cronos/api/history/import-horario-excel/confirm", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ items }),
@@ -3490,7 +3625,7 @@ function _manualSchedBuildRow(name, isEditable) {
 
 async function _manualSchedFetchActiveEmployees() {
     try {
-        const res = await fetch('/api/planillas/empleados');
+        const res = await fetch('/cronos/api/planillas/empleados');
         if (!res.ok) return [];
         const all = await res.json();
         return all
@@ -3654,7 +3789,7 @@ window.manualSchedSave = async function () {
 
     _manualSchedSetStatus("Guardando...", "info");
     try {
-        const res = await fetch('/api/history', {
+        const res = await fetch('/cronos/api/history', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
@@ -4126,7 +4261,7 @@ let _historyNameModalState = {
 
 async function _loadHistoryNameSuggestions() {
     try {
-        const res = await fetch('/api/planillas/empleados');
+        const res = await fetch('/cronos/api/planillas/empleados');
         if (!res.ok) return [];
         const all = await res.json();
         return all
@@ -4374,7 +4509,7 @@ async function renameHistory(i, event) {
                 entry.db_id != null
                     ? { db_id: entry.db_id, name: newName.trim() }
                     : { index: i, name: newName.trim() };
-            const res = await fetch('/api/history', {
+            const res = await fetch('/cronos/api/history', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body)
@@ -4500,7 +4635,7 @@ let trashCache = [];
 
 async function loadTrash() {
     try {
-        const res = await fetch('/api/history/trash');
+        const res = await fetch('/cronos/api/history/trash');
         if (!res.ok) return;
         trashCache = await res.json();
     } catch (err) {
@@ -4566,7 +4701,7 @@ async function purgeTrash(event) {
     }
     if (!confirm('¿Eliminar permanentemente todas las entradas con más de 7 días en la papelera?')) return;
 
-    const res = await fetch('/api/history/trash/purge', { method: 'POST' });
+    const res = await fetch('/cronos/api/history/trash/purge', { method: 'POST' });
     if (!res.ok) {
         alert("No se pudo purgar la papelera.");
         return;
@@ -4726,7 +4861,7 @@ function closeExportConfirmModal() {
 
 async function openExportFolder() {
     try {
-        await fetch("/api/open_export_folder", { method: "POST" });
+        await fetch("/cronos/api/open_export_folder", { method: "POST" });
     } catch (e) {
         console.error("Error opening export folder:", e);
     }
@@ -6086,7 +6221,7 @@ async function confirmSaveSchedule(event) {
     };
 
     try {
-        const res = await fetch('/api/save-history-with-folder-check', {
+        const res = await fetch('/cronos/api/save-history-with-folder-check', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -6719,7 +6854,7 @@ const PartialGenerator = {
         if (!resultsEl) return;
 
         try {
-            const history = await fetch("/api/history").then(r => r.json());
+            const history = await fetch("/cronos/api/history").then(r => r.json());
             this._searchCache = history
                 .filter(h => (h.name || "").toLowerCase().includes((query || "").toLowerCase()))
                 .slice(0, 12);
@@ -7212,7 +7347,7 @@ const PartialGenerator = {
         if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Generando...'; }
 
         try {
-            const result = await fetch("/api/solve-partial", {
+            const result = await fetch("/cronos/api/solve-partial", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(payload),
@@ -7390,7 +7525,7 @@ const PartialGenerator = {
         };
 
         try {
-            const res = await fetch("/api/history", {
+            const res = await fetch("/cronos/api/history", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(entry),
@@ -7703,7 +7838,7 @@ async function openHistoryMatrix() {
 
         // ── Detectar empleados con horario fijo (no mostrar pill/barra) ──
         function isFixedScheduleEmployee(name) {
-            if (name === 'Refuerzo') return true;
+            if ((currentMetadata?.refuerzo_employees || []).includes(name)) return true;
             const emp = empCache.find(e => e.name === name);
             if (!emp || !emp.fixed_shifts) return false;
             const working = Object.values(emp.fixed_shifts).filter(s => s && s !== 'OFF' && s !== 'VAC' && s !== 'PERM');
@@ -7854,7 +7989,7 @@ async function createFolder() {
     const name = input.value.trim();
     if (!name) { alert("Ingresá un nombre para la carpeta (ej: 2026)."); return; }
     try {
-        const res = await fetch('/api/folders', {
+        const res = await fetch('/cronos/api/folders', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name })
@@ -7874,7 +8009,7 @@ async function loadFolders() {
     const container = document.getElementById("foldersList");
     if (!container) return;
     try {
-        const res = await fetch('/api/folders');
+        const res = await fetch('/cronos/api/folders');
         const folders = await res.json();
         foldersCache = folders;
         if (!folders.length) {

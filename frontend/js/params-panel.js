@@ -116,6 +116,7 @@ async function updateConfig() {
     });
     config.refuerzo_schedule = Object.keys(schedule).length > 0 ? schedule : null;
     config.refuerzo_partial_mode = document.getElementById("refuerzoPartialMode")?.checked || false;
+    config.refuerzos = getRefuerzosFromUI();
     config.allow_global_quebrado = document.getElementById("allowGlobalQuebrado")?.checked ?? true;
     config.allow_collision_quebrado = document.getElementById("allowCollisionQuebrado")?.checked || false;
     config.allow_quebrado_largo = document.getElementById("allowQuebradoLargo")?.checked || false;
@@ -392,3 +393,95 @@ window.switchTab = switchTab;
 
 function closeModal() { document.getElementById("employeeModal").classList.add("hidden"); }
 window.closeModal = closeModal;
+
+/* ── Refuerzos Adicionales ── */
+let _refuerzosData = [];
+
+function renderRefuerzosUI() {
+    const container = document.getElementById('refuerzosListContainer');
+    if (!container) return;
+    container.innerHTML = '';
+    const days = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+    _refuerzosData.forEach((ref, idx) => {
+        const card = document.createElement('div');
+        card.className = 'refuerzo-item-card';
+        card.dataset.idx = idx;
+        card.innerHTML = `
+            <div class="refuerzo-item-header">
+                <input type="text" class="refuerzo-nombre-input" value="${escapeHtml(ref.nombre || '')}"
+                    placeholder="Nombre del refuerzo"
+                    onchange="_refuerzosData[${idx}].nombre = this.value; updateConfig();">
+                <label class="toggle-label" title="Activo">
+                    <input type="checkbox" ${ref.activo !== false ? 'checked' : ''}
+                        onchange="_refuerzosData[${idx}].activo = this.checked; updateConfig();">
+                    <span>Activo</span>
+                </label>
+                <button type="button" class="btn-icon-sm btn-danger-sm" onclick="removeRefuerzoItem(${idx})" title="Eliminar">
+                    <i class="fa-solid fa-trash"></i>
+                </button>
+            </div>
+            <div class="refuerzo-days-grid">
+                ${days.map(d => {
+                    const t = (ref.schedule || {})[d] || {};
+                    const active = !!t.start;
+                    return `<div class="refuerzo-day-row">
+                        <label><input type="checkbox" ${active ? 'checked' : ''}
+                            onchange="toggleRefuerzoDayItem(${idx}, '${d}', this.checked)"> ${d}</label>
+                        <input type="time" value="${t.start || '07:00'}" ${!active ? 'disabled' : ''}
+                            onchange="_refuerzosData[${idx}].schedule = _refuerzosData[${idx}].schedule||{}; _refuerzosData[${idx}].schedule['${d}'] = {start:this.value, end: document.querySelector('[data-ref-end-${idx}-${d}]')?.value||'12:00'}; updateConfig();">
+                        <input type="time" value="${t.end || '12:00'}" ${!active ? 'disabled' : ''}
+                            data-ref-end-${idx}-${d}
+                            onchange="_refuerzosData[${idx}].schedule = _refuerzosData[${idx}].schedule||{}; _refuerzosData[${idx}].schedule['${d}'] = {start: document.querySelector('[data-ref-start-${idx}-${d}]')?.value||'07:00', end:this.value}; updateConfig();">
+                    </div>`;
+                }).join('')}
+            </div>`;
+        // Fix: add data attrs for cross-referencing time inputs
+        container.appendChild(card);
+        card.querySelectorAll('input[type="time"]').forEach((inp, i) => {
+            const d = days[Math.floor(i / 2)];
+            if (i % 2 === 0) inp.dataset[`refStart${idx}${d}`] = true;
+            else inp.dataset[`refEnd${idx}${d}`] = true;
+        });
+    });
+}
+window.renderRefuerzosUI = renderRefuerzosUI;
+
+function toggleRefuerzoDayItem(idx, day, checked) {
+    if (!_refuerzosData[idx].schedule) _refuerzosData[idx].schedule = {};
+    if (checked) {
+        _refuerzosData[idx].schedule[day] = _refuerzosData[idx].schedule[day] || { start: '07:00', end: '12:00' };
+    } else {
+        delete _refuerzosData[idx].schedule[day];
+    }
+    renderRefuerzosUI();
+    updateConfig();
+}
+window.toggleRefuerzoDayItem = toggleRefuerzoDayItem;
+
+function addRefuerzoItem() {
+    _refuerzosData.push({ nombre: `Refuerzo ${_refuerzosData.length + 1}`, activo: true, schedule: {} });
+    renderRefuerzosUI();
+    updateConfig();
+}
+window.addRefuerzoItem = addRefuerzoItem;
+
+function removeRefuerzoItem(idx) {
+    _refuerzosData.splice(idx, 1);
+    renderRefuerzosUI();
+    updateConfig();
+}
+window.removeRefuerzoItem = removeRefuerzoItem;
+
+function getRefuerzosFromUI() {
+    return _refuerzosData.map(r => ({
+        nombre: r.nombre || '',
+        activo: r.activo !== false,
+        schedule: r.schedule || {}
+    })).filter(r => r.nombre.trim());
+}
+window.getRefuerzosFromUI = getRefuerzosFromUI;
+
+function escapeHtml(str) {
+    return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+window.escapeHtml = escapeHtml;

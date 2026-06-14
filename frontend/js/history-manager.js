@@ -120,7 +120,7 @@ async function confirmSaveSchedule(event) {
     setStatusMessage("Guardando...", "info", 0);
     try {
         const entry = { name, schedule: currentGeneratedSchedule, daily_tasks: currentDailyTasks || {}, week_dates: getWeekDatesMap(), special_days: getSpecialDaysPayload(), metadata: currentMetadata || {}, timestamp: new Date().toISOString() };
-        const res = await fetch('/api/history', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(entry) });
+        const res = await fetch('/cronos/api/history', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(entry) });
         if (!res.ok) throw new Error("Error al guardar");
         closeSaveModal();
         setStatusMessage(`"${name}" guardado en el historial.`, "success");
@@ -449,7 +449,7 @@ window.permanentDeleteTrash = permanentDeleteTrash;
 async function purgeTrash(event) {
     if (event) { event.preventDefault(); event.stopPropagation(); }
     if (!confirm('¿Eliminar permanentemente todas las entradas con más de 7 días en la papelera?')) return;
-    const res = await fetch('/api/history/trash/purge', { method: 'POST' });
+    const res = await fetch('/cronos/api/history/trash/purge', { method: 'POST' });
     if (!res.ok) { alert("No se pudo purgar la papelera."); return; }
     await loadTrash(); renderTrashList(); setStatusMessage("Papelera purgada.", "success");
 }
@@ -495,7 +495,7 @@ async function onImportHorarioExcelHistorialFileChange(ev) {
     if (st) st.textContent = "Leyendo pestañas…";
     const fd = new FormData(); fd.append("file", f); fd.append("sheets", "[]");
     try {
-        const res = await fetch("/api/history/import-horario-excel/preview", { method: "POST", body: fd });
+        const res = await fetch("/cronos/api/history/import-horario-excel/preview", { method: "POST", body: fd });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(_importHorarioExcelApiErrorMessage(data, res.statusText));
         if (st) st.textContent = `Archivo: ${f.name} — elija pestañas y pulse Vista previa.`;
@@ -521,7 +521,7 @@ async function runImportHorarioExcelHistorialPreview() {
     if (st) st.textContent = "Generando vista previa…"; if (iw) iw.textContent = ""; btn.disabled = true;
     const fd = new FormData(); fd.append("file", importHorarioExcelHistorialFile); fd.append("sheets", JSON.stringify(sheets));
     try {
-        const res = await fetch("/api/history/import-horario-excel/preview", { method: "POST", body: fd });
+        const res = await fetch("/cronos/api/history/import-horario-excel/preview", { method: "POST", body: fd });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(_importHorarioExcelApiErrorMessage(data, res.statusText));
         importHorarioExcelHistorialDrafts = data.drafts || [];
@@ -595,7 +595,7 @@ async function confirmImportHorarioExcelHistorial() {
     if (!items.length) { if (st) st.textContent = "No hay borradores válidos para guardar."; return; }
     if (st) st.textContent = "Guardando…";
     try {
-        const res = await fetch("/api/history/import-horario-excel/confirm", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items }) });
+        const res = await fetch("/cronos/api/history/import-horario-excel/confirm", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items }) });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(_importHorarioExcelApiErrorMessage(data, res.statusText));
         closeImportHorarioExcelHistorialModal(); await loadHistory(true);
@@ -711,7 +711,7 @@ function addManualWeekToPreview() {
             if (statusEl) statusEl.textContent = "Guardando...";
             try {
                 const entry = { name: nameVal, schedule, daily_tasks: dailyTasks, week_dates: weekDates, timestamp: new Date().toISOString() };
-                const res = await fetch('/api/history', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(entry) });
+                const res = await fetch('/cronos/api/history', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(entry) });
                 if (!res.ok) throw new Error("Error al guardar");
                 if (statusEl) statusEl.textContent = `"${nameVal}" guardado exitosamente.`;
                 await loadHistory(true);
@@ -826,7 +826,7 @@ let _historyNameModalState = { histIndex: null, canonical: null, suggestions: []
 
 async function _loadHistoryNameSuggestions() {
     try {
-        const res = await fetch('/api/planillas/empleados'); if (!res.ok) return [];
+        const res = await fetch('/cronos/api/planillas/empleados'); if (!res.ok) return [];
         const all = await res.json();
         return all.filter(e => (e.activo === 1 || e.activo === true) && (e.incluir_en_horario === 1 || e.incluir_en_horario === true || e.incluir_en_horario == null)).map(e => ({ id: e.id, nombre: e.nombre || "" })).filter(e => e.nombre).sort((a, b) => a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' }));
     } catch (err) { console.error("No se pudieron cargar las sugerencias:", err); return []; }

@@ -5,7 +5,7 @@ async function refreshPrefPlantillasList() {
     if (!host) return;
     host.innerHTML = '<p class="helper-text-sm" style="margin:0;">Cargando…</p>';
     try {
-        const res = await fetch("/api/planillas/pref-plantillas");
+        const res = await fetch("/cronos/api/planillas/pref-plantillas");
         if (!res.ok) throw new Error("No se pudieron cargar las plantillas");
         const rows = await res.json();
         if (!rows.length) {
@@ -122,7 +122,7 @@ window.savePrefPlantillaFromModal = async function () {
                 body: JSON.stringify(body),
             });
         } else {
-            res = await fetch("/api/planillas/pref-plantillas", {
+            res = await fetch("/cronos/api/planillas/pref-plantillas", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(body),
@@ -161,7 +161,7 @@ window.loadEmpPrefPlantillaOptions = async function () {
     const cur = sel.value;
     sel.innerHTML = '<option value="">— Sin plantilla (preferencias en este formulario) —</option>';
     try {
-        const res = await fetch("/api/planillas/pref-plantillas?solo_activas=true");
+        const res = await fetch("/cronos/api/planillas/pref-plantillas?solo_activas=true");
         if (!res.ok) return;
         const rows = await res.json();
         rows.forEach((p) => {

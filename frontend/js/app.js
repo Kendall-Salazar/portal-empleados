@@ -63,7 +63,7 @@ async function generateSchedule() {
         const weekEnd = document.getElementById("weekEndDate")?.value;
         if (weekStart && weekEnd) {
             status.innerHTML = '<i class="fa-solid fa-sync fa-spin"></i> Sincronizando vacaciones...';
-            const syncRes = await fetch('/api/sync_vac_fixed_shifts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fecha_inicio: weekStart, fecha_fin: weekEnd }) });
+            const syncRes = await fetch('/cronos/api/sync_vac_fixed_shifts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fecha_inicio: weekStart, fecha_fin: weekEnd }) });
             if (syncRes.ok) await loadEmployees();
             status.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Generando...';
         }

@@ -168,7 +168,7 @@ window.setStatusMessage = setStatusMessage;
 
 /* ── Validation Rules ── */
 async function fetchValidationRules(specialDays = {}) {
-    const res = await fetch("/api/validation_rules", {
+    const res = await fetch("/cronos/api/validation_rules", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ special_days: specialDays || {} })
@@ -276,13 +276,13 @@ async function saveCustomShiftsToConfig() {
     try {
         const cfg = getCurrentConfig();
         cfg.custom_shifts = customShiftsData;
-        await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cfg) });
+        await fetch('/cronos/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cfg) });
     } catch (e) { console.error('Error saving custom shifts:', e); }
 }
 
 async function loadCustomShiftsFromConfig() {
     try {
-        const res = await fetch('/api/config');
+        const res = await fetch('/cronos/api/config');
         if (res.ok) {
             const cfg = await res.json();
             if (cfg.custom_shifts && Array.isArray(cfg.custom_shifts)) {
@@ -411,18 +411,18 @@ window.clearAllHolidays = clearAllHolidays;
 
 async function saveHolidaysToConfig() {
     try {
-        const res = await fetch('/api/config');
+        const res = await fetch('/cronos/api/config');
         if (res.ok) {
             const currentConfig = await res.json();
             currentConfig.holidays = holidaysData;
-            await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(currentConfig) });
+            await fetch('/cronos/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(currentConfig) });
         }
     } catch (e) { console.error('Error saving holidays:', e); }
 }
 
 async function loadHolidaysFromConfig() {
     try {
-        const res = await fetch('/api/config');
+        const res = await fetch('/cronos/api/config');
         if (res.ok) {
             const cfg = await res.json();
             if (cfg.holidays && Array.isArray(cfg.holidays)) {
@@ -696,6 +696,17 @@ function renderConfig() {
     if (globalQCb) globalQCb.checked = config.allow_global_quebrado !== false;
 
     toggleRefuerzoConfig();
+    // Load additional refuerzos list
+    if (Array.isArray(config.refuerzos) && config.refuerzos.length > 0) {
+        _refuerzosData = config.refuerzos.map(r => ({
+            nombre: r.nombre || '',
+            activo: r.activo !== false,
+            schedule: r.schedule || {}
+        }));
+    } else {
+        _refuerzosData = [];
+    }
+    renderRefuerzosUI();
     const collisionCb = document.getElementById("allowCollisionQuebrado");
     if (collisionCb) collisionCb.checked = config.allow_collision_quebrado || false;
     const q3Cb = document.getElementById("allowQuebradoLargo");
@@ -767,7 +778,7 @@ window.renderConfig = renderConfig;
 /* ── History ── */
 async function fetchHistoryEntries(forceRefresh = false) {
     if (!forceRefresh && historyEntriesCache.length) return historyEntriesCache;
-    const res = await fetch('/api/history');
+    const res = await fetch('/cronos/api/history');
     if (!res.ok) throw new Error(`API returned ${res.status}`);
     let entries = await res.json();
     if (!Array.isArray(entries)) entries = [];
@@ -799,7 +810,7 @@ window.loadHistory = loadHistory;
 /* ── Trash ── */
 async function loadTrash() {
     try {
-        const res = await fetch('/api/history/trash');
+        const res = await fetch('/cronos/api/history/trash');
         if (!res.ok) return;
         trashCache = await res.json();
     } catch (err) { console.error('Error loading trash:', err); trashCache = []; }
@@ -840,7 +851,7 @@ async function createFolder() {
     const name = input.value.trim();
     if (!name) { alert("Ingresá un nombre para la carpeta (ej: 2026)."); return; }
     try {
-        const res = await fetch('/api/folders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+        const res = await fetch('/cronos/api/folders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
         if (!res.ok) throw new Error(await res.text());
         input.value = ""; input.style.display = "none";
         document.getElementById("btnToggleFolderCreate").innerHTML = '<i class="fa-solid fa-folder-plus"></i> Nueva';
@@ -854,7 +865,7 @@ async function loadFolders() {
     const container = document.getElementById("foldersList");
     if (!container) return;
     try {
-        const res = await fetch('/api/folders');
+        const res = await fetch('/cronos/api/folders');
         const folders = await res.json();
         foldersCache = folders;
         if (!folders.length) { container.innerHTML = '<div class="empty-msg" style="padding:1rem;text-align:center;color:var(--text-muted);font-size:0.85rem;"><i class="fa-solid fa-folder-open"></i> Sin carpetas aún. Creá una para agrupar horarios del año.</div>'; return; }

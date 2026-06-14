@@ -266,7 +266,8 @@ function renderSchedule(schedule, tableSelector, tasks = {}, specialDaysOverride
                     let belongsInRow = shiftCode === "OFF_GROUP" ? (s === "OFF" || s === "VAC" || s === "PERM") : (s === shiftCode);
                     if (belongsInRow) {
                         const emp = employees.find(e => e.name === name);
-                        const role = name === "Refuerzo" ? "REF" : (emp && sqlIntFlagOn(emp.is_jefe_pista) ? "JEFE" : (emp && emp.is_practicante ? "PRACT" : ""));
+                        const isRefuerzoEmp = (currentMetadata?.refuerzo_employees || []).includes(name);
+                        const role = isRefuerzoEmp ? "REF" : (emp && sqlIntFlagOn(emp.is_jefe_pista) ? "JEFE" : (emp && emp.is_practicante ? "PRACT" : ""));
                         const nightBadge = emp && emp.can_do_night ? '<i class="fa-solid fa-moon" style="font-size:0.7em;"></i> ' : '';
                         let info = getShiftInfo(s);
                         const closedOffCard = isHistory && isClosedTd && s === "OFF";
@@ -315,18 +316,19 @@ function renderSchedule(schedule, tableSelector, tasks = {}, specialDaysOverride
             const row = document.createElement("tr");
             const displayName = isHistory && historyAliases[name] ? historyAliases[name] : name;
             const aliasIndicator = isHistory && historyAliases[name] && historyAliases[name] !== name ? `<i class="fa-solid fa-link" style="font-size:0.65em; margin-left:4px; color:var(--text-muted);" title="Vinculado a ${escapeHtmlAttr(name)}"></i>` : '';
-            const initials = name === "Refuerzo" ? "RF" : (displayName || name).substring(0, 2).toUpperCase();
+            const isRefuerzoRow = (currentMetadata?.refuerzo_employees || []).includes(name);
+            const initials = (displayName || name).substring(0, 2).toUpperCase();
             const emp = employees.find(e => e.name === name);
             const nightBadge = emp && emp.can_do_night ? '<i class="fa-solid fa-moon" style="font-size:0.7em; margin-left:4px; color:#6366f1;" title="Turno Noche"></i>' : '';
             const noRestBadge = emp && emp.allow_no_rest ? '<i class="fa-solid fa-battery-empty" style="font-size:0.7em; margin-left:4px; color:#ef4444;" title="Sin Descanso"></i>' : '';
             const forcedLibresBadge = emp && emp.forced_libres ? '<i class="fa-solid fa-thumbtack forced-libres-icon" title="Rol Libres Forzado"></i>' : '';
             const forcedQuebradoBadge = emp && emp.forced_quebrado ? '<i class="fa-solid fa-bolt" style="font-size:0.7em; margin-left:4px; color:#7c3aed;" title="Forzar Quebrado"></i>' : '';
-            const refBadge = name === "Refuerzo" ? '<span class="tag night" style="font-size:0.6em; margin-left:4px;">REF</span>' : '';
+            const refBadge = isRefuerzoRow ? '<span class="tag night" style="font-size:0.6em; margin-left:4px;">REF</span>' : '';
             const libresPerson = currentMetadata?.libres_person || "";
             const libresWeekBadge = name === libresPerson ? '<span class="libres-week-badge" title="Persona de Libres esta semana">★ LIBRES</span>' : '';
             const nameJsLiteral = JSON.stringify(name).replace(/"/g, "&quot;");
             const nameClickAttrs = isHistory ? `class="emp-name hist-name-edit" onclick="openHistoryNameModal(${historyIndex}, ${nameJsLiteral})" title="Click para renombrar o vincular" style="cursor:pointer; text-decoration: underline dotted; text-underline-offset: 2px;"` : `class="emp-name"`;
-            row.innerHTML = `<td><div class="emp-cell-content"><div class="emp-avatar" style="${name === "Refuerzo" ? 'background: var(--accent-color);' : ''}">${initials}</div><div class="emp-details"><span ${nameClickAttrs}>${displayName}${aliasIndicator} ${nightBadge} ${noRestBadge} ${forcedLibresBadge} ${forcedQuebradoBadge} ${libresWeekBadge} ${refBadge}</span><span class="emp-role">${name === "Refuerzo" ? 'Apoyo Extra' : (emp && sqlIntFlagOn(emp.is_jefe_pista) ? 'Jefe de Pista' : (emp && emp.is_practicante ? 'Practicante' : 'Colaborador'))}</span></div></div></td>`;
+            row.innerHTML = `<td><div class="emp-cell-content"><div class="emp-avatar" style="${isRefuerzoRow ? 'background: var(--accent-color);' : ''}">${initials}</div><div class="emp-details"><span ${nameClickAttrs}>${displayName}${aliasIndicator} ${nightBadge} ${noRestBadge} ${forcedLibresBadge} ${forcedQuebradoBadge} ${libresWeekBadge} ${refBadge}</span><span class="emp-role">${isRefuerzoRow ? 'Apoyo Extra' : (emp && sqlIntFlagOn(emp.is_jefe_pista) ? 'Jefe de Pista' : (emp && emp.is_practicante ? 'Practicante' : 'Colaborador'))}</span></div></div></td>`;
             let totalHours = 0;
             DAYS.forEach(d => {
                 const s = schedule[name][d] || "OFF"; const info = getShiftInfo(s);
@@ -547,7 +549,7 @@ window.showExportConfirmationModal = showExportConfirmationModal;
 function closeExportConfirmModal() { const modal = document.getElementById("exportConfirmModal"); if (modal) modal.remove(); }
 window.closeExportConfirmModal = closeExportConfirmModal;
 
-async function openExportFolder() { try { await fetch("/api/open_export_folder", { method: "POST" }); } catch (e) { console.error("Error opening export folder:", e); } }
+async function openExportFolder() { try { await fetch("/cronos/api/open_export_folder", { method: "POST" }); } catch (e) { console.error("Error opening export folder:", e); } }
 window.openExportFolder = openExportFolder;
 
 function exportHistoryExcel(index, event) {
