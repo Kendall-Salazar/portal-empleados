@@ -699,6 +699,9 @@ def _reassign_history_tasks_for_row(conn, row_id: int) -> dict:
     employees_data = []
     for e in employees_rows:
         e = dict(e)
+        # Skip employees excluded from schedule generation
+        if e.get("incluir_en_horario", 1) == 0:
+            continue
         try:
             fixed_shifts = json.loads(e["turnos_fijos"]) if e["turnos_fijos"] else {}
         except:
@@ -739,7 +742,8 @@ def _reassign_history_tasks_for_row(conn, row_id: int) -> dict:
             config_data["jefe_config"] = json.loads(config_data["jefe_config"]) if config_data["jefe_config"] else {}
         except json.JSONDecodeError:
             config_data["jefe_config"] = {}
-    config_data["use_refuerzo"] = "Refuerzo" in schedule
+    _ref_name = config_data.get('refuerzo_nombre', 'Refuerzo') or 'Refuerzo'
+    config_data["use_refuerzo"] = _ref_name in schedule or "Refuerzo" in schedule
     existing_meta = json.loads(row["metadata"]) if row["metadata"] else {}
     special_days = _normalize_special_days(existing_meta.get("special_days", {}))
     config_data["special_days"] = special_days

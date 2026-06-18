@@ -410,10 +410,10 @@ function renderRefuerzosUI() {
             <div class="refuerzo-item-header">
                 <input type="text" class="refuerzo-nombre-input" value="${escapeHtml(ref.nombre || '')}"
                     placeholder="Nombre del refuerzo"
-                    onchange="_refuerzosData[${idx}].nombre = this.value; updateConfig();">
+                    onchange="_refuerzosData[${idx}].nombre = this.value; updateConfig(); saveRefuerzosToConfig();">
                 <label class="toggle-label" title="Activo">
                     <input type="checkbox" ${ref.activo !== false ? 'checked' : ''}
-                        onchange="_refuerzosData[${idx}].activo = this.checked; updateConfig();">
+                        onchange="_refuerzosData[${idx}].activo = this.checked; updateConfig(); saveRefuerzosToConfig();">
                     <span>Activo</span>
                 </label>
                 <button type="button" class="btn-icon-sm btn-danger-sm" onclick="removeRefuerzoItem(${idx})" title="Eliminar">
@@ -428,10 +428,11 @@ function renderRefuerzosUI() {
                         <label><input type="checkbox" ${active ? 'checked' : ''}
                             onchange="toggleRefuerzoDayItem(${idx}, '${d}', this.checked)"> ${d}</label>
                         <input type="time" value="${t.start || '07:00'}" ${!active ? 'disabled' : ''}
-                            onchange="_refuerzosData[${idx}].schedule = _refuerzosData[${idx}].schedule||{}; _refuerzosData[${idx}].schedule['${d}'] = {start:this.value, end: document.querySelector('[data-ref-end-${idx}-${d}]')?.value||'12:00'}; updateConfig();">
+                            data-ref-start-${idx}-${d}
+                            onchange="_refuerzosData[${idx}].schedule = _refuerzosData[${idx}].schedule||{}; _refuerzosData[${idx}].schedule['${d}'] = {start:this.value, end: document.querySelector('[data-ref-end-${idx}-${d}]')?.value||'12:00'}; updateConfig(); saveRefuerzosToConfig();">
                         <input type="time" value="${t.end || '12:00'}" ${!active ? 'disabled' : ''}
                             data-ref-end-${idx}-${d}
-                            onchange="_refuerzosData[${idx}].schedule = _refuerzosData[${idx}].schedule||{}; _refuerzosData[${idx}].schedule['${d}'] = {start: document.querySelector('[data-ref-start-${idx}-${d}]')?.value||'07:00', end:this.value}; updateConfig();">
+                            onchange="_refuerzosData[${idx}].schedule = _refuerzosData[${idx}].schedule||{}; _refuerzosData[${idx}].schedule['${d}'] = {start: document.querySelector('[data-ref-start-${idx}-${d}]')?.value||'07:00', end:this.value}; updateConfig(); saveRefuerzosToConfig();">
                     </div>`;
                 }).join('')}
             </div>`;
@@ -455,13 +456,15 @@ function toggleRefuerzoDayItem(idx, day, checked) {
     }
     renderRefuerzosUI();
     updateConfig();
+    saveRefuerzosToConfig();
 }
 window.toggleRefuerzoDayItem = toggleRefuerzoDayItem;
 
 function addRefuerzoItem() {
-    _refuerzosData.push({ nombre: `Refuerzo ${_refuerzosData.length + 1}`, activo: true, schedule: {} });
+    _refuerzosData.push({ nombre: `Refuerzo ${_refuerzosData.length + 1}`, activo: true, tipo: 'personalizado', schedule: {} });
     renderRefuerzosUI();
     updateConfig();
+    saveRefuerzosToConfig();
 }
 window.addRefuerzoItem = addRefuerzoItem;
 
@@ -469,6 +472,7 @@ function removeRefuerzoItem(idx) {
     _refuerzosData.splice(idx, 1);
     renderRefuerzosUI();
     updateConfig();
+    saveRefuerzosToConfig();
 }
 window.removeRefuerzoItem = removeRefuerzoItem;
 
@@ -476,6 +480,7 @@ function getRefuerzosFromUI() {
     return _refuerzosData.map(r => ({
         nombre: r.nombre || '',
         activo: r.activo !== false,
+        tipo: r.tipo || 'personalizado',
         schedule: r.schedule || {}
     })).filter(r => r.nombre.trim());
 }

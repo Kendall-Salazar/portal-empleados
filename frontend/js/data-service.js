@@ -420,6 +420,18 @@ async function saveHolidaysToConfig() {
     } catch (e) { console.error('Error saving holidays:', e); }
 }
 
+async function saveRefuerzosToConfig() {
+    try {
+        const res = await fetch('/api/config');
+        if (res.ok) {
+            const currentConfig = await res.json();
+            currentConfig.refuerzos = getRefuerzosFromUI();
+            await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(currentConfig) });
+        }
+    } catch (e) { console.error('Error saving refuerzos:', e); }
+}
+window.saveRefuerzosToConfig = saveRefuerzosToConfig;
+
 async function loadHolidaysFromConfig() {
     try {
         const res = await fetch('/api/config');
@@ -701,6 +713,7 @@ function renderConfig() {
         _refuerzosData = config.refuerzos.map(r => ({
             nombre: r.nombre || '',
             activo: r.activo !== false,
+            tipo: r.tipo || 'personalizado',
             schedule: r.schedule || {}
         }));
     } else {

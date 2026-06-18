@@ -563,4 +563,112 @@
     border-color: var(--border-color);
 }
 
+/* === Refuerzos Adicionales UI === */
+.param-card-title {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-main);
+}
+
+.refuerzos-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    margin-top: 0.5rem;
+}
+
+.refuerzo-item-card {
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 0.75rem;
+    background: var(--surface-1, rgba(99,102,241,0.04));
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.refuerzo-item-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.refuerzo-nombre-input {
+    flex: 1;
+    min-width: 120px;
+    padding: 0.3rem 0.6rem;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background: var(--surface-0, var(--bg-main));
+    color: var(--text-main);
+    font-size: 0.82rem;
+}
+
+.toggle-label {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.btn-danger-sm {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    background: transparent;
+    color: #f87171;
+    font-size: 0.7rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+
+.btn-danger-sm:hover {
+    background: rgba(239, 68, 68, 0.1);
+    border-color: rgba(239, 68, 68, 0.5);
+}
+
+.refuerzo-days-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+}
+
+.refuerzo-day-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.78rem;
+    color: var(--text-main);
+}
+
+.refuerzo-day-row label {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    min-width: 60px;
+    cursor: pointer;
+}
+
+.refuerzo-day-row input[type="time"] {
+    padding: 0.2rem 0.4rem;
+    border: 1px solid var(--border-color);
+    border-radius: 5px;
+    background: var(--surface-0, var(--bg-main));
+    color: var(--text-main);
+    font-size: 0.76rem;
+}
+
+.refuerzo-day-row input[type="time"]:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
 

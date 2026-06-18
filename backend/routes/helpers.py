@@ -464,6 +464,12 @@ def load_db():
             "jefe_config": json.loads(cfg_row["jefe_config"])
             if "jefe_config" in cfg_row.keys() and cfg_row["jefe_config"]
             else {},
+            "refuerzos": json.loads(cfg_row["refuerzos_json"])
+            if "refuerzos_json" in cfg_row.keys() and cfg_row["refuerzos_json"]
+            else [],
+            "refuerzo_nombre": (cfg_row["refuerzo_nombre"] or "Refuerzo")
+            if "refuerzo_nombre" in cfg_row.keys() and cfg_row["refuerzo_nombre"]
+            else "Refuerzo",
         }
 
     # Historial: todas las filas activas, orden cronológico por id (no se borra al generar).
@@ -564,8 +570,9 @@ def save_db(data):
              refuerzo_schedule, refuerzo_partial_mode, allow_global_quebrado,
              allow_collision_quebrado, allow_quebrado_largo, collision_peak_priority, sunday_cycle_index,
              sunday_rotation_queue, use_history, strict_weekly_alternation, holidays,
-             jefe_base_shift, use_pref_plantilla, cleaning_tasks, jefe_config)
-            VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             jefe_base_shift, use_pref_plantilla, cleaning_tasks, jefe_config,
+             refuerzos_json, refuerzo_nombre)
+            VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             cfg.get("night_mode", "rotation"),
             cfg.get("fixed_night_person"),
@@ -575,7 +582,7 @@ def save_db(data):
             cfg.get("refuerzo_start", "07:00"),
             cfg.get("refuerzo_end", "12:00"),
             cfg.get("refuerzo_days_mode", "auto"),
-            json.dumps(            cfg.get("refuerzo_manual_days", [])),
+            json.dumps(cfg.get("refuerzo_manual_days", [])),
             json.dumps(cfg.get("refuerzo_schedule")) if cfg.get("refuerzo_schedule") else None,
             1 if cfg.get("refuerzo_partial_mode", False) else 0,
             1 if cfg.get("allow_global_quebrado", True) else 0,
@@ -591,6 +598,8 @@ def save_db(data):
             1 if cfg.get("use_pref_plantilla", False) else 0,
             json.dumps(cfg.get("cleaning_tasks", {})),
             json.dumps(cfg.get("jefe_config", {})),
+            json.dumps(cfg.get("refuerzos") or []),
+            str(cfg.get("refuerzo_nombre") or "Refuerzo"),
         ))
 
     # NOTA: history_log NO se guarda aquí. El historial se maneja exclusivamente

@@ -50,6 +50,8 @@ class Config(BaseModel):
     use_pref_plantilla: bool = False  # Si False, el motor ignora horario_pref_plantilla (preferencias en turnos_fijos)
     cleaning_tasks: Optional[Dict[str, Dict[str, bool]]] = None
     jefe_config: Optional[Dict[str, Any]] = None
+    refuerzos: Optional[List[Dict[str, Any]]] = None  # [{nombre, activo, tipo, schedule}]
+    refuerzo_nombre: str = "Refuerzo"  # Nombre configurable del refuerzo legacy
 
 
 class SolverRequest(BaseModel):

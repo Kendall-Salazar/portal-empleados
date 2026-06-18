@@ -376,6 +376,10 @@ def init_db():
     _ensure_column("permisos", "fecha_fin", "TEXT")
     _ensure_column("permisos", "horas", "REAL DEFAULT 0")
 
+    # Migration: configurable refuerzo list + nombre
+    _ensure_column("horario_config", "refuerzos_json", "TEXT DEFAULT NULL")
+    _ensure_column("horario_config", "refuerzo_nombre", "TEXT DEFAULT 'Refuerzo'")
+
     # Create vacaciones table + documentos RRHH registry
     conn = get_conn()
     conn.executescript("""

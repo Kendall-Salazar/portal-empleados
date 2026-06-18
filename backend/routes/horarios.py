@@ -206,16 +206,9 @@ def save_history(entry: HistoryEntry):
         AND datetime(deleted_at) < datetime('now', '-7 days')
     """)
 
-    if entry.next_sunday_rotation_queue is not None:
-        conn.execute(
-            "UPDATE horario_config SET sunday_rotation_queue = ? WHERE id = 1",
-            (json.dumps(entry.next_sunday_rotation_queue),),
-        )
-    elif entry.next_sunday_cycle_index is not None:
-        conn.execute(
-            "UPDATE horario_config SET sunday_cycle_index = ? WHERE id = 1",
-            (entry.next_sunday_cycle_index,),
-        )
+    # NOTA: ya no se persiste sunday_rotation_queue en config.
+    # La cola se reconstruye desde el historial en /rotacion-domingos.
+    # El solver también la reconstruye del historial al generar.
 
     conn.commit()
     conn.close()
@@ -471,46 +464,38 @@ def rename_history_entry(rename_data: dict):
 
 @router.get("/rotacion-domingos")
 def get_sunday_rotation():
-    """Get Sunday rotation queue — usa cola guardada o reconstruye desde historial."""
+    """Get Sunday rotation queue — SIEMPRE reconstruye desde historial.
+    
+    No usa cola guardada en config porque:
+    - El solver ya la reconstruye del historial cada vez que genera
+    - El usuario puede dar domingo libre manualmente (mutuo acuerdo)
+    - La cola guardada se desincroniza con la realidad
+    """
     db = load_db()
     history_list = db.get("history_log", [])
-    config = db.get("config", {})
     
     unified_emps = plan_db.get_empleados(solo_activos=True)
     eligible = [e["nombre"] for e in unified_emps if not e.get("es_jefe_pista", False) and e.get("incluir_en_horario", 1) != 0]
     
-    # ── Intentar usar cola guardada en config ──
-    saved_queue = config.get("sunday_rotation_queue")
-    saved_index = config.get("sunday_cycle_index", 0)
-    
-    if saved_queue and isinstance(saved_queue, list):
-        # Filtrar solo empleados que aún son elegibles
-        rotation_queue = [name for name in saved_queue if name in eligible]
-        # Agregar nuevos empleados que no estaban en la cola
-        for name in eligible:
-            if name not in rotation_queue:
-                rotation_queue.append(name)
-        # Usar índice guardado para determinar quién sigue
-        if rotation_queue and saved_index is not None:
-            next_idx = saved_index % len(rotation_queue)
-            rotation_queue = rotation_queue[next_idx:] + rotation_queue[:next_idx]
-    else:
-        # ── Reconstruir desde historial ──
-        last_sunday_off = {}
-        for idx, entry in enumerate(history_list):
-            sched = entry.get('schedule', {})
-            if isinstance(sched, str):
-                try:
-                    sched = json.loads(sched)
-                except json.JSONDecodeError:
-                    sched = {}
-            
-            for emp_name, days in sched.items():
-                if isinstance(days, dict) and days.get('Dom') in ['OFF', 'VAC', 'PERM'] and emp_name in eligible:
-                    last_sunday_off[emp_name] = idx
+    # ── Reconstruir desde historial ──
+    # Barremos del más reciente al más antiguo, guardando el último domingo libre
+    # de cada empleado. Los que nunca tuvieron libre van first (índice -1).
+    last_sunday_off = {}
+    for idx, entry in enumerate(history_list):
+        sched = entry.get('schedule', {})
+        if isinstance(sched, str):
+            try:
+                sched = json.loads(sched)
+            except json.JSONDecodeError:
+                sched = {}
         
-        # Ordenar: primero los que NO han descansado (índice -1), luego los más antiguos
-        rotation_queue = sorted(eligible, key=lambda e: last_sunday_off.get(e, -1))
+        for emp_name, days in sched.items():
+            if isinstance(days, dict) and days.get('Dom') in ['OFF', 'VAC', 'PERM'] and emp_name in eligible:
+                last_sunday_off[emp_name] = idx
+    
+    # Ordenar: primero los que NO han descansado (índice -1), luego los más antiguos
+    # NOTA: usamos idx creciente (0=más antiguo, N-1=más reciente)
+    rotation_queue = sorted(eligible, key=lambda e: last_sunday_off.get(e, -1))
     
     # ── Construir resultado: semanas = entradas desde el último domingo libre ──
     result = []
@@ -630,7 +615,8 @@ def reassign_history_tasks(index: int):
             config_data["jefe_config"] = json.loads(config_data["jefe_config"]) if config_data["jefe_config"] else {}
         except json.JSONDecodeError:
             config_data["jefe_config"] = {}
-    config_data["use_refuerzo"] = "Refuerzo" in schedule
+    _ref_name = config_data.get('refuerzo_nombre', 'Refuerzo') or 'Refuerzo'
+    config_data["use_refuerzo"] = _ref_name in schedule or "Refuerzo" in schedule
     existing_meta = json.loads(row["metadata"]) if row["metadata"] else {}
     special_days = _normalize_special_days(existing_meta.get("special_days", {}))
     config_data["special_days"] = special_days
