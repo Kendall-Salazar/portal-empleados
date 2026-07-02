@@ -87,6 +87,7 @@ let historySelectionState = {
     days: [],
     dragged: false,
     suppressClick: false,
+    swapTarget: null,
 };
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -1072,7 +1073,7 @@ function renderConfig() {
     // Jefe config
     const jc = config.jefe_config || {};
     document.getElementById("jefeEnabled").checked = jc.enabled ?? false;
-    document.getElementById("jefeExcludeRegular").checked = jc.exclude_regular ?? true;
+    document.getElementById("jefeExcludeRegular").checked = !(jc.exclude_regular ?? true);
     // Render 6×7 matrix
     let jefeAssignment = jc.assignment;
     if (!jefeAssignment || Object.keys(jefeAssignment).length === 0) {
@@ -1393,7 +1394,7 @@ async function updateConfig() {
     // Jefe config
     config.jefe_config = {
         enabled: document.getElementById("jefeEnabled").checked,
-        exclude_regular: document.getElementById("jefeExcludeRegular").checked,
+        exclude_regular: !document.getElementById("jefeExcludeRegular").checked,
         assignment: {}
     };
     document.querySelectorAll('.jefe-cell').forEach(cell => {
@@ -3855,6 +3856,12 @@ function clearHistorySelectionStyles() {
     document.querySelectorAll('.history-shift-pill.history-pill-selected').forEach(el => {
         el.classList.remove('history-pill-selected');
     });
+    document.querySelectorAll('.history-shift-pill.drag-source').forEach(el => {
+        el.classList.remove('drag-source');
+    });
+    document.querySelectorAll('.history-shift-pill.drop-target').forEach(el => {
+        el.classList.remove('drop-target');
+    });
 }
 
 function getHistorySelectionRange(startDay, endDay) {
@@ -3901,7 +3908,10 @@ function beginHistorySelection(event, element) {
     historySelectionState.currentDay = element.dataset.day || null;
     historySelectionState.days = element.dataset.day ? [element.dataset.day] : [];
     historySelectionState.dragged = false;
+    historySelectionState.swapTarget = null;
 
+    // Marcar la pill origen
+    element.classList.add('drag-source');
     applyHistorySelectionStyles();
     document.addEventListener('mouseup', finishHistorySelection, { once: true });
 }
@@ -3914,19 +3924,29 @@ function extendHistorySelection(event, element) {
     const empName = element.dataset.employeeName || "";
     const day = element.dataset.day || null;
 
-    if (
-        histIndex !== historySelectionState.histIndex ||
-        empName !== historySelectionState.empName ||
-        !day
-    ) {
+    if (histIndex !== historySelectionState.histIndex || !day) return;
+
+    // MISMO empleado = arrastrar para seleccionar múltiples días
+    if (empName === historySelectionState.empName) {
+        if (day !== historySelectionState.currentDay) {
+            historySelectionState.dragged = true;
+            historySelectionState.currentDay = day;
+            historySelectionState.days = getHistorySelectionRange(historySelectionState.anchorDay, day);
+            historySelectionState.swapTarget = null;
+            applyHistorySelectionStyles();
+            document.querySelectorAll('.history-shift-pill.drop-target').forEach(el => el.classList.remove('drop-target'));
+        }
         return;
     }
 
-    if (day !== historySelectionState.currentDay) {
+    // DISTINTO empleado = swap del turno del día
+    // Solo si estamos en el mismo día o selección de un solo día
+    if (day === historySelectionState.anchorDay || historySelectionState.days.length <= 1) {
         historySelectionState.dragged = true;
-        historySelectionState.currentDay = day;
-        historySelectionState.days = getHistorySelectionRange(historySelectionState.anchorDay, day);
-        applyHistorySelectionStyles();
+        historySelectionState.swapTarget = { empName, day };
+        // Marcar visualmente la pill destino
+        document.querySelectorAll('.history-shift-pill.drop-target').forEach(el => el.classList.remove('drop-target'));
+        element.classList.add('drop-target');
     }
 }
 
@@ -3938,10 +3958,26 @@ function finishHistorySelection() {
         empName: historySelectionState.empName,
         days: [...historySelectionState.days],
         dragged: historySelectionState.dragged,
+        swapTarget: historySelectionState.swapTarget ? { ...historySelectionState.swapTarget } : null,
     };
 
     historySelectionState.active = false;
+    clearHistorySelectionStyles();
 
+    // Swap entre empleados (mismo día, un solo día)
+    if (selection.swapTarget && selection.days.length === 1) {
+        const day = selection.days[0];
+        const targetEmp = selection.swapTarget.empName;
+        if (targetEmp !== selection.empName) {
+            historySelectionState.suppressClick = true;
+            window.setTimeout(() => {
+                _doSwapDayShift(selection.histIndex, selection.empName, targetEmp, day);
+            }, 0);
+            return;
+        }
+    }
+
+    // Batch edit multi-día (mismo empleado)
     if (selection.dragged && selection.days.length > 1) {
         historySelectionState.suppressClick = true;
         window.setTimeout(() => {
@@ -3950,10 +3986,10 @@ function finishHistorySelection() {
         return;
     }
 
-    clearHistorySelectionStyles();
     historySelectionState.anchorDay = null;
     historySelectionState.currentDay = null;
     historySelectionState.days = [];
+    historySelectionState.swapTarget = null;
 }
 
 function handleHistoryCellClick(event, element) {
@@ -6096,6 +6132,41 @@ window.confirmSwapEmployees = async function () {
         alert(err.message || "No se pudo guardar el intercambio.");
     }
 };
+
+// SWAP DAY SHIFT (drag & drop entre empleados, mismo día)
+async function _doSwapDayShift(histIndex, emp1, emp2, day) {
+    const entry = historyEntriesCache[histIndex];
+    if (!entry) return;
+
+    const nextEntry = cloneHistoryEntry(entry);
+
+    // Swap shifts del día
+    const tmpShift = nextEntry.schedule[emp1]?.[day];
+    const tmpTask = (nextEntry.daily_tasks?.[emp1] || {})[day] || null;
+
+    if (!nextEntry.schedule[emp1]) nextEntry.schedule[emp1] = {};
+    if (!nextEntry.schedule[emp2]) nextEntry.schedule[emp2] = {};
+    nextEntry.schedule[emp1][day] = nextEntry.schedule[emp2]?.[day] || "OFF";
+    nextEntry.schedule[emp2][day] = tmpShift || "OFF";
+
+    // Swap tareas del día
+    if (nextEntry.daily_tasks) {
+        if (!nextEntry.daily_tasks[emp1]) nextEntry.daily_tasks[emp1] = {};
+        if (!nextEntry.daily_tasks[emp2]) nextEntry.daily_tasks[emp2] = {};
+        const tmpTask2 = nextEntry.daily_tasks[emp2]?.[day] || null;
+        nextEntry.daily_tasks[emp1][day] = tmpTask2;
+        nextEntry.daily_tasks[emp2][day] = tmpTask;
+    }
+
+    try {
+        await persistHistoryEntry(histIndex, nextEntry);
+        renderHistoryEntryTable(histIndex);
+        setStatusMessage(`Intercambiado ${day}: ${emp1} ↔ ${emp2}`, "success");
+    } catch (err) {
+        console.error(err);
+        setStatusMessage("Error al intercambiar turno.", "error");
+    }
+}
 
 // EDIT HISTORY SHIFT
 async function editHistoryShift(empName, day, histIndex) {

@@ -127,7 +127,7 @@ async function updateConfig() {
     const ctDays = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
     const ctTasks = ["am_banos", "pm_banos", "am_tanques", "pm_tanques", "oficina", "calibracion", "canos", "canos_glp"];
     ctDays.forEach(d => { config.cleaning_tasks[d] = {}; ctTasks.forEach(t => { const cb = document.getElementById(`clean_${t}_${d}`); if (cb) config.cleaning_tasks[d][t] = cb.checked; }); });
-    config.jefe_config = { enabled: document.getElementById("jefeEnabled").checked, exclude_regular: document.getElementById("jefeExcludeRegular").checked, assignment: {} };
+    config.jefe_config = { enabled: document.getElementById("jefeEnabled").checked, exclude_regular: !document.getElementById("jefeExcludeRegular").checked, assignment: {} };
     document.querySelectorAll('.jefe-cell').forEach(cell => {
         const task = cell.dataset.task; const day = cell.dataset.day; if (!task || !day) return;
         if (!config.jefe_config.assignment[task]) config.jefe_config.assignment[task] = {};

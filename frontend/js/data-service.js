@@ -764,7 +764,7 @@ function renderConfig() {
     });
     const jc = config.jefe_config || {};
     document.getElementById("jefeEnabled").checked = jc.enabled ?? false;
-    document.getElementById("jefeExcludeRegular").checked = jc.exclude_regular ?? true;
+    document.getElementById("jefeExcludeRegular").checked = !(jc.exclude_regular ?? true);
     let jefeAssignment = jc.assignment;
     if (!jefeAssignment || Object.keys(jefeAssignment).length === 0) {
         jefeAssignment = {};

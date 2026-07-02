@@ -698,3 +698,17 @@
     transform: translateY(-1px) scale(1.01);
 }
 
+/* ── History Drag & Drop (turnos entre empleados) ── */
+.history-shift-pill.drag-source {
+    opacity: 0.45;
+    outline: 2px dashed var(--primary);
+}
+
+.history-shift-pill.drop-target {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.25);
+    transform: scale(1.05);
+    background: rgba(59, 130, 246, 0.12);
+}
+

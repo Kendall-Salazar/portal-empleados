@@ -742,6 +742,12 @@ def _reassign_history_tasks_for_row(conn, row_id: int) -> dict:
             config_data["jefe_config"] = json.loads(config_data["jefe_config"]) if config_data["jefe_config"] else {}
         except json.JSONDecodeError:
             config_data["jefe_config"] = {}
+    # Parse refuerzos_json → refuerzos (misma lógica que helpers.load_db)
+    if "refuerzos_json" in config_data and isinstance(config_data["refuerzos_json"], str):
+        try:
+            config_data["refuerzos"] = json.loads(config_data["refuerzos_json"]) if config_data["refuerzos_json"] else []
+        except json.JSONDecodeError:
+            config_data["refuerzos"] = []
     _ref_name = config_data.get('refuerzo_nombre', 'Refuerzo') or 'Refuerzo'
     config_data["use_refuerzo"] = _ref_name in schedule or "Refuerzo" in schedule
     existing_meta = json.loads(row["metadata"]) if row["metadata"] else {}

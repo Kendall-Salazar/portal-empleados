@@ -438,8 +438,16 @@ def _normalize_refuerzos(config: dict) -> list:
     """Returns active refuerzos from config.refuerzos list (new format only).
     Does NOT migrate legacy use_refuerzo — legacy path is handled separately.
     """
-    refuerzos = list(config.get('refuerzos') or [])
-    return [r for r in refuerzos if r.get('activo', True) and r.get('nombre')]
+    refuerzos = config.get('refuerzos') or []
+    # Safety: if a raw JSON string leaks in (e.g. direct SQLite read), parse it
+    if isinstance(refuerzos, str):
+        try:
+            refuerzos = json.loads(refuerzos) if refuerzos else []
+        except (json.JSONDecodeError, TypeError):
+            refuerzos = []
+    if not isinstance(refuerzos, list):
+        refuerzos = []
+    return [r for r in refuerzos if isinstance(r, dict) and r.get('activo', True) and r.get('nombre')]
 
 
 def _compute_refuerzo_coverage(refuerzos_activos: list) -> dict:
@@ -1272,15 +1280,28 @@ class ShiftScheduler:
                 pool.sort(key=lambda w: task_count[w['name']])
                 return pool[0]
             
-            def q_label(base, worker):
-                return f"{base} {'↑AM' if worker['start'] < 12 else '↓PM'}"
+            def q_label(base, is_am):
+                """Genera etiqueta de tarea con indicador AM/PM.
+                is_am=True para tareas del pool matutino, False para vespertino.
+                ANTES usaba worker['start'] pero eso daba ↑AM incorrecto para
+                empleados con turno temprano pero asignados a tareas PM."""
+                return f"{base} {'↑AM' if is_am else '↓PM'}"
             
             assigned_today = set()
-            # AM pool: only workers who start early enough to do morning tasks.
-            # On Sáb we extend the threshold to 6am (one hour later opening).
-            am_start_threshold = 6 if d == "Sáb" else 5
-            am_pool = [w for w in available if w['start'] <= am_start_threshold]
-            pm_pool = [w for w in available if w['has_pm']]
+            # AM pool: trabajadores que están presentes durante la mañana (5am-12pm).
+            # NO restringimos a start<=5 porque limpiar baños lo puede hacer cualquiera
+            # que esté trabajando en la mañana, no solo el que abre a las 5am.
+            am_pool = [w for w in available if w['has_am']]
+            
+            # AM Tanques: SOLO a las 5am — necesita alguien que empiece exactamente a las 5
+            am_tanques_pool = [w for w in available if w['start'] <= 5]
+            
+            # PM pool: tareas se hacen de 3pm (15:00) en adelante
+            # ANTES usaba w['has_pm'] (cualquier hora ≥ 12) — incorrecto, PM empieza a las 15
+            pm_pool = [w for w in available if any(h >= 15 for h in w['hours'])]
+            
+            # PM Tanques: después de 4pm (16:00)
+            pm_tanques_pool = [w for w in available if any(h >= 16 for h in w['hours'])]
 
             def pick_one(pool, exclude=frozenset()):
                 """Pick the worker with fewest tasks this week.
@@ -1289,14 +1310,16 @@ class ShiftScheduler:
                 candidates = [w for w in pool if w['name'] not in exclude]
                 return fair_pick(candidates)
             
-            # --- AM TANQUES ---
+            # --- AM TANQUES (debe ser a las 5am SÍ O SÍ) ---
             if is_task_enabled("am_tanques", d):
-                pick = pick_one(am_pool, assigned_today)
+                pick = pick_one(am_tanques_pool, assigned_today)
+                if not pick:
+                    pick = pick_one(am_pool, assigned_today)
                 if pick:
-                    res_tasks[pick['name']][d] = q_label("Tanques", pick)
+                    res_tasks[pick['name']][d] = q_label("Tanques", True)
                     assigned_today.add(pick['name']); task_count[pick['name']] += 1
             
-            # --- AM BAÑOS (días con oficina habilitada → incluye Basureros) ---
+            # --- AM BAÑOS (entre 5am-12pm) ---
             if is_task_enabled("am_banos", d):
                 pick = pick_one(am_pool, assigned_today)
                 if pick:
@@ -1304,21 +1327,23 @@ class ShiftScheduler:
                     oficina_enabled = isinstance(_ct, dict) and d in _ct and _ct[d].get("oficina", oficina_default)
                     is_oficina_day = is_weekday_like_mode(get_effective_day_mode(d, self.day_modes)) and oficina_enabled
                     label = "Oficina + Basureros + Baños" if is_oficina_day else "Baños"
-                    res_tasks[pick['name']][d] = q_label(label, pick)
+                    res_tasks[pick['name']][d] = q_label(label, True)
                     assigned_today.add(pick['name']); task_count[pick['name']] += 1
             
-            # --- PM TANQUES ---
+            # --- PM TANQUES (después de 4pm) ---
             if is_task_enabled("pm_tanques", d):
-                pick = pick_one(pm_pool, assigned_today)
+                pick = pick_one(pm_tanques_pool, assigned_today)
+                if not pick:
+                    pick = pick_one(pm_pool, assigned_today)
                 if pick:
-                    res_tasks[pick['name']][d] = q_label("Tanques", pick)
+                    res_tasks[pick['name']][d] = q_label("Tanques", False)
                     assigned_today.add(pick['name']); task_count[pick['name']] += 1
             
-            # --- PM BAÑOS ---
+            # --- PM BAÑOS (después de 3pm) ---
             if is_task_enabled("pm_banos", d):
                 pick = pick_one(pm_pool, assigned_today)
                 if pick:
-                    res_tasks[pick['name']][d] = q_label("Baños", pick)
+                    res_tasks[pick['name']][d] = q_label("Baños", False)
                     assigned_today.add(pick['name']); task_count[pick['name']] += 1
 
             # --- JEFE DE PISTA TASKS (Calibración, Caños, Caños GLP) ---
@@ -4057,6 +4082,10 @@ class ShiftScheduler:
             
             # Scan history to find each employee's last Sunday OFF (index = recency).
             # Cap at ROTATION_HISTORY_WINDOW semanas para consistencia con el sistema de rachas.
+            # NOTA: escaneamos TODOS los empleados (no solo eligible) para preservar el último
+            # domingo libre incluso de quienes hoy están excluidos por tener OFF fijo. Así,
+            # cuando se les quite el OFF fijo, vuelven a la cola en la posición correcta
+            # (al final) y no se "ensucia" la rotación.
             last_sunday_off = {}  # employee -> history_index (higher = more recent)
             sunday_scan_entries = history_window  # ya limitado a 6 semanas
             
@@ -4066,7 +4095,7 @@ class ShiftScheduler:
                     continue
                 sched = entry.get('schedule', {})
                 for emp_name, days in sched.items():
-                    if isinstance(days, dict) and days.get('Dom') in ['OFF', 'VAC', 'PERM'] and emp_name in eligible:
+                    if isinstance(days, dict) and days.get('Dom') in ['OFF', 'VAC', 'PERM']:
                         last_sunday_off[emp_name] = idx  # overwrite = keep most recent
             
             # Build queue: sort by last_sunday_off ascending (least recent first)
@@ -4308,6 +4337,11 @@ class ShiftScheduler:
                          break
             
              rotation_target = rotation_queue[0] if rotation_queue else None
+
+             # Guard: rotation_target NUNCA debe ser None si la cola tiene gente.
+             # Si por algún bug de flujo quedó None, lo corregimos desde rotation_queue.
+             if rotation_queue and not rotation_target:
+                 rotation_target = rotation_queue[0]
 
              rest_report = self._build_rest_between_shifts_report(
                  res,
