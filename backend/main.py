@@ -69,7 +69,10 @@ import horario_db
 import prestamo_sync
 
 # Import routers
-from routes import empleados_router, horarios_router, planillas_router, config_router
+from routes import (
+    empleados_router, horarios_router, planillas_router, config_router,
+    excel_colors_router,
+)
 from routes.horarios import save_history
 
 # Import shared models and helpers (deduplicated from routes/)
@@ -86,7 +89,10 @@ from routes.helpers import (
     _normalize_special_days, _parse_date_like, _parse_timestamp,
     _infer_week_start_from_name, _extract_history_anchor, _history_entry_display_name,
     _prepare_history_for_solver, _build_validation_rules_impl, _HISTORY_LIST_ORDER,
+    load_excel_colors_custom,
+    load_excel_status_colors_custom,
 )
+from excel_colors import resolve_excel_employee_colors, resolve_excel_status_colors
 
 DB_FILE_LEGACY = "database.json"  # JSON original, kept for migration reference
 EXPORT_DIR = os.path.join(_runtime_root, "export_horarios")
@@ -721,12 +727,25 @@ def _reassign_history_tasks_for_row(conn, row_id: int) -> dict:
 
     employee_names = {emp["name"] for emp in employees_data}
     for missing_name in sorted(name for name in schedule.keys() if name not in employee_names):
+        # Pull the employee's REAL attributes from horario_empleados by name,
+        # even if inactive/excluded from the active set — never hardcode
+        # gender/night, or a woman without a night permit would be treated as
+        # a night-capable man.
+        er = conn.execute(
+            "SELECT genero, puede_nocturno, es_jefe_pista, turnos_fijos FROM horario_empleados WHERE nombre = ?",
+            (missing_name,),
+        ).fetchone()
+        er = dict(er) if er else {}
+        try:
+            m_fixed = json.loads(er["turnos_fijos"]) if er.get("turnos_fijos") else {}
+        except Exception:
+            m_fixed = {}
         employees_data.append({
-            "name": missing_name, 
-            "gender": "M", 
-            "can_do_night": 1,
-            "is_jefe_pista": 0,
-            "fixed_shifts": {}
+            "name": missing_name,
+            "gender": er.get("genero") or "M",
+            "can_do_night": bool(er.get("puede_nocturno", 1)),
+            "is_jefe_pista": bool(er.get("es_jefe_pista", 0)),
+            "fixed_shifts": m_fixed,
         })
 
     config_row = conn.execute("SELECT * FROM horario_config WHERE id=1").fetchone()
@@ -884,58 +903,9 @@ def _format_time_range(time_range: str) -> str:
         return time_range
 
 
-EXCEL_EMPLOYEE_PALETTE = [
-    "4D93D9",
-    "FF0000",
-    "61CBF3",
-    "663300",
-    "D86DCD",
-    "153D64",
-    "8ED973",
-    "D9EAD3",
-    "BFBFBF",
-    "F1A983",
-    "F9E79F",
-    "D6E4F0",
-]
-EXCEL_EMPLOYEE_COLOR_MAP = {
-    "Angel": "4D93D9",
-    "Eligio": "FF0000",
-    "Ileana": "61CBF3",
-    "Jeison": "663300",
-    "Jensy": "D86DCD",
-    "Keilor": "153D64",
-    "Maikel": "8ED973",
-    "Natanael": "FF0000",
-    "Alejandro": "D9EAD3",
-    "Randall": "BFBFBF",
-    "Steven": "F1A983",
-    "Tomas": "F9E79F",
-    "Refuerzo": "D6E4F0",
-}
-EXCEL_EMPLOYEE_FONT_COLOR_MAP = {
-    "Eligio": "FFFFFF",
-    "Natanael": "FFFFFF",
-}
-EXCEL_LIBRE_FILL = "FFFF00"
-
-
-def _excel_font_color_for_fill(hex_color: str) -> str:
-    color = (hex_color or "").strip().lstrip("#")
-    if len(color) == 8:
-        color = color[2:]
-    if len(color) != 6:
-        return "000000"
-
-    try:
-        red = int(color[0:2], 16)
-        green = int(color[2:4], 16)
-        blue = int(color[4:6], 16)
-    except ValueError:
-        return "000000"
-
-    brightness = (red * 299 + green * 587 + blue * 114) / 1000
-    return "FFFFFF" if brightness < 145 else "000000"
+# Colores por empleado para GET /api/export_excel viven en backend/excel_colors.py
+# (resolve_excel_employee_colors / resolve_excel_status_colors) +
+# backend/routes/excel_colors.py (API + storage).
 
 
 def _normalize_excel_task_text(task_text: str) -> str:
@@ -1053,7 +1023,6 @@ def export_excel(history_index: Optional[int] = None, history_db_id: Optional[in
         ws = wb.active
         ws.title = "Horario"
     
-    palette = EXCEL_EMPLOYEE_PALETTE
     thin_border = Border(
         left=Side(style='thin', color='CCCCCC'),
         right=Side(style='thin', color='CCCCCC'),
@@ -1111,14 +1080,10 @@ def export_excel(history_index: Optional[int] = None, history_db_id: Optional[in
         cell.border = thin_border
 
     emp_names = list(target_schedule.keys())
-    emp_colors = {}
-    fallback_index = 0
-    for name in emp_names:
-        if name in EXCEL_EMPLOYEE_COLOR_MAP:
-            emp_colors[name] = EXCEL_EMPLOYEE_COLOR_MAP[name]
-        else:
-            emp_colors[name] = palette[fallback_index % len(palette)]
-            fallback_index += 1
+    resolved_colors = resolve_excel_employee_colors(emp_names, load_excel_colors_custom())
+    status_colors = resolve_excel_status_colors(load_excel_status_colors_custom())
+    # Font weight/style per status stays fixed; only colors are configurable.
+    status_font_style = {"OFF": {"italic": True, "size": 10}, "VAC": {"bold": True}, "PERM": {"bold": True}}
     first_emp_row = header_row + 1
     
     for idx, name in enumerate(emp_names):
@@ -1140,9 +1105,9 @@ def export_excel(history_index: Optional[int] = None, history_db_id: Optional[in
         for col_idx, value in enumerate(row_data, start=1):
             ws.cell(row=current_data_row, column=col_idx, value=value)
 
-        color = emp_colors[name]
+        color = resolved_colors[name]["bg"]
         row_fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
-        row_font_color = EXCEL_EMPLOYEE_FONT_COLOR_MAP.get(name, _excel_font_color_for_fill(color))
+        row_font_color = resolved_colors[name]["font"]
         
         for col_idx in range(1, len(row_data) + 1):
             cell = ws.cell(row=current_data_row, column=col_idx)
@@ -1162,15 +1127,10 @@ def export_excel(history_index: Optional[int] = None, history_db_id: Optional[in
                 )
                 
                 s_code = shifts.get(DAYS[col_idx - 2], "OFF") if col_idx <= 8 else None
-                if s_code == "OFF":
-                    cell.fill = PatternFill(start_color=EXCEL_LIBRE_FILL, end_color=EXCEL_LIBRE_FILL, fill_type="solid")
-                    cell.font = Font(color="999999", italic=True, size=11 if col_idx == len(row_data) else 10)
-                elif s_code == "VAC":
-                    cell.fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
-                    cell.font = Font(color="006100", bold=True)
-                elif s_code == "PERM":
-                    cell.fill = PatternFill(start_color="FCE4D6", end_color="FCE4D6", fill_type="solid")
-                    cell.font = Font(color="9A3412", bold=True)
+                if s_code in status_colors:
+                    st = status_colors[s_code]
+                    cell.fill = PatternFill(start_color=st["bg"], end_color=st["bg"], fill_type="solid")
+                    cell.font = Font(color=st["font"], **status_font_style[s_code])
         
     ws.column_dimensions["A"].width = 18
     for col_idx in range(2, 9):
@@ -1188,17 +1148,18 @@ def export_excel(history_index: Optional[int] = None, history_db_id: Optional[in
     
     for idx, name in enumerate(emp_names):
         fmt_row = first_emp_row + idx
-        color = emp_colors[name]
+        color = resolved_colors[name]["bg"]
         fmt_cell = ws.cell(row=fmt_row, column=formato_col, value=name)
         fmt_cell.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
-        fmt_cell.font = Font(bold=True, size=11, color=_excel_font_color_for_fill(color))
+        fmt_cell.font = Font(bold=True, size=11, color=resolved_colors[name]["font"])
         fmt_cell.alignment = Alignment(vertical="center", horizontal="left")
         fmt_cell.border = thin_border
     
     libre_row = first_emp_row + len(emp_names)
     libre_cell = ws.cell(row=libre_row, column=formato_col, value="LIBRE")
-    libre_cell.fill = PatternFill(start_color=EXCEL_LIBRE_FILL, end_color=EXCEL_LIBRE_FILL, fill_type="solid")
-    libre_cell.font = Font(color="999999", italic=True, size=11)
+    libre_style = status_colors["OFF"]
+    libre_cell.fill = PatternFill(start_color=libre_style["bg"], end_color=libre_style["bg"], fill_type="solid")
+    libre_cell.font = Font(color=libre_style["font"], italic=True, size=11)
     libre_cell.alignment = Alignment(vertical="center", horizontal="left")
     libre_cell.border = thin_border
     
@@ -1225,12 +1186,12 @@ def export_excel(history_index: Optional[int] = None, history_db_id: Optional[in
     for idx, name in enumerate(emp_names):
         emp_tasks = target_tasks.get(name, {})
         task_row_num = task_header_row + 1 + idx
-        color = emp_colors[name]
+        color = resolved_colors[name]["bg"]
         name_fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
-        
+
         name_cell = ws.cell(row=task_row_num, column=1, value=name)
         name_cell.fill = name_fill
-        name_cell.font = Font(bold=True, size=10, color=_excel_font_color_for_fill(color))
+        name_cell.font = Font(bold=True, size=10, color=resolved_colors[name]["font"])
         name_cell.alignment = Alignment(vertical="center", horizontal="left")
         name_cell.border = thin_border
         
@@ -3099,6 +3060,7 @@ app.include_router(empleados_router)
 app.include_router(horarios_router)
 app.include_router(planillas_router)
 app.include_router(config_router)
+app.include_router(excel_colors_router)
 
 # ==============================================================================
 # Serve Frontend

@@ -5,6 +5,11 @@ let employees = [];
 window.__pillEditorMode = window.__pillEditorMode || "employee";
 
 let config = {};
+// Cuando renderConfig() puebla la UI, los toggles (toggleCollisionConfig,
+// toggleJefeConfig, etc.) invocan updateConfig(). Sin este guard, updateConfig
+// leería inputs a medio setear (ej. aforo con su default 5) y PISARÍA la config
+// guardada en la DB en cada carga de página. renderConfig lo activa mientras rinde.
+let _suppressConfigSave = false;
 let _refuerzosData = [];
 let currentGeneratedSchedule = null;
 let currentDailyTasks = null;
@@ -18,6 +23,12 @@ let hiddenHistoryHours = new Set();
 let SHIFT_OPTIONS = [];
 let SHIFT_HOURS = {};
 const MANUAL_SHIFT_PREFIX = "MANUAL_";
+// Prefijo de los turnos dobles generados dinámicamente por el solver
+// (ver DOUBLE_SHIFT_PREFIX / sync_double_shifts en scheduler_engine.py).
+// Estos códigos (ej. DBL_07-22) nunca aparecen en rules.shift_sets: el
+// backend los genera recién al resolver, así que el frontend debe saber
+// parsearlos igual que a los MANUAL_.
+const DOUBLE_SHIFT_PREFIX = "DBL_";
 
 // Hourly set mapping mapped dynamically via API now
 // Removing hardcoded SHIFT_HOURS_SET
@@ -914,6 +925,15 @@ function renderEmployees() {
 }
 
 function renderConfig() {
+    _suppressConfigSave = true;
+    try {
+        _renderConfigImpl();
+    } finally {
+        _suppressConfigSave = false;
+    }
+}
+
+function _renderConfigImpl() {
     const mode = config.night_mode || "rotation";
     document.getElementById("nightModeConfig").value = mode;
 
@@ -987,9 +1007,13 @@ function renderConfig() {
     const refNombreEl = document.getElementById("refuerzoNombre");
     if (refNombreEl) refNombreEl.value = config.refuerzo_nombre || 'Refuerzo';
 
-    // Load additional refuerzos list
-    if (Array.isArray(config.refuerzos) && config.refuerzos.length > 0) {
-        _refuerzosData = config.refuerzos.map(r => ({
+    // Load additional refuerzos list (backend first, fallback localStorage)
+    const localExtra = loadLocalExtraConfig();
+    const refSource = (Array.isArray(config.refuerzos) && config.refuerzos.length > 0)
+        ? config.refuerzos
+        : (localExtra?.refuerzos || []);
+    if (Array.isArray(refSource) && refSource.length > 0) {
+        _refuerzosData = refSource.map(r => ({
             nombre: r.nombre || '',
             activo: r.activo !== false,
             tipo: r.tipo || 'personalizado',
@@ -1036,6 +1060,28 @@ function renderConfig() {
     // Strict weekly alternation
     const strictWeeklyCb = document.getElementById("strictWeeklyAlternation");
     if (strictWeeklyCb) strictWeeklyCb.checked = config.strict_weekly_alternation || false;
+
+    // Max simultaneous — desde la DB (única fuente de verdad vía /api/config)
+    const maxSimInput = document.getElementById("maxSimultaneousInput");
+    if (maxSimInput) {
+        const saved = config.max_simultaneous;
+        maxSimInput.value = (saved != null && saved >= 3 && saved <= 12) ? saved : 5;
+    }
+
+    // Max double shift hours — desde la DB (única fuente de verdad vía /api/config)
+    const maxDoubleInput = document.getElementById("maxDoubleShiftHoursInput");
+    if (maxDoubleInput) {
+        const savedDouble = config.max_double_shift_hours;
+        maxDoubleInput.value = (savedDouble != null && savedDouble >= 12 && savedDouble <= 17) ? savedDouble : 12;
+        updateMaxDoubleShiftHint(maxDoubleInput.value);
+    }
+
+    // Solver max time — desde la DB (única fuente de verdad vía /api/config)
+    const solverTimeInput = document.getElementById("solverMaxTimeInput");
+    if (solverTimeInput) {
+        const savedTime = config.solver_max_time;
+        solverTimeInput.value = (savedTime != null && savedTime >= 60 && savedTime <= 900) ? savedTime : 180;
+    }
 
     // Cleaning tasks config
     const ctDays = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
@@ -1163,21 +1209,27 @@ function renderRefuerzosUI() {
 
         let scheduleHtml = '';
         if (isPersonalizado) {
-            // Full day + time grid
-            const header = `<div style="display:grid; grid-template-columns:55px 1fr 1fr; gap:0.4rem; align-items:center; padding:0.25rem 0; border-bottom:1px solid var(--border-color); font-size:0.7rem; color:var(--text-muted); font-weight:600;"><span>Día</span><span>Inicio</span><span>Final</span></div>`;
+            // Full day + time grid, with a per-day AUTO toggle (solver picks the shift).
+            const gcols = '52px 1fr 1fr 40px';
+            const header = `<div style="display:grid; grid-template-columns:${gcols}; gap:0.4rem; align-items:center; padding:0.25rem 0; border-bottom:1px solid var(--border-color); font-size:0.7rem; color:var(--text-muted); font-weight:600;"><span>Día</span><span>Inicio</span><span>Final</span><span title="Automático: el motor elige el turno de ese día">Auto</span></div>`;
             const rows = days.map(d => {
                 const t = (ref.schedule || {})[d] || {};
-                const active = !!(t.start);
-                return `<div style="display:grid; grid-template-columns:55px 1fr 1fr; gap:0.4rem; align-items:center;">
+                const isAuto = !!t.auto;
+                const active = isAuto || !!t.start;
+                const timeOff = !active || isAuto;  // times disabled when OFF or AUTO
+                return `<div style="display:grid; grid-template-columns:${gcols}; gap:0.4rem; align-items:center;">
                     <label style="cursor:pointer; display:flex; align-items:center; gap:0.35rem; font-size:0.82rem; color:var(--text-main); font-weight:500;">
                         <input type="checkbox" ${active ? 'checked' : ''} onchange="toggleRefuerzoDayItem(${idx}, '${d}', this.checked)" style="accent-color:#6366f1; width:14px; height:14px;"> ${d}
                     </label>
-                    <input type="time" value="${t.start || '07:00'}" ${!active ? 'disabled' : ''} step="3600"
+                    <input type="time" value="${t.start || '07:00'}" ${timeOff ? 'disabled' : ''} step="3600"
                         onchange="updateRefuerzoDayTime(${idx}, '${d}', 'start', this.value)"
-                        style="width:100%; padding:0.35rem 0.45rem; border-radius:6px; border:1px solid var(--border-color); background:var(--surface-2); color:var(--text-main); font-size:0.8rem; opacity:${active ? '1' : '0.4'};">
-                    <input type="time" value="${t.end || '12:00'}" ${!active ? 'disabled' : ''} step="3600"
+                        style="width:100%; padding:0.35rem 0.45rem; border-radius:6px; border:1px solid var(--border-color); background:var(--surface-2); color:var(--text-main); font-size:0.8rem; opacity:${timeOff ? '0.4' : '1'};">
+                    <input type="time" value="${t.end || '12:00'}" ${timeOff ? 'disabled' : ''} step="3600"
                         onchange="updateRefuerzoDayTime(${idx}, '${d}', 'end', this.value)"
-                        style="width:100%; padding:0.35rem 0.45rem; border-radius:6px; border:1px solid var(--border-color); background:var(--surface-2); color:var(--text-main); font-size:0.8rem; opacity:${active ? '1' : '0.4'};">
+                        style="width:100%; padding:0.35rem 0.45rem; border-radius:6px; border:1px solid var(--border-color); background:var(--surface-2); color:var(--text-main); font-size:0.8rem; opacity:${timeOff ? '0.4' : '1'};">
+                    <label style="display:flex; align-items:center; justify-content:center; cursor:${active ? 'pointer' : 'default'};" title="Automático: el motor elige el turno de ese día (o lo deja libre)">
+                        <input type="checkbox" ${isAuto ? 'checked' : ''} ${!active ? 'disabled' : ''} onchange="setRefuerzoDayAuto(${idx}, '${d}', this.checked)" style="accent-color:#0ea5e9; width:14px; height:14px;">
+                    </label>
                 </div>`;
             }).join('');
             scheduleHtml = `<div style="display:flex; flex-direction:column; gap:0.3rem; margin-top:0.4rem;">${header}${rows}</div>`;
@@ -1238,6 +1290,16 @@ function updateRefuerzoDayTime(idx, day, field, value) {
     if (!_refuerzosData[idx].schedule) _refuerzosData[idx].schedule = {};
     if (!_refuerzosData[idx].schedule[day]) _refuerzosData[idx].schedule[day] = { start: '07:00', end: '12:00' };
     _refuerzosData[idx].schedule[day][field] = value;
+    updateConfig();
+}
+
+// Marca un día como AUTO (el motor elige el turno) o vuelve a FIJO (con horas).
+function setRefuerzoDayAuto(idx, day, isAuto) {
+    if (!_refuerzosData[idx].schedule) _refuerzosData[idx].schedule = {};
+    _refuerzosData[idx].schedule[day] = isAuto
+        ? { auto: true }
+        : { start: '07:00', end: '12:00' };
+    renderRefuerzosUI();
     updateConfig();
 }
 
@@ -1344,7 +1406,29 @@ function updateAlternatingPair(idx, pos, value) {
 }
 
 
+/**
+ * Actualiza el texto de ayuda junto al input de tope de turno doble.
+ * Con 12h la función queda desactivada (no hay combinación posible de dos
+ * turnos contiguos que sume 12h o menos); el doble más corto es de 13h.
+ */
+function updateMaxDoubleShiftHint(value) {
+    const hintEl = document.getElementById("maxDoubleShiftHint");
+    if (!hintEl) return;
+    const v = parseInt(value, 10);
+    if (!v || v <= 12) {
+        hintEl.textContent = "12h desactiva la función: no existe ninguna combinación de dos turnos contiguos de 12h o menos. El doble más corto posible es de 13h.";
+        hintEl.classList.add("helper-text-warning");
+    } else {
+        hintEl.textContent = `Con ${v}h de tope se habilitan combinaciones de turno doble a partir de 13h.`;
+        hintEl.classList.remove("helper-text-warning");
+    }
+}
+window.updateMaxDoubleShiftHint = updateMaxDoubleShiftHint;
+
 async function updateConfig() {
+    // No guardar mientras renderConfig() puebla la UI: los inputs pueden estar a
+    // medio setear y sobrescribirían la config guardada con defaults.
+    if (_suppressConfigSave) return;
     const mode = document.getElementById("nightModeConfig").value;
     const person = document.getElementById("nightPersonSelect").value;
     const allowLong = document.getElementById("allowLongShifts").checked;
@@ -1377,6 +1461,9 @@ async function updateConfig() {
     config.collision_peak_priority = document.getElementById("collisionPeakPriority")?.value || "pm";
     config.use_history = document.getElementById("useHistoryContext")?.checked ?? true;
     config.rotation_enabled = document.getElementById("rotationEnabled")?.checked ?? true;
+    config.max_simultaneous = parseInt(document.getElementById("maxSimultaneousInput")?.value) || 5;
+    config.max_double_shift_hours = parseInt(document.getElementById("maxDoubleShiftHoursInput")?.value) || 12;
+    config.solver_max_time = parseInt(document.getElementById("solverMaxTimeInput")?.value) || 180;
 
     config.cleaning_tasks = {};
     const ctDays = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
@@ -1532,6 +1619,7 @@ function buildPillGroups(day = null) {
             { code: "PERM", label: "PERM", icon: "fa-file-signature", color: "#f59e0b" },
             { code: "OFF", label: "LIBRE", icon: "fa-mug-hot", color: "#94a3b8" },
             { code: "N_22-05", label: "Noche", icon: "fa-moon", color: "#818cf8" },
+            { code: "DOBLE", label: "Doble", icon: "fa-layer-group", color: "#c026d3" },
         ],
         morning: [],  // starts before 12pm
         afternoon: [],  // starts 12pm+
@@ -1636,6 +1724,10 @@ function getDayCardInfo(code) {
     if (code === "OFF") return { label: "LIBRE", icon: "fa-mug-hot", cls: "dc-off" };
     if (code === "VAC") return { label: "VAC", icon: "fa-plane", cls: "dc-vac" };
     if (code === "PERM") return { label: "PERM", icon: "fa-file-signature", cls: "dc-perm" };
+    // "DOBLE" es la pill de restricción (fixed_shifts), no un código de turno
+    // concreto. Se chequea ANTES del prefijo "D" (Q/X/E/R/D = extended) para
+    // que no colisione con esa clasificación.
+    if (code === "DOBLE") return { label: "Doble", icon: "fa-layer-group", cls: "dc-doble" };
     if (code.startsWith("N_")) return { label: "Noche", icon: "fa-moon", cls: "dc-night" };
     if (code.startsWith("J_")) return { label: code.replace("J_", ""), icon: "fa-star", cls: "dc-jefe" };
     // Split / extended / refuerzo / domingo prefixes
@@ -1796,6 +1888,18 @@ function selectPill(code, label) {
     const sel = root ? root.querySelector(`${selQ}[data-day="${activePillDay}"]`) : null;
     if (sel) sel.value = code;
 
+    // Aviso inmediato: con el tope en 12h no existe ningún turno doble posible
+    // (ver resolve_max_double_shift_hours / sync_double_shifts en scheduler_engine.py).
+    if (code === "DOBLE") {
+        const maxDouble = parseInt(config?.max_double_shift_hours, 10) || 12;
+        if (maxDouble <= 12 && typeof showToast === "function") {
+            showToast(
+                "Con el tope de doble en 12h no hay ninguna combinación posible: este horario va a ser infactible. Subí el tope a 13h o más en Parámetros.",
+                "warning"
+            );
+        }
+    }
+
     if (!isPpt) syncVacationCheckboxesFromDropdowns();
 
     buildDayCards();
@@ -1906,10 +2010,120 @@ async function deleteEmployee(index) {
     renderEmployees();
 }
 
+// ── SAVE/LOAD REFUERZOS + AFORO ──
+// SQLite (vía /api/config) es la única fuente de verdad. localStorage se usa solo
+// como respaldo offline para el fallback de refuerzos en renderConfig.
+const LS_KEY = "cronos_extra_config";
+function saveLocalExtraConfig() {
+    const data = {
+        refuerzos: getRefuerzosFromUI(),
+        max_simultaneous: parseInt(document.getElementById("maxSimultaneousInput")?.value) || 5
+    };
+    try { localStorage.setItem(LS_KEY, JSON.stringify(data)); } catch (e) { console.error("localStorage error:", e); }
+    return true;
+}
+function loadLocalExtraConfig() {
+    try {
+        const raw = localStorage.getItem(LS_KEY);
+        if (!raw) return null;
+        return JSON.parse(raw);
+    } catch (e) { console.error("localStorage error:", e); return null; }
+}
+async function saveFullConfig() {
+    saveLocalExtraConfig();
+    config.refuerzos = getRefuerzosFromUI();
+    config.max_simultaneous = parseInt(document.getElementById("maxSimultaneousInput")?.value) || 5;
+    config.max_double_shift_hours = parseInt(document.getElementById("maxDoubleShiftHoursInput")?.value) || 12;
+    config.solver_max_time = parseInt(document.getElementById("solverMaxTimeInput")?.value) || 180;
+    try {
+        await fetch(`${API_URL}/config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config) });
+        // Verificar lo que quedó guardado en la DB
+        const checkRes = await fetch(`${API_URL}/config`);
+        if (checkRes.ok) {
+            const savedCfg = await checkRes.json();
+            if (savedCfg.max_simultaneous !== config.max_simultaneous) {
+                console.error(`SAVE MISMATCH: sent ${config.max_simultaneous}, DB has ${savedCfg.max_simultaneous}`);
+                if (typeof showToast === "function") showToast(`ERROR: la DB guardó ${savedCfg.max_simultaneous} en vez de ${config.max_simultaneous}`, "error");
+            } else if (typeof showToast === "function") {
+                showToast(`Aforo guardado: ${savedCfg.max_simultaneous}`, "success");
+            }
+            if (savedCfg.max_double_shift_hours !== config.max_double_shift_hours) {
+                console.error(`SAVE MISMATCH: sent ${config.max_double_shift_hours}, DB has ${savedCfg.max_double_shift_hours}`);
+                if (typeof showToast === "function") showToast(`ERROR: la DB guardó ${savedCfg.max_double_shift_hours}h en vez de ${config.max_double_shift_hours}h para el doble`, "error");
+            }
+        }
+    } catch (e) {
+        console.error("Error en save/verify:", e);
+        if (typeof showToast === "function") showToast("Error al guardar/verificar", "error");
+    }
+    return true;
+}
+
+// ── TOAST NOTIFICATIONS ──
+const TOAST_DURATION = 5000;
+function showToast(message, type = "info", duration = TOAST_DURATION) {
+    const container = document.getElementById("toastContainer");
+    if (!container) return;
+    const icons = { success: "fa-check-circle", error: "fa-circle-xmark", warning: "fa-triangle-exclamation", info: "fa-circle-info" };
+    const icon = icons[type] || icons.info;
+    const toast = document.createElement("div");
+    toast.className = `toast toast-${type}`;
+    toast.innerHTML = `<span class="toast-icon"><i class="fa-solid ${icon}"></i></span><span class="toast-body">${escapeHtml(message)}</span><button class="toast-close" onclick="this.closest('.toast').classList.add('toast-removing');setTimeout(()=>this.closest('.toast')?.remove(),200);">&times;</button>`;
+    container.appendChild(toast);
+    if (duration > 0) setTimeout(() => { if (toast.isConnected) { toast.classList.add("toast-removing"); setTimeout(() => toast.remove(), 200); } }, duration);
+    return toast;
+}
+
+// ── SOLVER OVERLAY HELPERS ──
+let _solverAborted = false;
+function showSolverOverlay() {
+    _solverAborted = false; const overlay = document.getElementById("solverOverlay");
+    if (overlay) overlay.classList.remove("hidden");
+    document.querySelectorAll(".solver-step").forEach(el => { el.classList.remove("active","done"); if (el.dataset.step === "1") el.classList.add("active"); });
+    const fill = document.getElementById("solverProgressFill"); if (fill) fill.style.animation = "solverProgress 8s ease-in-out infinite";
+    const msg = document.getElementById("solverMessage"); if (msg) msg.textContent = "Preparando parámetros...";
+}
+function hideSolverOverlay() { const overlay = document.getElementById("solverOverlay"); if (overlay) overlay.classList.add("hidden"); }
+function setSolverStep(step) {
+    document.querySelectorAll(".solver-step").forEach(el => {
+        const s = parseInt(el.dataset.step); el.classList.remove("active","done");
+        if (s < step) el.classList.add("done"); else if (s === step) el.classList.add("active");
+    });
+}
+function setSolverMessage(text) { const msg = document.getElementById("solverMessage"); if (msg) msg.textContent = text; }
+function cancelSolver() { _solverAborted = true; hideSolverOverlay(); const st = document.getElementById("statusMessage"); if (st) st.textContent = "Cancelado por el usuario"; }
+function closeSolverResult() { document.getElementById("solverResultOverlay")?.classList.add("hidden"); }
+
+function showSolverResult(success, metadata) {
+    hideSolverOverlay(); const overlay = document.getElementById("solverResultOverlay"); if (!overlay) return;
+    const icon = document.getElementById("solverResultIcon"), title = document.getElementById("solverResultTitle"),
+          stats = document.getElementById("solverResultStats"), detail = document.getElementById("solverResultDetail");
+    if (success) {
+        if (icon) icon.innerHTML = '<i class="fa-solid fa-check-circle" style="color: var(--success); font-size: 2.5rem;"></i>';
+        if (title) title.textContent = "Horario Generado";
+        if (stats) {
+            const libres = metadata?.libres_person ? `Libre: ${metadata.libres_person}` : "";
+            const sols = metadata?.solutions_found ? ` | ${metadata.solutions_found} soluciones` : "";
+            const mr = metadata?.min_rest_hours_applied; const mrT = metadata?.min_rest_hours_target ?? 12;
+            const rest = mr != null ? ` | Descanso: ${mr}h${mr < mrT ? ` (obj. ${mrT}h)` : ""}` : "";
+            stats.textContent = [libres, sols, rest].filter(Boolean).join("");
+        }
+        if (detail) { const hist = metadata?.history_context_label ? `Basado en: ${metadata.history_context_label}` : ""; detail.textContent = hist || ""; }
+    } else {
+        if (icon) icon.innerHTML = '<i class="fa-solid fa-circle-xmark" style="color: var(--danger); font-size: 2.5rem;"></i>';
+        if (title) title.textContent = "No se pudo generar";
+        if (stats) stats.textContent = metadata?.message || "El solver no encontró una solución con las restricciones actuales.";
+        if (detail) detail.textContent = "";
+    }
+    overlay.classList.remove("hidden");
+}
+
 // GENERATE
 async function generateSchedule() {
+    _solverAborted = false;
     const status = document.getElementById("statusMessage");
-    status.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Generando...';
+    showSolverOverlay();
+    setSolverMessage("Validando configuración...");
 
     // Ensure config is fresh
     config.night_mode = document.getElementById("nightModeConfig").value;
@@ -1933,6 +2147,7 @@ async function generateSchedule() {
     config.refuerzo_partial_mode = document.getElementById("refuerzoPartialMode")?.checked || false;
     config.refuerzo_nombre = document.getElementById("refuerzoNombre")?.value?.trim() || 'Refuerzo';
     config.refuerzos = getRefuerzosFromUI();
+    saveLocalExtraConfig();
     config.allow_global_quebrado = document.getElementById("allowGlobalQuebrado")?.checked ?? true;
 
     config.allow_collision_quebrado = document.getElementById("allowCollisionQuebrado")?.checked || false;
@@ -1941,25 +2156,31 @@ async function generateSchedule() {
     config.use_history = document.getElementById("useHistoryContext")?.checked ?? true;
     config.rotation_enabled = document.getElementById("rotationEnabled")?.checked ?? true;
     config.strict_weekly_alternation = document.getElementById("strictWeeklyAlternation")?.checked ?? false;
+    config.max_simultaneous = parseInt(document.getElementById("maxSimultaneousInput")?.value) || 5;
+    config.max_double_shift_hours = parseInt(document.getElementById("maxDoubleShiftHoursInput")?.value) || 12;
+    config.solver_max_time = parseInt(document.getElementById("solverMaxTimeInput")?.value) || 180;
     const specialDays = getSpecialDaysPayload();
 
     try {
+        if (_solverAborted) { hideSolverOverlay(); return; }
         // AUTO-SYNC: Si hay fechas de semana, sincronizar vacaciones/permisos → turnos fijos
         const weekStart = document.getElementById("weekStartDate")?.value;
         const weekEnd = document.getElementById("weekEndDate")?.value;
         if (weekStart && weekEnd) {
-            status.innerHTML = '<i class="fa-solid fa-sync fa-spin"></i> Sincronizando vacaciones...';
+            setSolverMessage("Sincronizando vacaciones...");
             const syncRes = await fetch('/api/sync_vac_fixed_shifts', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ fecha_inicio: weekStart, fecha_fin: weekEnd })
             });
             if (syncRes.ok) {
-                // Reload employees to get updated fixed_shifts
                 await loadEmployees();
             }
-            status.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Generando...';
         }
+        if (_solverAborted) { hideSolverOverlay(); return; }
+
+        setSolverStep(2);
+        setSolverMessage("Optimizando turnos con OR-Tools...");
 
         const res = await fetch(`${API_URL}/solve`, {
             method: 'POST',
@@ -1969,17 +2190,19 @@ async function generateSchedule() {
         const result = await res.json();
 
         if (result.status === "Success" || result.status === "Optimal" || result.status === "Feasible") {
+            if (_solverAborted) { hideSolverOverlay(); return; }
+            setSolverStep(3);
+            setSolverMessage("Procesando resultado...");
+
             status.textContent = "Generado!";
             currentGeneratedSchedule = result.schedule;
-            currentDailyTasks = result.daily_tasks; // Save tasks
+            currentDailyTasks = result.daily_tasks;
             currentMetadata = result.metadata;
-            // NO sobrescribir weekSpecialDays con el resultado del backend
-            // El usuario configuró los special_days antes de generar, mantenerlos
             renderWeekSpecialDays();
             await refreshScheduleValidationRules(specialDays);
 
             renderSchedule(result.schedule, "#scheduleTable", result.daily_tasks);
-            if (isValidationOn) applyValidationUI(); // apply validation immediately if enabled
+            if (isValidationOn) applyValidationUI();
 
             document.getElementById("btnSaveSchedule").classList.remove("hidden");
             const libresText = result.metadata?.libres_person ? `Libres: ${result.metadata.libres_person}` : "Éxito";
@@ -1989,29 +2212,40 @@ async function generateSchedule() {
             const mr = result.metadata?.min_rest_hours_applied;
             const mrT = result.metadata?.min_rest_hours_target ?? 12;
             if (mr != null) {
-                metaLine +=
-                    mr < mrT
-                        ? ` | Descanso mínimo: ${mr}h (obj. ${mrT}h)`
-                        : ` | Descanso mínimo: ${mr}h`;
+                metaLine += mr < mrT ? ` | Descanso mínimo: ${mr}h (obj. ${mrT}h)` : ` | Descanso mínimo: ${mr}h`;
             }
             document.getElementById("scheduleMeta").textContent = metaLine;
+            showSolverResult(true, result.metadata);
+
+            // Aviso: el solver agotó el tiempo sin demostrar el óptimo → la
+            // consistencia puede quedar a medio pulir. Sugerir subir el tiempo.
+            if (result.metadata?.solver_status_optimal === false) {
+                const gapP = result.metadata?.solver_gap_percent;
+                const tUsed = result.metadata?.solver_max_time_applied;
+                const gapTxt = (gapP != null) ? ` (gap ${gapP}%)` : "";
+                const tTxt = tUsed ? `${tUsed}s` : "el tiempo límite";
+                showToast(`El solver agotó ${tTxt} sin llegar al óptimo${gapTxt}. Sube "Tiempo del Solver" en Parámetros del Motor para mejorar la consistencia.`, "warning", 10000);
+            }
         } else {
             console.error("Solver Status:", result.status);
             currentMetadata = null;
             if (result.status === "Infeasible") {
-                const infeasibleMessage = result.message || "No se encontró una solución factible con las restricciones actuales. Intenta relajar algunos turnos fijos.";
+                const msg = result.message || "No se encontró una solución factible con las restricciones actuales. Intenta relajar algunos turnos fijos.";
                 status.innerHTML = '<span class="error"><i class="fa-solid fa-circle-xmark"></i> Infeasible</span>';
-                document.getElementById("scheduleMeta").textContent = infeasibleMessage;
-                alert(infeasibleMessage);
+                document.getElementById("scheduleMeta").textContent = msg;
+                showSolverResult(false, { message: msg });
             } else {
                 status.textContent = `Error: ${result.status}`;
                 document.getElementById("scheduleMeta").textContent = result.message || "Error";
+                showSolverResult(false, { message: result.message || `Error: ${result.status}` });
             }
         }
 
     } catch (e) {
         console.error("Generate Error:", e);
         status.textContent = "Error: " + e.message;
+        hideSolverOverlay();
+        showSolverResult(false, { message: "Error de conexión: " + e.message });
     }
 }
 
@@ -2026,6 +2260,15 @@ function getShiftInfo(s) {
 
     if (effectiveShift === "VAC") return { class: "pill-vac", icon: "fa-plane", text: "VAC" };
     if (effectiveShift === "PERM") return { class: "pill-perm", icon: "fa-file-signature", text: "PERM" };
+
+    // Turno doble (DBL_XX-YY): generado dinámicamente por el solver, nunca
+    // está en rules.shift_sets. Se chequea antes de la heurística genérica
+    // para no perder la etiqueta "Doble" ni mostrar mal el rango horario.
+    if (typeof effectiveShift === "string" && effectiveShift.startsWith(DOUBLE_SHIFT_PREFIX)) {
+        const rangePart = effectiveShift.slice(DOUBLE_SHIFT_PREFIX.length);
+        const timeText = formatTimeRange(rangePart);
+        return { class: "pill-doble", icon: "fa-layer-group", text: timeText ? `Doble ${timeText}` : "Doble" };
+    }
 
     // Morning/Day Logic (Corrected to User Request)
     // Morning (< 12): Yellow (pill-morning)
@@ -2183,11 +2426,22 @@ function getShiftHoursList(shiftCode) {
         return [...knownHours];
     }
 
-    if (!normalized || typeof normalized !== "string" || !normalized.startsWith(MANUAL_SHIFT_PREFIX)) {
+    if (!normalized || typeof normalized !== "string") {
         return [];
     }
 
-    const rangePart = normalized.slice(MANUAL_SHIFT_PREFIX.length);
+    // DBL_* (turno doble) nunca aparece en rules.shift_sets: el solver lo
+    // genera recién al resolver (ver sync_double_shifts en scheduler_engine.py).
+    // Se parsea el rango igual que MANUAL_, con el prefijo DBL_.
+    const isManual = normalized.startsWith(MANUAL_SHIFT_PREFIX);
+    const isDouble = !isManual && normalized.startsWith(DOUBLE_SHIFT_PREFIX);
+    if (!isManual && !isDouble) {
+        return [];
+    }
+
+    const rangePart = isManual
+        ? normalized.slice(MANUAL_SHIFT_PREFIX.length)
+        : normalized.slice(DOUBLE_SHIFT_PREFIX.length);
     const hours = new Set();
 
     rangePart.split("+").forEach(segment => {
@@ -2649,7 +2903,7 @@ function renderSchedule(
                 } else {
                     row.innerHTML += `
                         <td class="${cellClass}">
-                            <div class="shift-pill ${info.class} ${fixedClass}${isHistory ? " history-shift-pill" : ""}" ${historyAttrs} style="${cursorStyle}">
+                            <div class="shift-pill ${info.class} ${fixedClass}${isHistory ? " history-shift-pill" : ""}" title="${s} — ${info.text}" ${historyAttrs} style="${cursorStyle}">
                                 <i class="fa-solid ${info.icon} pill-icon"></i>
                                 <span class="pill-time">${info.text}</span>
                                 ${getTaskLabelHTML(tasks, name, d)}
@@ -3800,6 +4054,8 @@ window.manualSchedSave = async function () {
             try { detail = (await res.json()).detail || detail; } catch (_) { }
             throw new Error(detail);
         }
+        // También guardar configuración actual (refuerzos + aforo)
+        saveFullConfig();
         _manualSchedSetStatus(`Guardado al historial: "${name}".`, "success");
         // Si el overlay del historial está abierto en algún momento, refrescar
         historyEntriesCache = [];
@@ -4613,6 +4869,217 @@ function toggleParamCard(header) {
 function toggleParamGroup(header) {
     const group = header.parentElement;
     group.classList.toggle('collapsed');
+    if (group.id === 'paramGroupExcelColors' && !group.classList.contains('collapsed') && !excelColorsLoaded) {
+        loadExcelColorsPanel();
+    }
+}
+
+// ===== COLORES DEL EXCEL DE HORARIOS (GET/PUT /api/excel-colors) =====
+// Afecta SOLO el export de un horario individual (botón "Exportar"). El mapa
+// que se guarda acá vive aislado del resto de la config (horario_config.excel_colors_json,
+// leído/escrito directo por columna) para que POST /api/config nunca lo borre.
+let excelColorsLoaded = false;
+let excelColorsData = { employees: [], statuses: [] };
+// name -> {bg, font} para lo que se mandaría si se guarda ahora mismo
+// (precargado con lo que ya era "custom" en el servidor, y actualizado en vivo
+// a medida que el usuario toca los inputs de color de cada fila).
+let excelColorsWorkingMap = {};
+// Igual que el anterior pero para estados: code (OFF/VAC/PERM) -> {bg, font}.
+let excelStatusWorkingMap = {};
+
+function _excelWorkingMap(kind) {
+    return kind === 'status' ? excelStatusWorkingMap : excelColorsWorkingMap;
+}
+
+function _excelItemKey(item, kind) {
+    return kind === 'status' ? item.code : item.name;
+}
+
+function _findExcelItem(kind, key) {
+    const list = kind === 'status' ? excelColorsData.statuses : excelColorsData.employees;
+    return (list || []).find(item => _excelItemKey(item, kind) === key);
+}
+
+function _applyExcelColorsPayload(data) {
+    excelColorsData = data;
+    excelColorsWorkingMap = {};
+    excelStatusWorkingMap = {};
+    (data.employees || []).forEach(emp => {
+        if (emp.source === 'custom') excelColorsWorkingMap[emp.name] = { bg: emp.bg, font: emp.font };
+    });
+    (data.statuses || []).forEach(st => {
+        if (st.source === 'custom') excelStatusWorkingMap[st.code] = { bg: st.bg, font: st.font };
+    });
+}
+
+function _excelColorsSampleText() {
+    return "05:00 AM - 01:00 PM";
+}
+
+async function loadExcelColorsPanel() {
+    const wrap = document.getElementById('excelColorsRows');
+    if (!wrap) return;
+    wrap.innerHTML = '<p class="excel-colors-empty">Cargando…</p>';
+    try {
+        const res = await fetch('/api/excel-colors');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        _applyExcelColorsPayload(data);
+        excelColorsLoaded = true;
+        renderExcelColorsPanel();
+    } catch (e) {
+        console.error('Error cargando colores del Excel:', e);
+        wrap.innerHTML = '<p class="excel-colors-empty">Error al cargar. Reintentá abriendo esta sección de nuevo.</p>';
+        excelColorsLoaded = false;
+    }
+}
+
+function renderExcelColorsPanel() {
+    const statusWrap = document.getElementById('excelColorsStatusRows');
+    const rowsWrap = document.getElementById('excelColorsRows');
+    const emptyMsg = document.getElementById('excelColorsEmpty');
+    const countBadge = document.getElementById('excelColorsCount');
+    if (!statusWrap || !rowsWrap) return;
+
+    countBadge && (countBadge.textContent = String((excelColorsData.employees || []).length));
+
+    statusWrap.innerHTML = '';
+    (excelColorsData.statuses || []).forEach(st => {
+        statusWrap.appendChild(_buildExcelColorRow(st, 'status'));
+    });
+
+    rowsWrap.innerHTML = '';
+    const employees = excelColorsData.employees || [];
+    if (emptyMsg) emptyMsg.classList.toggle('hidden', employees.length > 0);
+
+    employees.forEach(emp => {
+        rowsWrap.appendChild(_buildExcelColorRow(emp, 'employee'));
+    });
+}
+
+function _buildExcelColorRow(item, kind) {
+    const key = _excelItemKey(item, kind);
+    const working = _excelWorkingMap(kind)[key];
+    const bg = (working && working.bg) || item.bg;
+    const font = (working && working.font) || item.font;
+    const isCustom = !!working;
+
+    const row = document.createElement('div');
+    row.className = 'excel-colors-row';
+    row.dataset.colorKind = kind;
+    row.dataset.colorKey = key;
+
+    const nameCell = document.createElement('div');
+    nameCell.className = 'excel-colors-row-name';
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = kind === 'status' ? item.label : item.name;
+    nameCell.appendChild(nameSpan);
+    if (isCustom) {
+        const badge = document.createElement('span');
+        badge.className = 'excel-colors-badge';
+        badge.textContent = 'Personalizado';
+        nameCell.appendChild(badge);
+    }
+    row.appendChild(nameCell);
+
+    const preview = document.createElement('span');
+    preview.className = 'excel-colors-preview';
+    preview.textContent = kind === 'status' ? item.label : _excelColorsSampleText();
+    preview.style.background = '#' + bg;
+    preview.style.color = '#' + font;
+    row.appendChild(preview);
+
+    const bgGroup = document.createElement('label');
+    bgGroup.className = 'excel-colors-input-group';
+    const bgInput = document.createElement('input');
+    bgInput.type = 'color';
+    bgInput.value = '#' + bg;
+    bgInput.addEventListener('input', () => _onExcelColorInput(kind, key, 'bg', bgInput.value, preview));
+    bgGroup.appendChild(document.createTextNode('Fondo'));
+    bgGroup.appendChild(bgInput);
+    row.appendChild(bgGroup);
+
+    const fontGroup = document.createElement('label');
+    fontGroup.className = 'excel-colors-input-group';
+    const fontInput = document.createElement('input');
+    fontInput.type = 'color';
+    fontInput.value = '#' + font;
+    fontInput.addEventListener('input', () => _onExcelColorInput(kind, key, 'font', fontInput.value, preview));
+    fontGroup.appendChild(document.createTextNode('Fuente'));
+    fontGroup.appendChild(fontInput);
+    row.appendChild(fontGroup);
+
+    const resetBtn = document.createElement('button');
+    resetBtn.type = 'button';
+    resetBtn.className = 'excel-colors-reset-btn';
+    resetBtn.innerHTML = '<i class="fa-solid fa-rotate-left"></i> Restablecer';
+    resetBtn.disabled = !isCustom;
+    resetBtn.onclick = () => resetExcelColorRow(kind, key);
+    row.appendChild(resetBtn);
+
+    return row;
+}
+
+function _onExcelColorInput(kind, key, channel, hexWithHash, previewEl) {
+    const hex = (hexWithHash || '').replace('#', '').toUpperCase();
+    const map = _excelWorkingMap(kind);
+    const current = map[key] || {};
+    const item = _findExcelItem(kind, key);
+    const fallback = item ? { bg: item.bg, font: item.font } : { bg: 'FFFFFF', font: '000000' };
+    map[key] = {
+        bg: channel === 'bg' ? hex : (current.bg || fallback.bg),
+        font: channel === 'font' ? hex : (current.font || fallback.font),
+    };
+    if (previewEl) {
+        previewEl.style.background = '#' + map[key].bg;
+        previewEl.style.color = '#' + map[key].font;
+    }
+    // Marcar la fila como personalizada al vuelo (badge + habilitar "Restablecer")
+    // sin tener que re-renderizar todo el panel (evita perder foco del color picker).
+    const row = document.querySelector(
+        `.excel-colors-row[data-color-kind="${kind}"][data-color-key="${CSS.escape(key)}"]`
+    );
+    if (row) {
+        const resetBtn = row.querySelector('.excel-colors-reset-btn');
+        if (resetBtn) resetBtn.disabled = false;
+        if (!row.querySelector('.excel-colors-badge')) {
+            const badge = document.createElement('span');
+            badge.className = 'excel-colors-badge';
+            badge.textContent = 'Personalizado';
+            row.querySelector('.excel-colors-row-name').appendChild(badge);
+        }
+    }
+}
+
+async function resetExcelColorRow(kind, key) {
+    delete _excelWorkingMap(kind)[key];
+    await _persistExcelColors('Color restablecido a los valores por defecto');
+}
+
+async function saveExcelColorsPanel() {
+    await _persistExcelColors('Colores del Excel guardados');
+}
+
+async function _persistExcelColors(successMessage) {
+    const btn = document.getElementById('excelColorsSaveBtn');
+    if (btn) btn.disabled = true;
+    try {
+        const res = await fetch('/api/excel-colors', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ colors: excelColorsWorkingMap, status_colors: excelStatusWorkingMap }),
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        _applyExcelColorsPayload(data);
+        renderExcelColorsPanel();
+        if (typeof showToast === 'function') showToast(successMessage, 'success');
+    } catch (e) {
+        console.error('Error guardando colores del Excel:', e);
+        if (typeof showToast === 'function') showToast('Error al guardar los colores del Excel', 'error');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
 }
 
 function confirmTextEdit() {

@@ -392,6 +392,18 @@ tr:hover td {
     border-color: #92400e;
 }
 
+.pill-doble {
+    background: linear-gradient(135deg, #fdf4ff, #f5d0fe);
+    color: #86198f;
+    border: 1px solid #e879f9;
+}
+
+.dark-mode .pill-doble {
+    background: linear-gradient(135deg, #4a044e, #701a75);
+    color: #f5d0fe;
+    border-color: #86198f;
+}
+
 .pill-fixed {
     border-left: 4px solid #f59e0b;
 }

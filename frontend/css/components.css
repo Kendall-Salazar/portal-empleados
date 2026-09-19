@@ -666,6 +666,268 @@ select:focus {
     border-color: var(--primary);
 }
 
+/* ═══════════════════════════════════════════════
+   SOLVER OVERLAY — Feedback mientras genera
+   ═══════════════════════════════════════════════ */
+/* Backdrop con blur y glow indigo — scoped al solver para no tocar otros modales */
+#solverOverlay.modal-overlay,
+#solverResultOverlay.modal-overlay {
+    background: radial-gradient(ellipse at 50% 32%, rgba(79, 70, 229, 0.20), rgba(2, 6, 23, 0.82) 62%);
+    backdrop-filter: blur(9px) saturate(1.1);
+    -webkit-backdrop-filter: blur(9px) saturate(1.1);
+}
+
+.solver-card {
+    position: relative;
+    background: var(--bg-panel);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-xl, 20px);
+    padding: 2.25rem 2.5rem 1.75rem;
+    max-width: 420px;
+    width: 100%;
+    text-align: center;
+    box-shadow: 0 30px 60px -12px rgba(0, 0, 0, 0.55);
+    overflow: hidden;
+    animation: solverFadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Franja de acento superior con brillo en movimiento */
+.solver-card::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--primary), var(--accent-blue), var(--primary));
+    background-size: 200% 100%;
+    animation: solverSheen 2.5s linear infinite;
+}
+
+/* Glow ambiental detrás del loader */
+.solver-card::after {
+    content: "";
+    position: absolute;
+    top: -30%; left: 50%;
+    transform: translateX(-50%);
+    width: 240px; height: 240px;
+    background: radial-gradient(circle, rgba(79, 70, 229, 0.22), transparent 70%);
+    pointer-events: none;
+}
+
+.solver-card.result {
+    max-width: 480px;
+}
+
+@keyframes solverFadeIn {
+    from { opacity: 0; transform: scale(0.94) translateY(8px); }
+    to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes solverSheen {
+    to { background-position: 200% 0; }
+}
+
+/* ── Loader orbital de doble anillo ── */
+.solver-loader {
+    position: relative;
+    width: 78px;
+    height: 78px;
+    margin: 0.25rem auto 1.35rem;
+}
+
+/* Pista estática */
+.solver-loader::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 3px solid var(--primary-subtle);
+}
+
+/* Arco exterior girando */
+.solver-loader::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 3px solid transparent;
+    border-top-color: var(--primary);
+    border-right-color: var(--accent-blue);
+    animation: solverSpin 0.9s linear infinite;
+}
+
+/* Arco interior en sentido contrario */
+.solver-loader-inner {
+    position: absolute;
+    inset: 11px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    border-bottom-color: var(--accent-blue);
+    border-left-color: var(--primary);
+    opacity: 0.7;
+    animation: solverSpinReverse 1.3s linear infinite;
+}
+
+/* Núcleo con ícono pulsando */
+.solver-loader-core {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.5rem;
+    color: var(--primary);
+    animation: solverPulse 1.8s ease-in-out infinite;
+}
+
+@keyframes solverSpin {
+    to { transform: rotate(360deg); }
+}
+
+@keyframes solverSpinReverse {
+    to { transform: rotate(-360deg); }
+}
+
+@keyframes solverPulse {
+    0%, 100% { transform: scale(1); opacity: 0.85; }
+    50%      { transform: scale(1.14); opacity: 1; }
+}
+
+.solver-title {
+    font-size: 1.25rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--text-main, #f1f5f9);
+    margin-bottom: 0.4rem;
+}
+
+.solver-message {
+    font-size: 0.85rem;
+    color: var(--text-muted, #94a3b8);
+    margin-bottom: 1.35rem;
+    min-height: 1.1em;
+}
+
+.solver-progress-bar {
+    position: relative;
+    height: 6px;
+    background: var(--primary-subtle);
+    border-radius: 6px;
+    overflow: hidden;
+    margin-bottom: 1.15rem;
+}
+
+.solver-progress-fill {
+    position: relative;
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--primary), var(--accent-blue));
+    border-radius: 6px;
+    transition: width 0.4s ease;
+    animation: solverProgress 8s ease-in-out infinite;
+}
+
+/* Brillo que recorre la barra */
+.solver-progress-fill::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+    animation: solverShimmer 1.5s ease-in-out infinite;
+}
+
+@keyframes solverProgress {
+    0%   { width: 5%; }
+    50%  { width: 60%; }
+    100% { width: 90%; }
+}
+
+@keyframes solverShimmer {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+}
+
+.solver-steps {
+    display: flex;
+    justify-content: center;
+    gap: 0.6rem;
+    margin-bottom: 1.1rem;
+}
+
+.solver-step {
+    position: relative;
+    font-size: 0.68rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 0.3rem 0.7rem;
+    border-radius: 20px;
+    background: color-mix(in srgb, var(--text-muted) 8%, transparent);
+    color: var(--text-dim, #64748b);
+    transition: all 0.3s ease;
+}
+
+.solver-step.active {
+    background: var(--primary-subtle);
+    color: var(--primary);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary) 35%, transparent);
+}
+
+.solver-step.done {
+    background: var(--success-subtle);
+    color: var(--success, #10b981);
+}
+
+.solver-step.done::before {
+    content: "\2713\00a0";
+    font-weight: 700;
+}
+
+/* Respeta la preferencia de movimiento reducido */
+@media (prefers-reduced-motion: reduce) {
+    .solver-card::before,
+    .solver-loader::after,
+    .solver-loader-inner,
+    .solver-loader-core,
+    .solver-progress-fill,
+    .solver-progress-fill::after {
+        animation: none;
+    }
+}
+
+.solver-cancel {
+    font-size: 0.78rem;
+    opacity: 0.6;
+    transition: opacity 0.2s;
+}
+
+.solver-cancel:hover {
+    opacity: 1;
+}
+
+/* Result card */
+.solver-result-icon {
+    margin-bottom: 0.75rem;
+}
+
+.solver-result-stats {
+    font-size: 0.9rem;
+    color: var(--text-main, #f1f5f9);
+    margin-bottom: 0.5rem;
+    line-height: 1.6;
+}
+
+.solver-result-detail {
+    font-size: 0.8rem;
+    color: var(--text-muted, #94a3b8);
+    margin-bottom: 1.25rem;
+}
+
+.solver-result-actions {
+    display: flex;
+    justify-content: center;
+    gap: 0.75rem;
+}
+
 /* Modal Overlay */
 .modal-overlay {
     position: fixed;
@@ -1205,6 +1467,18 @@ select:focus {
     border-color: #facc15;
 }
 
+.dc-doble {
+    background: linear-gradient(135deg, #fdf4ff, #f5d0fe);
+    color: #86198f;
+    border-color: #e879f9;
+}
+
+.dark-mode .dc-doble {
+    background: linear-gradient(135deg, #4a044e, #701a75);
+    color: #f5d0fe;
+    border-color: #86198f;
+}
+
 /* PILL SELECTOR PANEL */
 .pill-selector-panel {
     margin-top: 0.75rem;
@@ -1342,6 +1616,11 @@ select:focus {
     font-size: 0.78rem;
     color: var(--text-muted);
     margin-bottom: 0.6rem;
+}
+
+.helper-text-sm.helper-text-warning {
+    color: var(--warning, #f59e0b);
+    font-weight: 600;
 }
 
 /* Slide Down Animation */
@@ -2989,6 +3268,120 @@ th[id^="th-collaborator"]:hover {
     grid-column: 1 / -1;
 }
 
+/* ═══════════════════════════════════════
+   EXCEL EXPORT COLORS (paramGroupExcelColors)
+   Colores por colaborador usados SOLO por el botón "Exportar" (Excel de un
+   solo horario). No afecta la tabla en pantalla ni los otros exports.
+   ═══════════════════════════════════════ */
+.excel-colors-subhdr {
+    margin: 1rem 0 0.5rem 0;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted, var(--text-main));
+}
+.excel-colors-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+.excel-colors-row {
+    display: grid;
+    grid-template-columns: minmax(150px, 1.1fr) minmax(150px, 1.3fr) auto auto auto;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.6rem 0.75rem;
+    background: var(--surface-2);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+}
+.excel-colors-row-name {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 600;
+    color: var(--text-main);
+    font-size: 0.85rem;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+.excel-colors-badge {
+    font-size: 0.6rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: rgba(99,102,241,0.15);
+    color: #6366f1;
+    flex-shrink: 0;
+}
+.excel-colors-preview {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.4rem 0.6rem;
+    border-radius: 6px;
+    font-size: 0.76rem;
+    font-weight: 600;
+    white-space: nowrap;
+    min-width: 150px;
+    text-align: center;
+}
+.excel-colors-input-group {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+}
+.excel-colors-input-group input[type="color"] {
+    width: 34px;
+    height: 28px;
+    padding: 0;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background: none;
+    cursor: pointer;
+}
+.excel-colors-reset-btn {
+    background: none;
+    border: 1px solid var(--border-color);
+    color: var(--text-muted);
+    border-radius: 6px;
+    padding: 0.35rem 0.6rem;
+    font-size: 0.72rem;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s, color 0.15s;
+}
+.excel-colors-reset-btn:hover:not(:disabled) {
+    background: var(--bg-app);
+    color: var(--text-main);
+}
+.excel-colors-reset-btn:disabled {
+    opacity: 0.35;
+    cursor: default;
+}
+.excel-colors-footer {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 1rem;
+}
+.excel-colors-empty {
+    padding: 1rem;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.82rem;
+}
+@media (max-width: 720px) {
+    .excel-colors-row {
+        grid-template-columns: 1fr;
+        align-items: flex-start;
+    }
+}
+
 /* === From style.css lines 8377-8436 === */
 /* ═══════════════════════════════════════
    JEFE MATRIX
@@ -3121,5 +3514,78 @@ th[id^="th-collaborator"]:hover {
     background: rgba(30, 27, 75, 0.3);
     color: #818cf8;
     font-weight: 600;
+}
+
+/* ═══════════════════════════════════════
+   TOAST NOTIFICATIONS
+   ═══════════════════════════════════════ */
+.toast-container {
+    position: fixed;
+    top: 1rem;
+    right: 1rem;
+    z-index: 99999;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    max-width: 380px;
+    pointer-events: none;
+}
+
+.toast {
+    pointer-events: auto;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    padding: 0.75rem 1rem;
+    border-radius: var(--radius-md, 10px);
+    background: var(--bg-panel, #1e293b);
+    border: 1px solid var(--border, rgba(148,163,184,0.15));
+    box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+    font-size: 0.85rem;
+    color: var(--text-main, #f1f5f9);
+    animation: toastSlideIn 0.25s ease;
+    max-width: 100%;
+}
+
+.toast.toast-success { border-left: 3px solid var(--success, #10b981); }
+.toast.toast-error   { border-left: 3px solid var(--danger, #ef4444); }
+.toast.toast-warning { border-left: 3px solid var(--warning, #f59e0b); }
+.toast.toast-info    { border-left: 3px solid var(--primary, #818cf8); }
+
+.toast-icon {
+    font-size: 1rem;
+    flex-shrink: 0;
+    margin-top: 0.1rem;
+}
+.toast.toast-success .toast-icon { color: var(--success, #10b981); }
+.toast.toast-error   .toast-icon { color: var(--danger, #ef4444); }
+.toast.toast-warning .toast-icon { color: var(--warning, #f59e0b); }
+.toast.toast-info    .toast-icon { color: var(--primary, #818cf8); }
+
+.toast-body { flex: 1; line-height: 1.4; }
+.toast-close {
+    flex-shrink: 0;
+    background: none;
+    border: none;
+    color: var(--text-dim, #64748b);
+    cursor: pointer;
+    padding: 0.1rem;
+    font-size: 0.9rem;
+    opacity: 0.6;
+    transition: opacity 0.15s;
+}
+.toast-close:hover { opacity: 1; }
+
+@keyframes toastSlideIn {
+    from { opacity: 0; transform: translateX(30px); }
+    to   { opacity: 1; transform: translateX(0); }
+}
+
+.toast-removing {
+    animation: toastSlideOut 0.2s ease forwards;
+}
+@keyframes toastSlideOut {
+    from { opacity: 1; transform: translateX(0); }
+    to   { opacity: 0; transform: translateX(30px); }
 }
 

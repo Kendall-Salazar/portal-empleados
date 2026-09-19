@@ -272,6 +272,9 @@ def _prepare_history_for_solver(history_list, target_week_start=None, use_histor
     range_start_week_start = first_reference["sort_date"].isoformat() if first_reference["sort_date"] else None
     reference_week_start = reference["sort_date"].isoformat() if reference["sort_date"] else None
 
+    # Detectar si la semana exactamente anterior al target está presente
+    has_exact_previous = bool(exact_previous) if target_date else None
+
     if len(selected) == 1:
         label = f"Historial usado: {range_end_name}"
     else:
@@ -280,12 +283,16 @@ def _prepare_history_for_solver(history_list, target_week_start=None, use_histor
     if selection_fallback:
         label += " · Respaldo: sin fecha de semana anterior clara; se usan las últimas guardadas"
 
+    if target_date and not has_exact_previous:
+        label += " · Sin semana exactamente anterior — se relajan restricciones de descanso Jue→Vie"
+
     return [info["entry"] for info in selected], {
         "enabled": True,
         "label": label,
         "entries_used": len(selected),
         "reference_name": reference["entry"].get("name"),
         "reference_week_start": reference_week_start,
+        "has_exact_previous_week": has_exact_previous,
         "range_start_name": range_start_name,
         "range_start_week_start": range_start_week_start,
         "range_end_name": range_end_name,
@@ -402,6 +409,61 @@ def _build_validation_rules_impl(special_days=None):
     }
 
 
+# Columnas JSON de horario_config que viven FUERA del dict "config": se leen/escriben
+# directo por columna y save_db() las preserva al reinsertar la fila.
+_EXCEL_COLOR_COLUMNS = ("excel_colors_json", "excel_status_colors_json")
+
+
+def _load_excel_color_column(column):
+    conn = _get_conn()
+    row = conn.execute(f"SELECT {column} FROM horario_config WHERE id=1").fetchone()
+    conn.close()
+    if not row or not row[column]:
+        return {}
+    try:
+        data = json.loads(row[column])
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _save_excel_color_column(column, colors):
+    """UPDATE directo de una sola columna (con INSERT OR IGNORE previo por si
+    horario_config todavía no tiene fila id=1), en vez de pasar por save_db(),
+    que reemplaza la fila entera — así un guardado de colores nunca pisa
+    night_mode, refuerzos, etc."""
+    conn = _get_conn()
+    conn.execute("INSERT OR IGNORE INTO horario_config (id) VALUES (1)")
+    conn.execute(
+        f"UPDATE horario_config SET {column}=? WHERE id=1",
+        (json.dumps(colors or {}, ensure_ascii=False),),
+    )
+    conn.commit()
+    conn.close()
+
+
+def load_excel_colors_custom():
+    """Colores personalizados por empleado del export Excel de un horario.
+
+    Aislado del resto de horario_config: nunca vía load_db()["config"], para
+    que POST /api/config no pueda tocarlo.
+    """
+    return _load_excel_color_column("excel_colors_json")
+
+
+def save_excel_colors_custom(colors):
+    _save_excel_color_column("excel_colors_json", colors)
+
+
+def load_excel_status_colors_custom():
+    """Colores personalizados de LIBRE / VACACIONES / PERMISO (code -> {bg, font})."""
+    return _load_excel_color_column("excel_status_colors_json")
+
+
+def save_excel_status_colors_custom(colors):
+    _save_excel_color_column("excel_status_colors_json", colors)
+
+
 def load_db():
     """Lee datos de SQLite y devuelve dict compatible con la estructura JSON original."""
     conn = _get_conn()
@@ -470,6 +532,15 @@ def load_db():
             "refuerzo_nombre": (cfg_row["refuerzo_nombre"] or "Refuerzo")
             if "refuerzo_nombre" in cfg_row.keys() and cfg_row["refuerzo_nombre"]
             else "Refuerzo",
+            "max_simultaneous": cfg_row["max_simultaneous"]
+            if "max_simultaneous" in cfg_row.keys() and cfg_row["max_simultaneous"]
+            else None,
+            "max_double_shift_hours": cfg_row["max_double_shift_hours"]
+            if "max_double_shift_hours" in cfg_row.keys() and cfg_row["max_double_shift_hours"]
+            else 12,
+            "solver_max_time": cfg_row["solver_max_time"]
+            if "solver_max_time" in cfg_row.keys() and cfg_row["solver_max_time"]
+            else 180,
         }
 
     # Historial: todas las filas activas, orden cronológico por id (no se borra al generar).
@@ -562,6 +633,17 @@ def save_db(data):
     # Guardar config
     if "config" in data:
         cfg = data["config"]
+        # Las columnas de colores del export viven fuera del dict "config" (ver
+        # _EXCEL_COLOR_COLUMNS): se preservan explícitamente acá porque este bloque
+        # borra y reinserta la fila entera de horario_config, y de lo contrario un
+        # POST /api/config cualquiera dejaría los colores del export en NULL.
+        existing_colors_row = conn.execute(
+            f"SELECT {', '.join(_EXCEL_COLOR_COLUMNS)} FROM horario_config WHERE id=1"
+        ).fetchone()
+        preserved_colors = {
+            col: (existing_colors_row[col] if existing_colors_row else None)
+            for col in _EXCEL_COLOR_COLUMNS
+        }
         conn.execute("DELETE FROM horario_config")
         conn.execute("""
             INSERT INTO horario_config
@@ -571,8 +653,9 @@ def save_db(data):
              allow_collision_quebrado, allow_quebrado_largo, collision_peak_priority, sunday_cycle_index,
              sunday_rotation_queue, use_history, strict_weekly_alternation, holidays,
              jefe_base_shift, use_pref_plantilla, cleaning_tasks, jefe_config,
-             refuerzos_json, refuerzo_nombre)
-            VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             refuerzos_json, refuerzo_nombre, max_simultaneous, max_double_shift_hours,
+             solver_max_time, excel_colors_json, excel_status_colors_json)
+            VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             cfg.get("night_mode", "rotation"),
             cfg.get("fixed_night_person"),
@@ -600,6 +683,11 @@ def save_db(data):
             json.dumps(cfg.get("jefe_config", {})),
             json.dumps(cfg.get("refuerzos") or []),
             str(cfg.get("refuerzo_nombre") or "Refuerzo"),
+            int(cfg["max_simultaneous"]) if cfg.get("max_simultaneous") else None,
+            int(cfg["max_double_shift_hours"]) if cfg.get("max_double_shift_hours") else 12,
+            int(cfg["solver_max_time"]) if cfg.get("solver_max_time") else 180,
+            preserved_colors["excel_colors_json"],
+            preserved_colors["excel_status_colors_json"],
         ))
 
     # NOTA: history_log NO se guarda aquí. El historial se maneja exclusivamente
@@ -607,6 +695,17 @@ def save_db(data):
     # a SQLite. Esto previene borrado silencioso: si save_db() se llama con un
     # history_log incompleto (ej. desde /api/config o /api/solve), NO se pierden
     # entradas de historial que ya existen en la DB.
+
+    # Mantener horario_empleados.activo como ESPEJO EXACTO de empleados.activo
+    # (fuente de verdad usada por el generador). Cualquier save_db — venga de
+    # donde venga — deja las dos tablas sincronizadas, evitando que un payload
+    # parcial deje empleados activos fuera del horario.
+    conn.execute("""
+        UPDATE horario_empleados
+        SET activo = COALESCE(
+            (SELECT e.activo FROM empleados e WHERE e.nombre = horario_empleados.nombre),
+            activo)
+    """)
 
     conn.commit()
     conn.close()

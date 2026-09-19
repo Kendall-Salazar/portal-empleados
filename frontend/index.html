@@ -44,26 +44,32 @@
                             document.getElementById('nav-back-portal').style.display = '';
                         }
                     </script>
-                    <!-- PORTAL SECTION -->
+                    <!-- ═══════ PERSONAL ═══════ -->
+                    <div class="sidebar-section-label">PERSONAL</div>
                     <button id="nav-gestion" class="nav-btn active" onclick="switchMainTab('gestion')">
                         <i class="fa-solid fa-users-gear"></i> Gestión de Personal
                     </button>
+                    <button id="nav-utilidades" class="nav-btn" onclick="switchMainTab('utilidades')">
+                        <i class="fa-solid fa-toolbox"></i> Utilidades
+                    </button>
+
+                    <!-- ═══════ FINANZAS ═══════ -->
+                    <div class="sidebar-section-label">FINANZAS</div>
                     <button id="nav-planilla-mensual" class="nav-btn" onclick="switchMainTab('planilla-mensual')">
                         <i class="fa-solid fa-file-invoice-dollar"></i> Planilla de Pago
                     </button>
                     <button id="nav-aguinaldo" class="nav-btn" onclick="switchMainTab('aguinaldo')">
                         <i class="fa-solid fa-gift"></i> Aguinaldo
                     </button>
-                    <button id="nav-utilidades" class="nav-btn" onclick="switchMainTab('utilidades')">
-                        <i class="fa-solid fa-toolbox"></i> Utilidades
-                    </button>
+
+                    <!-- ═══════ INVENTARIO ═══════ -->
+                    <div class="sidebar-section-label">INVENTARIO</div>
                     <button id="nav-inventario" class="nav-btn" onclick="switchMainTab('inventario')">
                         <i class="fa-solid fa-boxes-stacked"></i> Inventario
                     </button>
 
-                    <div class="menu-divider" style="height: 1px; background: var(--border); margin: 10px 0;"></div>
-
-                    <!-- SCHEDULE SECTION -->
+                    <!-- ═══════ GENERADOR DE HORARIOS ═══════ -->
+                    <div class="sidebar-section-label">GENERADOR</div>
                     <button id="nav-parametros" class="nav-btn" onclick="switchMainTab('parametros')">
                         <i class="fa-solid fa-sliders"></i> Parámetros Motor
                     </button>
@@ -739,6 +745,69 @@
                                     </div>
                                 </div>
 
+                                <!-- Máximo de personas simultáneas -->
+                                <div class="vac-emp-card param-card pad-card">
+                                    <div class="param-card-header" onclick="toggleParamCard(this)">
+                                        <h3 class="card-hdr">
+                                            <span class="icon-badge-lg badge-purple">
+                                                <i class="fa-solid fa-users" style="font-size:0.85rem;"></i>
+                                            </span>
+                                            Aforo Máximo
+                                        </h3>
+                                        <i class="fa-solid fa-chevron-down chevron"></i>
+                                    </div>
+                                    <div class="param-card-content">
+                                        <p class="helper-text-sm" style="margin-bottom: 0.6rem;">Máximo de personas en pista al mismo tiempo.</p>
+                                        <div class="input-group" style="display: flex; align-items: center; gap: 0.75rem;">
+                                            <input type="number" id="maxSimultaneousInput" class="custom-input" value="5" min="3" max="12" onchange="updateConfig(); saveFullConfig();" style="width: 80px; padding: 0.5rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px; font-size: 0.95rem; text-align: center;">
+                                            <span style="font-size: 0.82rem; color: var(--text-muted);">personas (3-12)</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Tope de horas para turno doble -->
+                                <div class="vac-emp-card param-card pad-card">
+                                    <div class="param-card-header" onclick="toggleParamCard(this)">
+                                        <h3 class="card-hdr">
+                                            <span class="icon-badge-lg badge-pink">
+                                                <i class="fa-solid fa-layer-group" style="font-size:0.85rem;"></i>
+                                            </span>
+                                            Tope de Turno Doble
+                                        </h3>
+                                        <i class="fa-solid fa-chevron-down chevron"></i>
+                                    </div>
+                                    <div class="param-card-content">
+                                        <p class="helper-text-sm" id="maxDoubleShiftHint" style="margin-bottom: 0.6rem;">12h desactiva la función: no existe ninguna combinación de dos turnos contiguos de 12h o menos. El doble más corto posible es de 13h.</p>
+                                        <div class="input-group" style="display: flex; align-items: center; gap: 0.75rem;">
+                                            <input type="number" id="maxDoubleShiftHoursInput" class="custom-input" value="12" min="12" max="17"
+                                                   onchange="updateMaxDoubleShiftHint(this.value); updateConfig(); saveFullConfig();"
+                                                   oninput="updateMaxDoubleShiftHint(this.value);"
+                                                   style="width: 80px; padding: 0.5rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px; font-size: 0.95rem; text-align: center;">
+                                            <span style="font-size: 0.82rem; color: var(--text-muted);">horas (12-17)</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Tiempo máximo del solver -->
+                                <div class="vac-emp-card param-card pad-card">
+                                    <div class="param-card-header" onclick="toggleParamCard(this)">
+                                        <h3 class="card-hdr">
+                                            <span class="icon-badge-lg badge-purple">
+                                                <i class="fa-solid fa-stopwatch" style="font-size:0.85rem;"></i>
+                                            </span>
+                                            Tiempo del Solver
+                                        </h3>
+                                        <i class="fa-solid fa-chevron-down chevron"></i>
+                                    </div>
+                                    <div class="param-card-content">
+                                        <p class="helper-text-sm" style="margin-bottom: 0.6rem;">Segundos máximos que el solver busca soluciones. Más tiempo = horarios más consistentes (menos saltos de franja). Si al generar aparece el aviso de "tiempo agotado", sube este valor.</p>
+                                        <div class="input-group" style="display: flex; align-items: center; gap: 0.75rem;">
+                                            <input type="number" id="solverMaxTimeInput" class="custom-input" value="180" min="60" max="900" step="30" onchange="updateConfig(); saveFullConfig();" style="width: 80px; padding: 0.5rem; background: var(--bg-app); border: 1px solid var(--border); color: var(--text-main); border-radius: 8px; font-size: 0.95rem; text-align: center;">
+                                            <span style="font-size: 0.82rem; color: var(--text-muted);">segundos (60-900)</span>
+                                        </div>
+                                    </div>
+                                </div>
+
                                 <!-- Historial de Rotación -->
                                 <div class="vac-emp-card param-card pad-card">
                                     <div class="param-card-header" onclick="toggleParamCard(this)">
@@ -1381,6 +1450,52 @@
                                                 <!-- Populated by JS -->
                                             </div>
                                         </div>
+                                    </div>
+                                </div>
+
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ═══════════ COLORES DEL EXCEL DE HORARIOS ═══════════ -->
+                    <div class="param-group collapsed" id="paramGroupExcelColors">
+                        <div class="param-group-header" onclick="toggleParamGroup(this)">
+                            <div class="param-group-header-left">
+                                <span class="param-group-icon" style="background:rgba(219,39,119,0.12); color:#db2777;">
+                                    <i class="fa-solid fa-palette"></i>
+                                </span>
+                                <span class="param-group-title">Colores del Excel de horarios</span>
+                                <span class="param-group-count" id="excelColorsCount">0</span>
+                            </div>
+                            <i class="fa-solid fa-chevron-down param-group-chevron"></i>
+                        </div>
+                        <div class="param-group-body">
+                            <div class="param-group-grid">
+
+                                <div class="vac-emp-card param-card pad-card full-width">
+                                    <h3 class="card-hdr" style="margin-bottom:0.4rem;">
+                                        <span class="icon-badge-lg" style="background:rgba(219,39,119,0.12); color:#db2777;">
+                                            <i class="fa-solid fa-file-excel" style="font-size:0.85rem;"></i>
+                                        </span>
+                                        Código de colores por colaborador
+                                    </h3>
+                                    <p class="helper-text-sm" style="margin-bottom:0.5rem;">
+                                        Estos colores se usan <strong>únicamente</strong> al exportar el Excel de un horario individual (botón "Exportar" en el historial). No afectan la tabla del horario en pantalla, el export de carpetas ni el export de imagen.
+                                    </p>
+
+                                    <h4 class="excel-colors-subhdr">Estados</h4>
+                                    <div class="excel-colors-rows" id="excelColorsStatusRows"></div>
+
+                                    <h4 class="excel-colors-subhdr">Colaboradores</h4>
+                                    <div id="excelColorsRowsWrap">
+                                        <div class="excel-colors-rows" id="excelColorsRows"></div>
+                                        <p class="excel-colors-empty hidden" id="excelColorsEmpty">No hay colaboradores activos en el horario.</p>
+                                    </div>
+
+                                    <div class="excel-colors-footer">
+                                        <button type="button" class="btn-action primary" id="excelColorsSaveBtn" onclick="saveExcelColorsPanel()">
+                                            <i class="fa-solid fa-floppy-disk"></i> Guardar colores
+                                        </button>
                                     </div>
                                 </div>
 
@@ -2766,6 +2881,41 @@
                 <button type="button" class="btn-action primary" onclick="confirmSwapEmployees()">
                     <i class="fa-solid fa-right-left"></i> Confirmar intercambio
                 </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast container -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <!-- Solver overlay — feedback mientras genera -->
+    <div id="solverOverlay" class="modal-overlay hidden">
+        <div class="solver-card">
+            <div class="solver-loader" aria-hidden="true">
+                <span class="solver-loader-inner"></span>
+                <span class="solver-loader-core"><i class="fa-solid fa-calendar-check"></i></span>
+            </div>
+            <div class="solver-title">Generando Horario</div>
+            <div class="solver-message" id="solverMessage">Preparando parámetros...</div>
+            <div class="solver-progress-bar"><div class="solver-progress-fill" id="solverProgressFill"></div></div>
+            <div class="solver-steps">
+                <span class="solver-step active" data-step="1">Validar</span>
+                <span class="solver-step" data-step="2">Optimizar</span>
+                <span class="solver-step" data-step="3">Generar</span>
+            </div>
+            <button id="solverCancelBtn" class="btn-text solver-cancel" onclick="cancelSolver()">Cancelar</button>
+        </div>
+    </div>
+
+    <!-- Solver result — resumen post-generación -->
+    <div id="solverResultOverlay" class="modal-overlay hidden">
+        <div class="solver-card result">
+            <div class="solver-result-icon" id="solverResultIcon"><i class="fa-solid fa-check-circle" style="color: var(--success); font-size: 2.5rem;"></i></div>
+            <div class="solver-title" id="solverResultTitle">Horario Generado</div>
+            <div class="solver-result-stats" id="solverResultStats"></div>
+            <div class="solver-result-detail" id="solverResultDetail"></div>
+            <div class="solver-result-actions">
+                <button class="btn-action primary" onclick="closeSolverResult()"><i class="fa-solid fa-check"></i> Ver Horario</button>
             </div>
         </div>
     </div>

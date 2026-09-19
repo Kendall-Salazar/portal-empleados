@@ -292,6 +292,17 @@
                 const r = genPanelRows[String(genPanelActiveId)];
                 if (!r || !day) return;
                 r.shift_preferences[day] = v;
+                // Aviso inmediato: con el tope en 12h no existe ningún turno doble
+                // posible (ver resolve_max_double_shift_hours en scheduler_engine.py).
+                if (v === "DOBLE") {
+                    const maxDouble = parseInt((typeof config !== "undefined" ? config : {})?.max_double_shift_hours, 10) || 12;
+                    if (maxDouble <= 12 && typeof window.showToast === "function") {
+                        window.showToast(
+                            "Con el tope de doble en 12h no hay ninguna combinación posible: este horario va a ser infactible. Subí el tope a 13h o más en Parámetros.",
+                            "warning"
+                        );
+                    }
+                }
                 window._genPanelReplaceRowTr(String(r.employee_id));
             });
         });

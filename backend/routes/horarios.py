@@ -63,6 +63,9 @@ def solve_schedule(request: SolverRequest):
         use_history=config_data.get("use_history", True),
         max_entries=8,
     )
+    # Pasar metadata del historial al scheduler para decisiones condicionales
+    config_data["_has_exact_previous_week"] = history_context.get("has_exact_previous_week")
+    config_data["_history_entries_used"] = history_context.get("entries_used", 0)
     
     # Instantiate Scheduler
     scheduler = ShiftScheduler(employees_data, config_data, history_data=history_for_solver)
@@ -594,12 +597,25 @@ def reassign_history_tasks(index: int):
         })
     employee_names = {emp["name"] for emp in employees_data}
     for missing_name in sorted(name for name in schedule.keys() if name not in employee_names):
+        # Pull the employee's REAL attributes from horario_empleados by name,
+        # even if inactive/excluded from the active set — never hardcode
+        # gender/night, or a woman without a night permit would be treated as
+        # a night-capable man.
+        er = conn.execute(
+            "SELECT genero, puede_nocturno, es_jefe_pista, turnos_fijos FROM horario_empleados WHERE nombre = ?",
+            (missing_name,),
+        ).fetchone()
+        er = dict(er) if er else {}
+        try:
+            m_fixed = json.loads(er["turnos_fijos"]) if er.get("turnos_fijos") else {}
+        except Exception:
+            m_fixed = {}
         employees_data.append({
             "name": missing_name,
-            "gender": "M",
-            "can_do_night": 1,
-            "is_jefe_pista": 0,
-            "fixed_shifts": {}
+            "gender": er.get("genero") or "M",
+            "can_do_night": bool(er.get("puede_nocturno", 1)),
+            "is_jefe_pista": bool(er.get("es_jefe_pista", 0)),
+            "fixed_shifts": m_fixed,
         })
 
     config_row = conn.execute("SELECT * FROM horario_config WHERE id=1").fetchone()

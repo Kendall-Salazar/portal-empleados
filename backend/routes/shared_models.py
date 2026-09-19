@@ -52,6 +52,9 @@ class Config(BaseModel):
     jefe_config: Optional[Dict[str, Any]] = None
     refuerzos: Optional[List[Dict[str, Any]]] = None  # [{nombre, activo, tipo, schedule}]
     refuerzo_nombre: str = "Refuerzo"  # Nombre configurable del refuerzo legacy
+    max_simultaneous: Optional[int] = None  # Máximo de personas en pista al mismo tiempo (por hora). None = valor por defecto del motor.
+    max_double_shift_hours: int = 12  # Tope de horas para un turno doble (DBL_*, pill "DOBLE"). Default 12h.
+    solver_max_time: int = 180  # Tiempo máximo (segundos) que el solver CP-SAT busca soluciones. Rango UI: 60-900.
 
 
 class SolverRequest(BaseModel):

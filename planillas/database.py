@@ -365,20 +365,27 @@ def init_db():
     # Migration: soft delete for history entries (papelera de reciclaje)
     _ensure_column("horarios_generados", "deleted", "INTEGER DEFAULT 0")
     _ensure_column("horarios_generados", "deleted_at", "TEXT")
-    _ensure_column("vacaciones", "solo_pago", "INTEGER DEFAULT 0")
-
-    # Migration: detalle de vacaciones (tipo + año del período)
-    # tipo: 'periodo' (default) | 'ajuste_historico' (días gozados antes de
-    # iniciar el sistema) | 'descuento_permiso' (creado al descontar permisos)
-    _ensure_column("vacaciones", "tipo", "TEXT DEFAULT 'periodo'")
-    _ensure_column("vacaciones", "anio_periodo", "INTEGER")
-    # Migration: registro detallado de permisos (rango de fechas + horas)
-    _ensure_column("permisos", "fecha_fin", "TEXT")
-    _ensure_column("permisos", "horas", "REAL DEFAULT 0")
 
     # Migration: configurable refuerzo list + nombre
     _ensure_column("horario_config", "refuerzos_json", "TEXT DEFAULT NULL")
     _ensure_column("horario_config", "refuerzo_nombre", "TEXT DEFAULT 'Refuerzo'")
+
+    # Migration: máximo de personas en pista al mismo tiempo (tope de cobertura configurable)
+    _ensure_column("horario_config", "max_simultaneous", "INTEGER DEFAULT NULL")
+
+    # Migration: tope de horas para un turno doble (DBL_*, pill "DOBLE")
+    _ensure_column("horario_config", "max_double_shift_hours", "INTEGER DEFAULT 12")
+
+    # Migration: tiempo máximo (segundos) del solver CP-SAT por generación
+    _ensure_column("horario_config", "solver_max_time", "INTEGER DEFAULT 180")
+
+    # Migration: colores personalizados por empleado para el export Excel de
+    # un solo horario (GET /api/export_excel). Aislado del resto de la config:
+    # se lee/escribe directo por columna, nunca vía el round-trip de
+    # POST /api/config, para que un guardado de config nunca lo borre.
+    _ensure_column("horario_config", "excel_colors_json", "TEXT DEFAULT NULL")
+    # Mismo aislamiento para los colores de LIBRE / VACACIONES / PERMISO.
+    _ensure_column("horario_config", "excel_status_colors_json", "TEXT DEFAULT NULL")
 
     # Create vacaciones table + documentos RRHH registry
     conn = get_conn()
@@ -444,6 +451,23 @@ def init_db():
     """)
     conn.commit()
     conn.close()
+
+    # Migraciones de vacaciones/permisos: van DESPUÉS del executescript de arriba,
+    # que es donde se crean esas tablas. Antes de él, ALTER TABLE falla en una BD nueva.
+    _ensure_column("vacaciones", "solo_pago", "INTEGER DEFAULT 0")
+
+    # Migration: detalle de vacaciones (tipo + año del período)
+    # tipo: 'periodo' (default) | 'ajuste_historico' (días gozados antes de
+    # iniciar el sistema) | 'descuento_permiso' (creado al descontar permisos)
+    _ensure_column("vacaciones", "tipo", "TEXT DEFAULT 'periodo'")
+    _ensure_column("vacaciones", "anio_periodo", "INTEGER")
+    # Migration: registro detallado de permisos (rango de fechas + horas)
+    _ensure_column("permisos", "fecha_fin", "TEXT")
+    _ensure_column("permisos", "horas", "REAL DEFAULT 0")
+
+    # Procedencia de las pills VAC/PERM: lista JSON de días que puso el sync.
+    # Sin esto el sync no puede distinguir una pill suya de una puesta a mano.
+    _ensure_column("horario_empleados", "turnos_fijos_sync", "TEXT DEFAULT '[]'")
 
 
 # ── EMPLEADOS (UNIFICADO: planilla + horario) ────────────────────────────────
@@ -589,6 +613,182 @@ def reactivar_empleado(emp_id):
 _UNSET = object()
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# PROPAGACIÓN DE RENOMBRADOS
+# ═════════════════════════════════════════════════════════════════════════════
+# El motor de horarios guarda schedules, tareas y metadata como JSON indexado por
+# NOMBRE del empleado (no por id). Si se renombra a alguien en la nómina y el
+# historial se queda con el nombre viejo, la cola de rotación de domingos —que se
+# reconstruye escaneando ese historial— lo lee como "sin registrar" y la rotación
+# se desordena. Todo rename debe arrastrar los datos históricos.
+
+_HISTORY_JSON_COLUMNS = ("horario", "tareas", "metadata")
+_CONFIG_NAME_COLUMNS = ("fixed_night_person",)
+_CONFIG_JSON_COLUMNS = ("sunday_rotation_queue", "cleaning_tasks", "jefe_config",
+                        "refuerzos_json", "refuerzos", "excel_colors_json")
+_NAME_COLUMN_TABLES = (("documentos_rrhh", "empleado_nombre"),
+                       ("salarios_mensuales", "empleado_nombre"))
+# Filas sintéticas del horario: no son empleados de la nómina y nunca se renombran.
+_PSEUDO_ROW_PREFIXES = ("Refuerzo", "Practicante", "Apoyo")
+
+
+def _remap_names(value, mapping):
+    """Reescribe recursivamente claves de dict y strings que sean un nombre mapeado."""
+    if isinstance(value, dict):
+        return {
+            (mapping.get(k, k) if isinstance(k, str) else k): _remap_names(v, mapping)
+            for k, v in value.items()
+        }
+    if isinstance(value, list):
+        return [_remap_names(v, mapping) for v in value]
+    if isinstance(value, str):
+        return mapping.get(value, value)
+    return value
+
+
+def _remap_json_column(raw, mapping):
+    """Devuelve (nuevo_raw, cambio) para una columna TEXT con JSON dentro."""
+    if not raw:
+        return raw, False
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return raw, False
+    remapped = _remap_names(data, mapping)
+    if remapped == data:
+        return raw, False
+    return json.dumps(remapped, ensure_ascii=False), True
+
+
+def _clean_rename_mapping(mapping):
+    return {
+        str(old).strip(): str(new).strip()
+        for old, new in (mapping or {}).items()
+        if old and new and str(old).strip() and str(new).strip()
+        and str(old).strip() != str(new).strip()
+    }
+
+
+def renombrar_en_datos_historicos(mapping, conn=None, dry_run=False):
+    """Aplica un mapa {nombre_viejo: nombre_nuevo} a todos los datos indexados por nombre.
+
+    Cubre el historial de horarios (schedule, tareas, metadata), la config del
+    generador y las tablas de RRHH que guardan el nombre desnormalizado.
+    Devuelve un resumen {tabla: filas_afectadas}. Con dry_run=True solo cuenta.
+    """
+    mapping = _clean_rename_mapping(mapping)
+    resumen = {"horarios_generados": 0, "horario_config": 0,
+               "documentos_rrhh": 0, "salarios_mensuales": 0}
+    if not mapping:
+        return resumen
+
+    own_conn = conn is None
+    conn = conn or get_conn()
+    try:
+        # ── Historial de horarios (incluye entradas en papelera) ──
+        rows = conn.execute(
+            f"SELECT id, {', '.join(_HISTORY_JSON_COLUMNS)} FROM horarios_generados"
+        ).fetchall()
+        for row in rows:
+            updates = {}
+            for col in _HISTORY_JSON_COLUMNS:
+                new_raw, changed = _remap_json_column(row[col], mapping)
+                if changed:
+                    updates[col] = new_raw
+            if not updates:
+                continue
+            resumen["horarios_generados"] += 1
+            if not dry_run:
+                sets = ", ".join(f"{col}=?" for col in updates)
+                conn.execute(
+                    f"UPDATE horarios_generados SET {sets} WHERE id=?",
+                    (*updates.values(), row["id"]),
+                )
+
+        # ── Config del generador ──
+        cfg = conn.execute("SELECT * FROM horario_config WHERE id=1").fetchone()
+        if cfg:
+            cfg_keys = cfg.keys()
+            updates = {}
+            for col in _CONFIG_NAME_COLUMNS:
+                if col in cfg_keys and cfg[col] in mapping:
+                    updates[col] = mapping[cfg[col]]
+            for col in _CONFIG_JSON_COLUMNS:
+                if col not in cfg_keys:
+                    continue
+                new_raw, changed = _remap_json_column(cfg[col], mapping)
+                if changed:
+                    updates[col] = new_raw
+            if updates:
+                resumen["horario_config"] += 1
+                if not dry_run:
+                    sets = ", ".join(f"{col}=?" for col in updates)
+                    conn.execute(
+                        f"UPDATE horario_config SET {sets} WHERE id=1",
+                        tuple(updates.values()),
+                    )
+
+        # ── Nombre desnormalizado en tablas de RRHH ──
+        for table, column in _NAME_COLUMN_TABLES:
+            for old, new in mapping.items():
+                cur = conn.execute(
+                    f"SELECT COUNT(*) FROM {table} WHERE {column}=?", (old,)
+                )
+                affected = cur.fetchone()[0]
+                if not affected:
+                    continue
+                resumen[table] += affected
+                if not dry_run:
+                    conn.execute(
+                        f"UPDATE {table} SET {column}=? WHERE {column}=?", (new, old)
+                    )
+
+        if own_conn and not dry_run:
+            conn.commit()
+    finally:
+        if own_conn:
+            conn.close()
+    return resumen
+
+
+def detectar_nombres_huerfanos(conn=None):
+    """Nombres que quedaron sueltos en el historial tras un renombrado.
+
+    Un huérfano es un nombre presente en el historial que ya no existe en la
+    nómina. Se propone como reemplazo el empleado actual cuyo nombre completo
+    empieza por ese nombre (p. ej. "Jeison" -> "Jeison Aleman Tijerino"), y solo
+    cuando el candidato es único. Las filas sintéticas (Refuerzo, Practicante)
+    se ignoran. Devuelve {nombre_viejo: nombre_nuevo}.
+    """
+    own_conn = conn is None
+    conn = conn or get_conn()
+    try:
+        actuales = [r["nombre"] for r in conn.execute("SELECT nombre FROM empleados")]
+        actuales_set = set(actuales)
+
+        historicos = set()
+        for row in conn.execute("SELECT horario, tareas FROM horarios_generados"):
+            for col in ("horario", "tareas"):
+                try:
+                    data = json.loads(row[col] or "{}")
+                except (TypeError, ValueError):
+                    continue
+                if isinstance(data, dict):
+                    historicos.update(k for k in data if isinstance(k, str))
+
+        propuestas = {}
+        for viejo in sorted(historicos - actuales_set):
+            if any(viejo.startswith(p) for p in _PSEUDO_ROW_PREFIXES):
+                continue
+            candidatos = [n for n in actuales if n.startswith(viejo + " ")]
+            if len(candidatos) == 1:
+                propuestas[viejo] = candidatos[0]
+        return propuestas
+    finally:
+        if own_conn:
+            conn.close()
+
+
 def update_empleado(emp_id, nombre=None, tipo_pago=None, salario_fijo=None,
                     periodo_salario_fijo=_UNSET,
                     cedula=None, correo=None, telefono=None, fecha_inicio=None,
@@ -646,8 +846,13 @@ def update_empleado(emp_id, nombre=None, tipo_pago=None, salario_fijo=None,
 
     # --- Update horario_empleados table ---
     if old_name:
-        if nombre:
+        if nombre and nombre.strip() != old_name:
             conn.execute("UPDATE horario_empleados SET nombre=? WHERE nombre=?", (nombre.strip(), old_name))
+            # El historial y la config están indexados por nombre: si no se
+            # arrastran, la cola de domingos pierde el rastro del empleado.
+            renombrar_en_datos_historicos({old_name: nombre.strip()}, conn=conn)
+            old_name = nombre.strip()
+        elif nombre:
             old_name = nombre.strip()
         if genero is not None:
             conn.execute("UPDATE horario_empleados SET genero=? WHERE nombre=?", (genero, old_name))
@@ -1532,32 +1737,38 @@ def descontar_permisos_de_vacaciones(empleado_id, cantidad, anio):
 
 def sync_vac_perm_to_fixed_shifts(empleado_nombre, fecha_inicio_semana, fecha_fin_semana):
     """Sincroniza vacaciones y permisos activos con los turnos fijos del horario.
-    
+
     Dado un rango de fechas (viernes a jueves), verifica si el empleado tiene
     vacaciones o permisos en esos días y actualiza sus turnos_fijos.
-    
+
+    PROCEDENCIA: solo se quitan las pills VAC/PERM que puso este sync (registradas
+    en turnos_fijos_sync). Una pill puesta a mano en la grilla del horario no tiene
+    fila en vacaciones/permisos detrás y debe sobrevivir: el frontend corre este
+    sync antes de cada /api/solve, así que borrarla la haría desaparecer al generar.
+
     Args:
         empleado_nombre: nombre del empleado
         fecha_inicio_semana: fecha del viernes (inicio de semana laboral)
         fecha_fin_semana: fecha del jueves (fin de semana laboral)
-    
+
     Returns: dict con los turnos_fijos actualizados
     """
     import json
     from datetime import timedelta
-    
+
     conn = get_conn()
-    
+
     # Obtener empleado_id
     emp = conn.execute("SELECT id FROM empleados WHERE nombre=?", (empleado_nombre,)).fetchone()
     if not emp:
         conn.close()
         return {}
     emp_id = emp["id"]
-    
+
     # Obtener turnos_fijos actuales
     h_row = conn.execute(
-        "SELECT turnos_fijos FROM horario_empleados WHERE nombre=?", (empleado_nombre,)
+        "SELECT turnos_fijos, turnos_fijos_sync FROM horario_empleados WHERE nombre=?",
+        (empleado_nombre,),
     ).fetchone()
     current_shifts = {}
     if h_row and h_row["turnos_fijos"]:
@@ -1566,7 +1777,16 @@ def sync_vac_perm_to_fixed_shifts(empleado_nombre, fecha_inicio_semana, fecha_fi
         except json.JSONDecodeError:
             print(f"sync_vac_perm_to_fixed_shifts: turnos_fijos JSON inválido para {empleado_nombre}")
             current_shifts = {}
-    
+
+    # Días cuya pill VAC/PERM creó este sync (y que por lo tanto puede retirar).
+    synced_days = set()
+    if h_row and h_row["turnos_fijos_sync"]:
+        try:
+            synced_days = set(json.loads(h_row["turnos_fijos_sync"]) or [])
+        except json.JSONDecodeError:
+            print(f"sync_vac_perm_to_fixed_shifts: turnos_fijos_sync JSON inválido para {empleado_nombre}")
+            synced_days = set()
+
     # Mapear fecha → día de la semana (Vie, Sáb, Dom, Lun, Mar, Mié, Jue)
     try:
         start = datetime.strptime(fecha_inicio_semana, "%Y-%m-%d").date()
@@ -1597,6 +1817,7 @@ def sync_vac_perm_to_fixed_shifts(empleado_nombre, fecha_inicio_semana, fecha_fi
             
             if vac:
                 current_shifts[dia_nombre] = "VAC"
+                synced_days.add(dia_nombre)
             else:
                 # Verificar si hay permiso este día
                 perm = conn.execute(
@@ -1605,21 +1826,29 @@ def sync_vac_perm_to_fixed_shifts(empleado_nombre, fecha_inicio_semana, fecha_fi
                 ).fetchone()
                 if perm:
                     current_shifts[dia_nombre] = "PERM"
-                else:
-                    # Si había VAC o PERM antes y ya no aplica, quitar
+                    synced_days.add(dia_nombre)
+                elif dia_nombre in synced_days:
+                    # La pill la puso este sync y la vacación/permiso ya no existe:
+                    # retirarla. Una pill puesta a mano no está en synced_days y
+                    # se deja intacta.
                     if current_shifts.get(dia_nombre) in ["VAC", "PERM"]:
                         del current_shifts[dia_nombre]
-        
+                    synced_days.discard(dia_nombre)
+
         current_date += timedelta(days=1)
-    
+
     # Guardar los turnos actualizados
     conn.execute(
-        "UPDATE horario_empleados SET turnos_fijos=? WHERE nombre=?",
-        (json.dumps(current_shifts, ensure_ascii=False), empleado_nombre)
+        "UPDATE horario_empleados SET turnos_fijos=?, turnos_fijos_sync=? WHERE nombre=?",
+        (
+            json.dumps(current_shifts, ensure_ascii=False),
+            json.dumps(sorted(synced_days), ensure_ascii=False),
+            empleado_nombre,
+        ),
     )
     conn.commit()
     conn.close()
-    
+
     return current_shifts
 
 

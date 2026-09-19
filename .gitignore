@@ -176,3 +176,13 @@ acciones de empleado/
 
 # SDD skill registry (auto-generated, per-workspace)
 .atl/
+
+# Bases SQLite de tiempo de ejecucion y sus respaldos: son datos, no codigo.
+# (planillas/cronos.db ya estaba arriba; esto cubre horarios.db, planilla.db
+# y los .bak_AAAAMMDD_HHMMSS que se generan antes de migrar)
+*.db
+*.db.bak*
+*.bak
+
+# Scripts de depuracion y salidas de inspeccion sueltas
+tmp/

@@ -3,7 +3,7 @@
    ======================================================================== */
 @import url("design-tokens.css");
 @import url("css/layout.css");
-@import url("css/components.css");
+@import url("css/components.css?v=2");
 @import url("css/schedule-table.css");
 @import url("css/history.css");
 @import url("css/param-panel.css");

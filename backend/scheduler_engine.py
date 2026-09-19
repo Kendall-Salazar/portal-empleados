@@ -16,8 +16,27 @@ class SolutionCounter(cp_model.CpSolverSolutionCallback):
         self.solution_count = 0
     def on_solution_callback(self):
         self.solution_count += 1
+
+
+def _refresh_solution_hints(model, solver, x):
+    """Replace the model's hints with the solver's current solution so the
+    next lexicographic pass starts from it. Skips silently when the installed
+    OR-Tools version offers no way to clear hints (adding duplicate hints
+    would invalidate the model)."""
+    try:
+        model.ClearHints()
+    except AttributeError:
+        try:
+            model.Proto().solution_hint.Clear()
+        except Exception:
+            return
+    for var in x.values():
+        model.AddHint(var, solver.Value(var))
+
+
 from datetime import datetime
 import os
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +61,9 @@ HEAVY_EXTENDED_SHIFTS = frozenset({
 })
 WOMEN_ROTATION_TOKENS = ("AM", "PM")
 MANUAL_SHIFT_PREFIX = "MANUAL_"
+# Per-day refuerzo sentinel: the day is ACTIVE but the solver decides whether the
+# refuerzo works and which shift (from its allowed pool) — vs a fixed MANUAL_ shift.
+REFUERZO_AUTO_DAY = "AUTO"
 SPECIAL_DAY_MODE_NORMAL = "normal"
 # Domingo real (solo Dom): cobertura y turnos de domingo. No es una "excepción".
 SPECIAL_DAY_MODE_SUNDAY = "sunday"
@@ -73,6 +95,28 @@ OVERSTAFF_POLICY_DAYS = tuple(DAYS)
 OVERSTAFF_CAP_LIMIT_DAYS = tuple(d for d in DAYS if d != "Dom")
 OVERSTAFF_CAP_VALUE = 5
 OVERSTAFF_ALLOWED_HOURS_AT_CAP_PER_DAY = 1
+
+# Rango permitido para el tope configurable de personas en pista al mismo tiempo.
+OVERSTAFF_CAP_MIN = 3
+OVERSTAFF_CAP_MAX = 12
+
+
+def resolve_overstaff_cap(config):
+    """Máximo de personas en pista al mismo tiempo (por hora).
+
+    Lee 'max_simultaneous' de la config del usuario. Si no está definido o es
+    inválido, cae al valor por defecto del sistema (OVERSTAFF_CAP_VALUE).
+    Se acota al rango [OVERSTAFF_CAP_MIN, OVERSTAFF_CAP_MAX] para evitar valores
+    absurdos que degeneren el modelo.
+    """
+    raw = (config or {}).get("max_simultaneous")
+    if raw in (None, "", 0):
+        return OVERSTAFF_CAP_VALUE
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return OVERSTAFF_CAP_VALUE
+    return max(OVERSTAFF_CAP_MIN, min(OVERSTAFF_CAP_MAX, value))
 
 
 def _am_pm_token(shift_name: str):
@@ -189,7 +233,7 @@ def get_allowed_shifts_for_day(day: str, standard_mode: bool = False, special_da
     return [shift for shift in SHIFTS.keys() if shift != "D4_13-22"]
 
 
-def get_overstaff_policy_for_days(special_day_modes=None):
+def get_overstaff_policy_for_days(special_day_modes=None, cap_value=None):
     normalized = normalize_special_day_modes(special_day_modes)
     policy_days = [d for d in DAYS if not is_closed_day(d, normalized)]
     limited_days = [
@@ -198,7 +242,7 @@ def get_overstaff_policy_for_days(special_day_modes=None):
         and get_effective_day_mode(d, normalized) != SPECIAL_DAY_MODE_HOLY_THURSDAY
     ]
     return {
-        "cap_value": OVERSTAFF_CAP_VALUE,
+        "cap_value": cap_value if cap_value else OVERSTAFF_CAP_VALUE,
         "allowed_hours_at_cap_per_day": OVERSTAFF_ALLOWED_HOURS_AT_CAP_PER_DAY,
         "days": policy_days,
         "limited_days": limited_days,
@@ -261,6 +305,55 @@ MANUAL_ONLY_SHIFTS = {"T13_13-22", "VAC", "PERM"}
 SIMILAR_ENTRY_SHIFTS = {
     "T13_13-22": ["T8_13-20", "D4_13-22", "T10_15-22"],
 }
+
+# ── TURNOS DOBLES (DBL_*) ────────────────────────────────────────────────────
+# Prefijo para los códigos de turno doble generados dinámicamente por
+# sync_double_shifts(). Igual que MANUAL_/CUST_, es estado de módulo que se
+# limpia y regenera en cada solve() (ver sync_double_shifts).
+DOUBLE_SHIFT_PREFIX = "DBL_"
+DEFAULT_MAX_DOUBLE_SHIFT_HOURS = 12
+# Franja de noche real (22:00-05:00 del día siguiente, horas 22..28 en el
+# reloj extendido de este módulo). El componente s1 de un doble NO puede
+# tocar esta franja: se permite ENTRAR a la noche (s2 puede ser N_22-05)
+# pero no salir de la noche y seguir de día.
+NIGHT_HOURS_RANGE = frozenset(range(22, 29))
+
+
+def resolve_max_double_shift_hours(config):
+    """Tope de horas para un turno doble (DBL_*). Default 12h.
+
+    Lee 'max_double_shift_hours' de la config del usuario. Si no está
+    definido o es inválido, cae al default (DEFAULT_MAX_DOUBLE_SHIFT_HOURS).
+    """
+    raw = (config or {}).get("max_double_shift_hours")
+    if raw in (None, "", 0):
+        return DEFAULT_MAX_DOUBLE_SHIFT_HOURS
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_MAX_DOUBLE_SHIFT_HOURS
+    if value <= 0:
+        return DEFAULT_MAX_DOUBLE_SHIFT_HOURS
+    return value
+
+
+def _is_double_shift_component_eligible(code):
+    """Componentes válidos para armar un turno doble.
+
+    Excluye OFF/VAC/PERM, los turnos multi-bloque existentes (tienen '+' en
+    el nombre, ej. Q1_05-11+17-20), los códigos MANUAL_/CUST_ (dinámicos,
+    ya son manual-only o de prioridad configurable) y los HEAVY_EXTENDED_SHIFTS
+    (bloqueo duro total, no combinables).
+    """
+    if code in ("OFF", "VAC", "PERM"):
+        return False
+    if "+" in code:
+        return False
+    if code.startswith(MANUAL_SHIFT_PREFIX) or code.startswith("CUST_"):
+        return False
+    if code in HEAVY_EXTENDED_SHIFTS:
+        return False
+    return True
 
 def _parse_manual_time_token(token):
     raw = str(token or "").strip().lower().replace(".", "")
@@ -382,6 +475,10 @@ SAME_SHIFT_STACK_PENALTY_3 = 6000
 SAME_SHIFT_STACK_PENALTY_4 = 25000
 SAME_SHIFT_STACK_PENALTY_5 = 90000
 INFEASIBLE_DIAGNOSTIC_MAX_TIME_SECONDS = 6
+# La prueba de cobertura (subir el tope de personas en pista) necesita más tiempo:
+# encontrar una solución factible en un modelo grande tarda más que descartar
+# preferencias estrictas. Corre una sola vez, así que puede permitirse más segundos.
+INFEASIBLE_DIAGNOSTIC_COVERAGE_MAX_TIME_SECONDS = 20
 
 # Near-hard consistency penalty: raised from 50k to 500k so turno_principal
 # dominates all soft constraints except coverage infeasibility.
@@ -500,6 +597,10 @@ def sync_refuerzo_custom_shift(config):
             for day, times in schedule.items():
                 if not isinstance(times, dict):
                     continue
+                if times.get("auto"):
+                    # Día AUTO: activo, pero el solver elige turno (o lo deja OFF).
+                    day_shift_map[day] = REFUERZO_AUTO_DAY
+                    continue
                 start_hour = _parse_refuerzo_hour(times.get("start"), 7)
                 end_hour = _parse_refuerzo_hour(times.get("end"), 12)
                 if end_hour == start_hour:
@@ -602,6 +703,73 @@ def sync_custom_shifts(config):
         CUSTOM_SHIFTS_PRIORITIES[code] = priority
 
 
+def sync_double_shifts(config):
+    """Genera turnos dobles (DBL_*) combinando pares de turnos base contiguos.
+
+    Un doble = unión de dos turnos base s1+s2 donde:
+      - max(SHIFTS[s1]) + 1 == min(SHIFTS[s2])  (contiguos, sin overlap/gap).
+      - s1 NO toca la franja de noche (22..28) — se permite ENTRAR a la noche
+        (s2 puede ser N_22-05) pero no salir de la noche y seguir de día.
+        (Esto sale solo de la contigüidad, pero se deja explícito.)
+      - La unión de horas no supera resolve_max_double_shift_hours(config)
+        (default 12h).
+
+    Los códigos generados son SIEMPRE manual-only: nunca se auto-asignan,
+    solo vía la pill "DOBLE" en fixed_shifts (ver _solve_with_min_rest).
+
+    Se nombran por reloj de pared, ej. DBL_05-20 (05:00-20:00),
+    DBL_15-05 (15:00-05:00 del día siguiente).
+
+    Estado de módulo reusado entre requests: limpia los DBL_ previos al
+    inicio, igual que sync_custom_shifts hace con los CUST_.
+    """
+    global SHIFT_NAMES
+
+    # NOTA: los códigos DBL_* NO se agregan a MANUAL_ONLY_SHIFTS: ese set usa
+    # comparación exacta contra el valor de fixed_shifts (ver bloque
+    # "TURNOS MANUAL-ONLY"), y el valor que ve el solver ahí es la pill
+    # "DOBLE" (no el código concreto DBL_xx). El bloqueo "nunca auto-asignable"
+    # de los dobles se aplica aparte, en el bloque "TURNOS DOBLES (DBL_*)".
+    previous_codes = [code for code in list(SHIFTS.keys()) if code.startswith(DOUBLE_SHIFT_PREFIX)]
+    for code in previous_codes:
+        SHIFTS.pop(code, None)
+    SHIFT_NAMES = [s for s in SHIFT_NAMES if not s.startswith(DOUBLE_SHIFT_PREFIX)]
+
+    max_hours = resolve_max_double_shift_hours(config)
+
+    components = [code for code in list(SHIFTS.keys()) if _is_double_shift_component_eligible(code)]
+
+    generated = {}
+    for s1 in components:
+        h1 = SHIFTS[s1]
+        if not h1 or (h1 & NIGHT_HOURS_RANGE):
+            continue  # s1 vacío o toca la franja nocturna
+        for s2 in components:
+            if s2 == s1:
+                continue
+            h2 = SHIFTS[s2]
+            if not h2:
+                continue
+            if max(h1) + 1 != min(h2):
+                continue  # no contiguos
+            union_hours = h1 | h2
+            if len(union_hours) > max_hours:
+                continue
+            start_wall = min(union_hours) % 24
+            end_wall = (max(union_hours) + 1) % 24
+            code = f"{DOUBLE_SHIFT_PREFIX}{start_wall:02d}-{end_wall:02d}"
+            if code in generated and generated[code] != union_hours:
+                continue  # colisión de nombre con horas distintas: se ignora
+            generated[code] = union_hours
+
+    for code, hours in generated.items():
+        SHIFTS[code] = set(hours)
+        if code not in SHIFT_NAMES:
+            SHIFT_NAMES.append(code)
+
+    return list(generated.keys())
+
+
 def ensure_manual_shift_code(start_hour, end_hour):
     global SHIFT_NAMES
 
@@ -692,10 +860,11 @@ def coverage_bounds(h: int, day: str = None, standard_mode: bool = False, num_em
     return (3, N)
 
 
-def effective_coverage_bounds(h: int, day: str = None, standard_mode: bool = False, num_emps: int = 9, special_day_mode: str = None):
+def effective_coverage_bounds(h: int, day: str = None, standard_mode: bool = False, num_emps: int = 9, special_day_mode: str = None, cap_value: int = None):
     mn, mx = coverage_bounds(h, day, standard_mode, num_emps, special_day_mode=special_day_mode)
-    if day in OVERSTAFF_POLICY_DAYS and mx > OVERSTAFF_CAP_VALUE:
-        mx = OVERSTAFF_CAP_VALUE
+    effective_cap = cap_value if cap_value else OVERSTAFF_CAP_VALUE
+    if day in OVERSTAFF_POLICY_DAYS and mx > effective_cap:
+        mx = effective_cap
     return mn, mx
 
 
@@ -1039,17 +1208,25 @@ class ShiftScheduler:
             _ref_sched = _ref.get('schedule', {}) or {}
 
             if _tipo == 'personalizado':
-                # Hard-constraint mode: solver MUST use exactly the configured schedule
+                # Hard-constraint mode: solver MUST use exactly the configured schedule,
+                # EXCEPT days marked AUTO — those are active but the solver picks the
+                # shift (or leaves OFF).  Mixed fixed/auto per day.
                 _ref_fixed = {}
+                _ref_auto = []
                 for _day, _times in _ref_sched.items():
-                    if isinstance(_times, dict) and _times.get('start') and _times.get('end'):
+                    if not isinstance(_times, dict):
+                        continue
+                    if _times.get('auto'):
+                        _ref_auto.append(_day)
+                        continue
+                    if _times.get('start') and _times.get('end'):
                         _sh = _parse_refuerzo_hour(_times.get('start'), 7)
                         _eh = _parse_refuerzo_hour(_times.get('end'), 12)
                         if _eh == _sh:
                             _eh = (_sh + 5) % 24
                         _ref_fixed[_day] = f"{MANUAL_SHIFT_PREFIX}{_sh:02d}-{_eh:02d}"
                 for _d in _all_days:
-                    if _d not in _ref_fixed:
+                    if _d not in _ref_fixed and _d not in _ref_auto:
                         _ref_fixed[_d] = "OFF"
                 self.emp_data[_nombre] = {
                     "name": _nombre,
@@ -1059,6 +1236,7 @@ class ShiftScheduler:
                     "strict_preferences": True,
                     "is_refuerzo": True,
                     "refuerzo_tipo": _tipo,
+                    "refuerzo_auto_days": _ref_auto,
                 }
             else:
                 # Non-personalizado modes: solver picks the shift within allowed set.
@@ -1109,20 +1287,23 @@ class ShiftScheduler:
                 labels.append(day)
         return ", ".join(labels)
 
-    def _run_diagnostic_trial(self, employees_config, config_overrides=None):
+    def _run_diagnostic_trial_status(self, employees_config, config_overrides=None, max_time=None):
+        """Corre un solve de prueba con overrides y devuelve el status resultante."""
         trial_config = copy.deepcopy(self.config)
         trial_config.update(config_overrides or {})
         trial_config["special_days"] = dict(self.special_day_modes)
         trial_config["_skip_infeasible_diagnosis"] = True
         trial_config["log_search_progress"] = False
-        trial_config["max_time"] = INFEASIBLE_DIAGNOSTIC_MAX_TIME_SECONDS
+        trial_config["max_time"] = max_time or INFEASIBLE_DIAGNOSTIC_MAX_TIME_SECONDS
         trial_scheduler = ShiftScheduler(
             employees_config,
             trial_config,
             history_data=copy.deepcopy(self.history),
         )
-        trial_result = trial_scheduler.solve()
-        return trial_result.get("status") == "Success"
+        return trial_scheduler.solve().get("status")
+
+    def _run_diagnostic_trial(self, employees_config, config_overrides=None):
+        return self._run_diagnostic_trial_status(employees_config, config_overrides) == "Success"
 
     def _build_strict_conflict_message(self, employee_name, working_days):
         day_text = self._format_diagnostic_days(working_days)
@@ -1143,6 +1324,44 @@ class ShiftScheduler:
             return None
 
         base_employees = self._clone_employee_configs()
+
+        # 0. COBERTURA / TOPE DE PERSONAS EN PISTA
+        # Antes de culpar a las preferencias estrictas, probar si el problema es
+        # que la cobertura necesita más personas en pista de las permitidas.
+        # El modelo base ya está PROBADO infeasible; si al subir el tope al máximo
+        # deja de ser infeasible (Success o incluso Unknown, o sea que desaparece la
+        # prueba de infeasibilidad), el tope es la restricción que ata. Se le da tiempo
+        # suficiente al solve de prueba para que encuentre una solución factible.
+        # Corre UNA sola vez (el diagnóstico se invoca una vez desde solve()).
+        current_cap = resolve_overstaff_cap(self.config)
+        cover_time = INFEASIBLE_DIAGNOSTIC_COVERAGE_MAX_TIME_SECONDS
+        cap_helps = (
+            current_cap < OVERSTAFF_CAP_MAX
+            and self._run_diagnostic_trial_status(
+                base_employees, {"max_simultaneous": OVERSTAFF_CAP_MAX}, max_time=cover_time
+            ) != "Infeasible"
+        )
+        if cap_helps:
+            suggested = OVERSTAFF_CAP_MAX
+            for candidate_cap in range(current_cap + 1, OVERSTAFF_CAP_MAX):
+                if self._run_diagnostic_trial_status(
+                    base_employees, {"max_simultaneous": candidate_cap}, max_time=cover_time
+                ) != "Infeasible":
+                    suggested = candidate_cap
+                    break
+            return {
+                "message": (
+                    "No se pudo generar horario: la cobertura requiere más personas en "
+                    f"pista de las permitidas. El máximo actual es {current_cap} personas al "
+                    f"mismo tiempo, pero el personal activo (incluidos los refuerzos) necesita "
+                    f"al menos {suggested} durante varias horas. "
+                    f"Subí 'Máximo de personas en pista' a {suggested} o más, o reducí "
+                    "personal/refuerzos en los días pico."
+                ),
+                "reason": "coverage_over_cap",
+                "suggested_max_simultaneous": suggested,
+            }
+
         if self.config.get("strict_preferences", False):
             if self._run_diagnostic_trial(base_employees, {"strict_preferences": False}):
                 return {
@@ -1217,10 +1436,10 @@ class ShiftScheduler:
                 continue
 
             # Config cache — used by is_task_enabled and oficina check
-            _ct = self.config.get("cleaning_tasks", {})
+            _ct = self.config.get("cleaning_tasks") or {}
 
             # Jefe de pista config (stored as separate column jefe_config)
-            _jc = self.config.get("jefe_config", {})
+            _jc = self.config.get("jefe_config") or {}
             jefe_enabled = _jc.get("enabled", False)
             jefe_exclude_regular = _jc.get("exclude_regular", True)
             jefe_assignment = _jc.get("assignment", {})
@@ -1429,27 +1648,51 @@ class ShiftScheduler:
     def solve(self):
         current_refuerzo_custom_shift = sync_refuerzo_custom_shift(self.config)
         sync_custom_shifts(self.config)  # Load custom shifts with priorities
+        sync_double_shifts(self.config)  # Load configurable double-shift (DBL_*) combos
         default_diurno_refuerzo_shift = ensure_manual_shift_code(7, 12)
-        rest_floor = max(6, int(self.config.get("min_rest_hours_floor", 6)))
+        # Rest handling: the hard floor is 8h (absolute minimum between shifts).
+        # Rest between the floor and the target (12h) is modeled as a SOFT
+        # penalty inside the solver, so it shortens rest only when coverage or
+        # schedule consistency (heavier objective terms) genuinely require it.
+        rest_floor = max(8, int(self.config.get("min_rest_hours_floor", 8)))
         rest_target = max(rest_floor, min(int(self.config.get("min_rest_hours_target", 12)), 24))
-        last_out = None
-        for min_rest_try in range(rest_target, rest_floor - 1, -1):
-            last_out = self._solve_with_min_rest(
-                min_rest_try, current_refuerzo_custom_shift, default_diurno_refuerzo_shift
-            )
-            if last_out.get("status") == "Success":
-                md = last_out.setdefault("metadata", {})
-                md["min_rest_hours_applied"] = min_rest_try
-                md["min_rest_hours_target"] = rest_target
-                md["min_rest_hours_floor"] = rest_floor
-                if min_rest_try < rest_target:
-                    logger.warning(
-                        "Horario factible con descanso mínimo entre turnos de %sh (objetivo %sh).",
-                        min_rest_try,
-                        rest_target,
-                    )
-                return last_out
-        return last_out if last_out else {"status": "Infeasible", "message": "No se pudo generar horario."}
+        last_out = self._solve_with_min_rest(
+            rest_floor, current_refuerzo_custom_shift, default_diurno_refuerzo_shift
+        )
+        if last_out.get("status") == "Success":
+            md = last_out.setdefault("metadata", {})
+            # Applied = worst rest actually present in the produced schedule
+            # (capped at the target: resting more than the target still counts
+            # as meeting it).
+            observed = None
+            rest_report = md.get("rest_between_shifts") or {}
+            for _info in (rest_report.get("per_employee") or {}).values():
+                g = _info.get("min_gap_hours")
+                if g is not None:
+                    observed = g if observed is None else min(observed, g)
+            applied = rest_target if observed is None else min(rest_target, int(observed))
+            md["min_rest_hours_applied"] = applied
+            md["min_rest_hours_target"] = rest_target
+            md["min_rest_hours_floor"] = rest_floor
+            if applied < rest_target:
+                logger.warning(
+                    "Horario factible con descanso mínimo entre turnos de %sh (objetivo %sh).",
+                    applied,
+                    rest_target,
+                )
+            return last_out
+        if last_out is None:
+            last_out = {"status": "Infeasible", "message": "No se pudo generar horario."}
+        # Diagnóstico detallado: corre UNA sola vez acá (no por nivel de descanso).
+        if last_out.get("status") == "Infeasible" and not self.config.get("_skip_infeasible_diagnosis"):
+            diagnosis = self._diagnose_infeasible_result()
+            if diagnosis and diagnosis.get("message"):
+                last_out["message"] = diagnosis["message"]
+                if diagnosis.get("reason"):
+                    last_out["reason"] = diagnosis["reason"]
+                if diagnosis.get("suggested_max_simultaneous"):
+                    last_out["suggested_max_simultaneous"] = diagnosis["suggested_max_simultaneous"]
+        return last_out
 
     def _solve_with_min_rest(self, min_rest_hours: int, current_refuerzo_custom_shift, default_diurno_refuerzo_shift):
         model = cp_model.CpModel()
@@ -1564,7 +1807,7 @@ class ShiftScheduler:
             and SHIFT_MIN_HOUR[s_name] < 13
         }
 
-        # Pares incompatibles: descanso estrictamente < min_rest_hours (intento 12→…→6 en solve()).
+        # Pares incompatibles: descanso estrictamente < min_rest_hours (piso duro, 8h).
         INCOMPATIBLE_LT = build_rest_incompatible_pairs(
             min_rest_hours,
             SHIFT_NAMES,
@@ -1572,6 +1815,43 @@ class ShiftScheduler:
             SHIFT_MIN_HOUR,
             SHIFT_MAX_HOUR,
         )
+
+        # Soft rest shortfall: transitions resting >= the hard floor but below
+        # the target are ALLOWED at a per-hour cost, so the solver shortens
+        # rest only when coverage or schedule consistency (heavier objective
+        # terms) genuinely require it. Maps (s1, s2) -> hours short of target.
+        _rest_target_soft = max(
+            min_rest_hours, min(int(self.config.get("min_rest_hours_target", 12)), 24)
+        )
+        REST_SHORTFALL_PENALTY_PER_HOUR = 100_000
+        SOFT_REST_PAIRS = {}
+        if _rest_target_soft > min_rest_hours:
+            _target_pairs = build_rest_incompatible_pairs(
+                _rest_target_soft,
+                SHIFT_NAMES,
+                SHIFT_IS_WORKING,
+                SHIFT_MIN_HOUR,
+                SHIFT_MAX_HOUR,
+            )
+            for (_s1, _s2) in _target_pairs:
+                if (_s1, _s2) in INCOMPATIBLE_LT:
+                    continue
+                # Prune shifts the solver cannot auto-pick (heavy/J_/E_ shifts
+                # and DBL_ combos appear only via explicit manual fixes): the
+                # 8h hard floor still protects those transitions, they just
+                # skip the soft nudge. Keeps the model ~2x smaller.
+                if (
+                    _s1 in HEAVY_EXTENDED_SHIFTS or _s2 in HEAVY_EXTENDED_SHIFTS
+                    or _s1.startswith(DOUBLE_SHIFT_PREFIX)
+                    or _s2.startswith(DOUBLE_SHIFT_PREFIX)
+                ):
+                    continue
+                _rest = rest_hours_between_shifts(
+                    _s1, _s2, SHIFT_MIN_HOUR, SHIFT_MAX_HOUR, SHIFT_IS_WORKING
+                )
+                if _rest is None:
+                    continue
+                SOFT_REST_PAIRS[(_s1, _s2)] = _rest_target_soft - _rest
 
         # =========================
         # DYNAMIC PENALTY MODE (Standard Mode Detection)
@@ -1597,6 +1877,28 @@ class ShiftScheduler:
         x = {} 
         penalties = []
         peak_penalties = []
+
+        # --- Lexicographic tiers ---
+        # Objective terms are routed into priority tiers by |weight| and solved
+        # tier by tier (critical -> major -> minor), freezing each tier's best
+        # value before optimizing the next. This keeps every rule's weight
+        # intact WITHIN its tier while making it impossible for accumulations
+        # of lower-tier penalties to buy a violation of a higher-tier rule.
+        # `penalties` / `peak_penalties` remain the default minor tier.
+        crit_penalties = []   # tier 1: near-hard rules (|w| >= LEX_TIER1_MIN)
+        major_penalties = []  # tier 2: primary quality rules
+        LEX_TIER1_MIN = 2_000_000
+        LEX_TIER2_MIN = 150_000
+
+        def route_penalty(weight, expr):
+            """Append weight*expr to the tier matching the weight's magnitude."""
+            w = abs(int(weight))
+            if w >= LEX_TIER1_MIN:
+                crit_penalties.append(weight * expr)
+            elif w >= LEX_TIER2_MIN:
+                major_penalties.append(weight * expr)
+            else:
+                penalties.append(weight * expr)
         
         # Variables
         for e in self.employees:
@@ -1620,6 +1922,16 @@ class ShiftScheduler:
                     if s.startswith(MANUAL_SHIFT_PREFIX):
                         model.Add(x[(e, d, s)] == 0)
 
+        def absent_all_week(emp):
+            """True when VAC/PERM pills cover every day of the week.
+
+            Such an employee has no day left to place the mandatory weekly rest
+            day on, so every rule that demands one must be skipped for them —
+            otherwise the model is proven infeasible before the search starts.
+            """
+            fs = self.emp_data[emp].get('fixed_shifts', {}) or {}
+            return all(fs.get(d) in ('VAC', 'PERM') for d in DAYS)
+
         # CORE: OFF Day Limit (Standard = 1 per week)
         # NOTA: PERM es una ausencia EXENTA — no cuenta como día libre.
         # El empleado con PERM aún recibe su OFF normal por separado.
@@ -1634,6 +1946,7 @@ class ShiftScheduler:
             fs = self.emp_data[e].get('fixed_shifts', {}) or {}
             
             forced_vac = sum(1 for d in DAYS if fs.get(d) == 'VAC')
+            forced_perm = sum(1 for d in DAYS if fs.get(d) == 'PERM')
             forced_closed = sum(
                 1 for d in DAYS
                 if is_special_closed(d) and fs.get(d) not in ['OFF', 'VAC', 'PERM']
@@ -1641,10 +1954,15 @@ class ShiftScheduler:
 
             allow_no_rest = self.emp_data[e].get('allow_no_rest', False)
             off_grid_other = sum(1 for d in DAYS if fs.get(d) == "OFF")
-            if allow_no_rest:
-                required_off_vac = forced_vac + forced_closed + off_grid_other
-            else:
-                required_off_vac = forced_vac + forced_closed + max(1, off_grid_other)
+            required_off_vac = forced_vac + forced_closed + off_grid_other
+            if not allow_no_rest and off_grid_other == 0:
+                # The mandatory weekly rest day only exists if there is a day left
+                # to place it on. VAC/PERM pills (plus closed days) can consume the
+                # whole week, and then demanding an extra OFF pushes the total above
+                # len(DAYS) — infeasible before the search even starts.
+                days_taken = forced_vac + forced_perm + forced_closed
+                if days_taken < len(DAYS):
+                    required_off_vac += 1
 
             if self.emp_data[e].get('is_jefe_pista'):
                 model.Add(
@@ -1682,9 +2000,9 @@ class ShiftScheduler:
                 # Forced libres: all flagged employees MUST be libres persons
                 for e in forced_libres_set:
                     model.Add(persona_hace_libres[e] == 1)
-                # Total: at least all forced, at most forced + 1 extra
-                model.Add(sum(persona_hace_libres[e] for e in candidates) >= len(forced_libres_set))
-                model.Add(sum(persona_hace_libres[e] for e in candidates) <= len(forced_libres_set) + 1)
+                # Total: exactly the forced employees — no extra libres person.
+                # Night coverage gaps are handled by the fallback_needed_d logic.
+                model.Add(sum(persona_hace_libres[e] for e in candidates) == len(forced_libres_set))
             else:
                 model.Add(sum(persona_hace_libres[e] for e in candidates) == 1)
         
@@ -1721,7 +2039,7 @@ class ShiftScheduler:
             if e in self.night_replacements:
                 turno_principal[e] = {}
                 for s in SHIFT_NAMES:
-                    if s in ["OFF", "VAC", "PERM", "N_22-05"] or s.startswith("J_") or s.startswith("X_") or s.startswith("Q"):
+                    if s in ["OFF", "VAC", "PERM", "N_22-05"] or s.startswith("J_") or s.startswith("X_") or s.startswith("Q") or s.startswith(DOUBLE_SHIFT_PREFIX):
                         continue
                     turno_principal[e][s] = model.NewBoolVar(f"principal_{e}_{s}")
                 if turno_principal[e]:
@@ -1736,7 +2054,7 @@ class ShiftScheduler:
 
             turno_principal[e] = {}
             for s in SHIFT_NAMES:
-                if s in ["OFF", "VAC", "PERM"] or s.startswith("J_") or s.startswith("X_") or s.startswith("Q"): continue
+                if s in ["OFF", "VAC", "PERM"] or s.startswith("J_") or s.startswith("X_") or s.startswith("Q") or s.startswith(DOUBLE_SHIFT_PREFIX): continue
                 turno_principal[e][s] = model.NewBoolVar(f"principal_{e}_{s}")
 
             if turno_principal[e]:
@@ -1750,9 +2068,9 @@ class ShiftScheduler:
                     if _has_working_fixed_shift(self.emp_data[e], d):
                         continue
                     for s in SHIFT_NAMES:
-                        if s in ["OFF", "VAC", "PERM"] or s.startswith("J_") or s.startswith("X_") or s.startswith("Q"):
+                        if s in ["OFF", "VAC", "PERM"] or s.startswith("J_") or s.startswith("X_") or s.startswith("Q") or s.startswith(DOUBLE_SHIFT_PREFIX):
                             continue
-                        
+
                         # Deviation happens if x[(e, d, s)] == 1 AND turno_principal[e][s] == 0
                         is_working_s = x[(e, d, s)]
                         is_not_principal = turno_principal[e][s].Not()
@@ -1761,7 +2079,7 @@ class ShiftScheduler:
                         model.AddBoolAnd([is_working_s, is_not_principal]).OnlyEnforceIf(deviation)
                         model.AddBoolOr([is_working_s.Not(), turno_principal[e][s]]).OnlyEnforceIf(deviation.Not())
                         
-                        penalties.append(CONSISTENCY_PENALTY * deviation)
+                        route_penalty(CONSISTENCY_PENALTY, deviation)
 
         # =========================
         # RESTRICCIÓN: TURNOS LARGOS OPCIONALES
@@ -1802,6 +2120,23 @@ class ShiftScheduler:
                       if fixed_map.get(d) != ms:
                           model.Add(x[(e, d, ms)] == 0)
 
+        # =========================
+        # RESTRICCIÓN: TURNOS DOBLES (DBL_*)
+        # =========================
+        # Los DBL_* NUNCA se auto-asignan: solo son elegibles el día en que
+        # el empleado tiene la pill "DOBLE" en fixed_shifts. La restricción
+        # dura que elige CUÁL DBL_* usar ese día se aplica más abajo, en el
+        # bloque FIJOS (junto a fixed_constraints).
+        double_shift_codes_all = [s for s in SHIFT_NAMES if s.startswith(DOUBLE_SHIFT_PREFIX)]
+        if double_shift_codes_all:
+            for e in self.employees:
+                fixed_map = self.emp_data[e].get('fixed_shifts', {})
+                for d in DAYS:
+                    if fixed_map.get(d) == "DOBLE":
+                        continue  # habilitado por la pill, ver bloque FIJOS
+                    for ds in double_shift_codes_all:
+                        model.Add(x[(e, d, ds)] == 0)
+
 
         # =========================
         # LOGICA NIGHT PRE-COMPUTE
@@ -1817,23 +2152,67 @@ class ShiftScheduler:
         # =========================
         # strict_preferences (default: false) determines if an employee's
         # fixed_shifts are hard constraints or soft preferences.
-        # Jefe de Pista and Night Person are ALWAYS strict regardless of toggle.
+        # The Night Person is ALWAYS strict regardless of toggle.
         global_strict = self.config.get('strict_preferences', False)
         
         fixed_constraints = {}
         soft_preferences = {}  # (e, d) -> s_code for flexible employees
-        
+        jefe_nearhard_keys = set()  # (e, d) whose soft pref is a NEAR-HARD jefe lock
+        double_pill_days = []  # [(e, d), ...] — pill "DOBLE": ver más abajo
+
         for e in self.employees:
             fixed_map = self.emp_data[e].get('fixed_shifts', {})
             is_strict = self.emp_data[e].get('strict_preferences', False)
-            is_jefe = self.emp_data[e].get('is_jefe_pista', False)
             is_night = (primary_night and e == primary_night)
-            
-            # Jefe and Night are ALWAYS strict, plus global strict
-            force_strict = global_strict or is_strict or is_jefe or is_night
+
+            # Jefe de Pista near-absolute-schedule rule: when the jefe's WEEKDAY
+            # pattern is ONE uniform working shift (matching a jefe-section preset),
+            # the whole selected week (weekdays + the different Sáb/Dom shift) is
+            # locked with a NEAR-HARD soft penalty (JEFE_NEAR_HARD_PENALTY) — high
+            # enough to dominate coverage (5M/h) and consistency (900k), so it is
+            # respected whenever physically feasible, yet still SOFT so it can NEVER
+            # make the model INFEASIBLE.  (A true hard lock collided with other hard
+            # rules — x==1 vs x==0 — and killed generation entirely.)  If a WEEKDAY is
+            # changed to a different shift, the week is no longer uniform and it drops
+            # back to the normal soft preference.
+            #   • Saturday and Sunday are EXCLUDED from the uniformity test: the jefe
+            #     works a different schedule there BY DESIGN (e.g. Jeison's Saturday
+            #     shift differs in every preset), so a different Sáb/Dom must NOT make
+            #     the week look "mixed"; those working shifts are still near-hard-locked
+            #     together with the uniform weekdays.
+            #   • OFF/VAC/PERM stay hard; blank (auto) days don't count as "different".
+            jefe_week_hard = False
+            if self.emp_data[e].get('is_jefe_pista', False):
+                weekday_working = [
+                    s for d2, s in fixed_map.items()
+                    if d2 in DAYS and d2 not in ("Sáb", "Dom")
+                    and s in SHIFT_NAMES and s not in ("OFF", "VAC", "PERM")
+                ]
+                # Uniform week: one single weekday shift, OR a staggered week
+                # built entirely from jefe presets (J_* family, e.g. J_07-17
+                # some days and J_09-19 others). Staggering the jefe across
+                # J_* presets keeps the near-hard lock while letting his 10h
+                # block reach the PM peak on the later-start days.
+                if weekday_working and (
+                    len(set(weekday_working)) == 1
+                    or all(s.startswith("J_") for s in weekday_working)
+                ):
+                    jefe_week_hard = True
+
+            # Night is ALWAYS strict, plus global strict.  The jefe uses a NEAR-HARD
+            # soft lock (below), NOT force_strict, to avoid hard-constraint collisions.
+            force_strict = global_strict or is_strict or is_night
 
             for d, s_code in fixed_map.items():
-                if d in DAYS and s_code in SHIFT_NAMES:
+                if d not in DAYS:
+                    continue
+                if s_code == "DOBLE":
+                    # Pill "turno doble": SIEMPRE restricción dura (igual que
+                    # OFF/VAC/PERM). El solver elige CUÁL DBL_* usar ese día
+                    # — aplicado más abajo, después de fixed_constraints.
+                    double_pill_days.append((e, d))
+                    continue
+                if s_code in SHIFT_NAMES:
                     if is_special_sunday_like(d) and s_code not in ["OFF", "VAC", "PERM"]:
                         continue
                     if is_special_closed(d) and s_code not in ["VAC", "PERM"]:
@@ -1857,11 +2236,33 @@ class ShiftScheduler:
                         fixed_constraints[(e, d)] = s_code
                     else:
                         soft_preferences[(e, d)] = s_code
-                    
+                        if jefe_week_hard:
+                            # Near-hard lock for the jefe's uniform week (incl. Sáb/Dom).
+                            jefe_nearhard_keys.add((e, d))
+
         # Apply HARD constraints (strict employees + VAC/PERM/OFF)
         for (e, d), s_code in fixed_constraints.items():
             for s in SHIFT_NAMES:
                 model.Add(x[(e, d, s)] == (1 if s == s_code else 0))
+
+        # Pill "DOBLE": restricción dura — exactamente un DBL_* ese día,
+        # respetando can_do_night (si el empleado no puede noche, se excluyen
+        # los DBL_* que toquen la franja nocturna). El solver elige cuál según
+        # cobertura y consistencia semanal.
+        double_shift_codes = [s for s in SHIFT_NAMES if s.startswith(DOUBLE_SHIFT_PREFIX)]
+        for (e, d) in double_pill_days:
+            valid_double_codes = double_shift_codes
+            if not self.emp_data[e].get('can_do_night', True):
+                valid_double_codes = [s for s in valid_double_codes if not touches_night(s)]
+            if not valid_double_codes:
+                logger.warning(
+                    "Pill 'DOBLE' para %s en %s sin turnos dobles disponibles "
+                    "(max_double_shift_hours=%s%s) -- el horario será infactible.",
+                    e, d,
+                    resolve_max_double_shift_hours(self.config),
+                    ", excluyendo nocturnos por can_do_night=False" if not self.emp_data[e].get('can_do_night', True) else "",
+                )
+            model.Add(sum(x[(e, d, s)] for s in valid_double_codes) == 1)
 
         closed_days = [d for d in DAYS if is_special_closed(d)]
         for e in self.employees:
@@ -1891,6 +2292,11 @@ class ShiftScheduler:
         # OFF/VAC/PERM siguen siendo hard constraints (se manejan arriba).
         PREF_DEVIATION_PENALTY = 300_000 if standard_mode else 200_000
         PREF_FAMILY_PENALTY    = 100_000   # extra cost for crossing AM<->PM boundary
+        # Near-hard jefe lock: dominates coverage (5M/h) and consistency (900k) so the
+        # jefe's uniform week is respected whenever feasible — but SOFT, so it can never
+        # force the model infeasible.  If another hard rule blocks the jefe's shift on
+        # some day, the solver pays this and deviates only there, gracefully.
+        JEFE_NEAR_HARD_PENALTY = 50_000_000
 
         for key, s_code in soft_preferences.items():
             # Support both (e, d) and (e, d, alt_s) keys
@@ -1901,17 +2307,22 @@ class ShiftScheduler:
                 pref_violated = model.NewBoolVar(f"pref_fallback_{e}_{d}_{alt_s}")
                 model.Add(x[(e, d, alt_s)] == 0).OnlyEnforceIf(pref_violated)
                 model.Add(x[(e, d, alt_s)] == 1).OnlyEnforceIf(pref_violated.Not())
-                penalties.append(int(PREF_DEVIATION_PENALTY * 1.5) * pref_violated)
+                route_penalty(int(PREF_DEVIATION_PENALTY * 1.5), pref_violated)
                 continue
 
             e, d = key
             pref_family = _am_pm_token(s_code)  # "AM", "PM", or None
+            # Jefe near-hard lock uses a dominant penalty; everyone else the normal one.
+            deviation_penalty = (
+                JEFE_NEAR_HARD_PENALTY if (e, d) in jefe_nearhard_keys
+                else PREF_DEVIATION_PENALTY
+            )
 
             # Level 1: penalize when the exact preferred shift is NOT used
             pref_violated = model.NewBoolVar(f"pref_violated_{e}_{d}")
             model.Add(x[(e, d, s_code)] == 0).OnlyEnforceIf(pref_violated)
             model.Add(x[(e, d, s_code)] == 1).OnlyEnforceIf(pref_violated.Not())
-            penalties.append(PREF_DEVIATION_PENALTY * pref_violated)
+            route_penalty(deviation_penalty, pref_violated)
 
             # Level 2: when deviated AND landed on the wrong AM/PM family, add extra cost
             if pref_family:
@@ -2064,10 +2475,16 @@ class ShiftScheduler:
                 if is_special_closed(d) and _night_fs.get(d) not in ['OFF', 'VAC', 'PERM']
             )
             _night_base_off = max(1, _night_forced_off)
+            if absent_all_week(primary_night):
+                # VAC/PERM cover the whole week: the pills already pin every day and
+                # there is no room for the extra rest day (see absent_all_week).
+                _night_required = len(DAYS)
+            else:
+                _night_required = _night_base_off + _night_forced_vac + _night_forced_closed
             model.Add(sum(
                 x[(primary_night, d, "OFF")] + x[(primary_night, d, "VAC")] + x[(primary_night, d, "PERM")]
                 for d in DAYS
-            ) == _night_base_off + _night_forced_vac + _night_forced_closed)
+            ) == _night_required)
 
             # c) Reemplazo nocturno:
             #    - Normalmente cubre la persona de libres.
@@ -2125,10 +2542,10 @@ class ShiftScheduler:
                     model.AddBoolOr([is_libres.Not(), primary_off_var.Not(), libres_is_off_d]).OnlyEnforceIf(should_cover.Not())
                     
                     # 1M penalty if the ideal replacement doesn't cover (allows fallback to others)
-                    penalties.append(1000000 * should_cover.Not())
+                    route_penalty(1000000, should_cover.Not())
                     # model.Add(x[(e_repl, d, "N_22-05")] == 1).OnlyEnforceIf(should_cover) # Too aggressive
                     # Instead of hard Add, use another soft penalty to prefer the libres person
-                    penalties.append(2000000 * should_cover.Not())
+                    route_penalty(2000000, should_cover.Not())
 
                 selected_libres_absent_d = model.NewBoolVar(f"selected_libres_absent_{d}")
                 if selected_libres_absent_terms:
@@ -2193,8 +2610,11 @@ class ShiftScheduler:
             cannot_night = not self.emp_data[e].get('can_do_night', True)
 
             if is_woman:
-                # RELAXED: Use high penalty instead of hard Add(x == 0) to prevent Infeasible.
-                # Penalty (6M) is higher than coverage (5M), so it only breaks if strictly necessary.
+                # Night shifts: HARD prohibition for women without a night permit,
+                # on par with the non-night men rule below. A woman without a night
+                # permit must NEVER be scheduled on a shift that touches the night
+                # window. Other non-allowed shifts (e.g. long shifts) stay as a soft
+                # penalty so the model does not turn infeasible for lack of daytime slack.
                 INVALID_SHIFT_PENALTY = 6000000
                 for d in DAYS:
                     # Lógica de selección de lista permitida
@@ -2203,13 +2623,18 @@ class ShiftScheduler:
                     elif is_special_sunday_like(d):
                         allowed = ALLOWED_WOMEN_SUN
                     elif d == "Sáb":
-                        allowed = ALLOWED_WOMEN_SAT 
+                        allowed = ALLOWED_WOMEN_SAT
                     else:
                         allowed = ALLOWED_WOMEN_WEEK
-                        
+
                     for s in SHIFT_NAMES:
-                        if s not in allowed:
-                            penalties.append(INVALID_SHIFT_PENALTY * x[(e, d, s)])
+                        if s in allowed:
+                            continue
+                        if cannot_night and touches_night(s):
+                            # Hard rule: no night-window shift for a non-night woman.
+                            model.Add(x[(e, d, s)] == 0)
+                        else:
+                            route_penalty(INVALID_SHIFT_PENALTY, x[(e, d, s)])
 
             if cannot_night and not is_woman:
                 # Fallback genérico para otros que no puedan hacer noche
@@ -2414,25 +2839,58 @@ class ShiftScheduler:
             if last_jue_shift not in SHIFT_NAMES:
                 last_jue_shift = "OFF"
 
+            # Determinar si el historial tiene la semana exactamente anterior al target
+            _has_exact_prev = self.config.get("_has_exact_previous_week")
+            _history_gap = _has_exact_prev is False  # Gap: semana anterior faltante
+
             # Hard block independiente: N_22-05 (Jue) -> turnos tempranos (Vie)
+            # Cuando falta la semana anterior en el historial, usar soft penalty en vez de hard block
+            # para evitar INFEASIBLE por datos desactualizados.
             if last_jue_shift == "N_22-05":
-                for s2 in explicit_night_to_morning_blocks:
-                    model.Add(x[(e, "Vie", s2)] == 0)
+                if _history_gap:
+                    # Penalty fuerte (6M) en vez de hard block: preserva factibilidad
+                    NIGHT_TO_MORNING_PENALTY = 6_000_000
+                    for s2 in explicit_night_to_morning_blocks:
+                        route_penalty(NIGHT_TO_MORNING_PENALTY, x[(e, "Vie", s2)])
+                else:
+                    for s2 in explicit_night_to_morning_blocks:
+                        model.Add(x[(e, "Vie", s2)] == 0)
             elif "Jue" not in most_recent_schedule.get(e, {}):
                 if e in known_last_night_employee:
                     logger.warning(
                         "Historial no confiable para Jue de %s; se aplica fallback conservador por último nocturno conocido",
                         e,
                     )
-                    for s2 in explicit_night_to_morning_blocks:
-                        model.Add(x[(e, "Vie", s2)] == 0)
+                    if _history_gap:
+                        NIGHT_TO_MORNING_PENALTY = 6_000_000
+                        for s2 in explicit_night_to_morning_blocks:
+                            route_penalty(NIGHT_TO_MORNING_PENALTY, x[(e, "Vie", s2)])
+                    else:
+                        for s2 in explicit_night_to_morning_blocks:
+                            model.Add(x[(e, "Vie", s2)] == 0)
 
             if last_jue_shift in SHIFT_NAMES and SHIFT_IS_WORKING.get(last_jue_shift):
                 s1 = last_jue_shift
                 d2 = "Vie"
+                if _history_gap:
+                    # Gap: soft penalty en vez de hard block para el descanso general
+                    REST_PENALTY = 5_000_000
+                    for s2 in SHIFT_NAMES:
+                        if (s1, s2) in INCOMPATIBLE_LT:
+                            route_penalty(REST_PENALTY, x[(e, d2, s2)])
+                else:
+                    for s2 in SHIFT_NAMES:
+                        if (s1, s2) in INCOMPATIBLE_LT:
+                            model.Add(x[(e, d2, s2)] == 0)
+                # Soft shortfall (floor..target) also applies across the
+                # history boundary: Thursday's shift is known, so the penalty
+                # lands directly on the Friday shift variable.
                 for s2 in SHIFT_NAMES:
-                    if (s1, s2) in INCOMPATIBLE_LT:
-                        model.Add(x[(e, d2, s2)] == 0)
+                    _short = SOFT_REST_PAIRS.get((s1, s2))
+                    if _short:
+                        route_penalty(
+                            REST_SHORTFALL_PENALTY_PER_HOUR * _short, x[(e, d2, s2)]
+                        )
 
             # 2. INTRA-WEEK BOUNDARY: Day i -> Day i+1
             for i in range(len(DAYS) - 1):
@@ -2440,6 +2898,11 @@ class ShiftScheduler:
                 d2 = DAYS[i + 1]
                 for (s1, s2) in INCOMPATIBLE_LT:
                     model.Add(x[(e, d2, s2)] == 0).OnlyEnforceIf(x[(e, d1, s1)])
+                # 2b. Soft shortfall: rest in [floor, target) allowed at a cost.
+                for (s1, s2), _short in SOFT_REST_PAIRS.items():
+                    _both = model.NewBoolVar(f"rest_short_{e}_{d1}_{s1}_{s2}")
+                    model.Add(x[(e, d1, s1)] + x[(e, d2, s2)] - _both <= 1)
+                    route_penalty(REST_SHORTFALL_PENALTY_PER_HOUR * _short, _both)
 
         # FRIDAY HEURISTIC: Soft reward for OFF/PM after Thursday night shift.
         # If employee worked N_22-05 on Thursday (from history), reward OFF or
@@ -2452,7 +2915,7 @@ class ShiftScheduler:
             last_jue = most_recent_schedule.get(e, {}).get("Jue", "")
             if last_jue == "N_22-05":
                 # Reward OFF on Friday
-                penalties.append(-FRIDAY_NIGHT_REWARD * x[(e, "Vie", "OFF")])
+                route_penalty(-FRIDAY_NIGHT_REWARD, x[(e, "Vie", "OFF")])
                 # Reward afternoon shifts on Friday (starts >= 12)
                 for s in SHIFT_NAMES:
                     if s in ("OFF", "VAC", "PERM", "N_22-05"):
@@ -2460,7 +2923,7 @@ class ShiftScheduler:
                     if SHIFT_IS_WORKING.get(s, False):
                         min_h = SHIFT_MIN_HOUR.get(s)
                         if min_h is not None and min_h >= 12:
-                            penalties.append(-FRIDAY_NIGHT_REWARD * x[(e, "Vie", s)])
+                            route_penalty(-FRIDAY_NIGHT_REWARD, x[(e, "Vie", s)])
 
         # Empleados no disponibles por día — incluye VAC/PERM/OFF en fixed_constraints
         unavailable_per_day = {}
@@ -2483,7 +2946,10 @@ class ShiftScheduler:
         # Cobertura
         coverage = {}
         hour_at_cap = {}
-        overstaff_policy = get_overstaff_policy_for_days(day_modes)
+        # Tope configurable de personas en pista al mismo tiempo (por hora).
+        # Si el usuario no lo define, se usa el valor por defecto del sistema.
+        overstaff_cap = resolve_overstaff_cap(self.config)
+        overstaff_policy = get_overstaff_policy_for_days(day_modes, cap_value=overstaff_cap)
         for d in DAYS:
             available_day = len(self.employees) - unavailable_per_day.get(d, 0)
             for h in HOURS:
@@ -2492,6 +2958,7 @@ class ShiftScheduler:
                     d,
                     standard_mode,
                     special_day_mode=day_modes.get(d),
+                    cap_value=overstaff_cap,
                 )
                 terms = []
 
@@ -2550,7 +3017,7 @@ class ShiftScheduler:
             below_3_h6 = model.NewBoolVar(f"below3_h6_{d}")
             model.Add(cov6 < 3).OnlyEnforceIf(below_3_h6)
             model.Add(cov6 >= 3).OnlyEnforceIf(below_3_h6.Not())
-            peak_penalties.append(200000 * below_3_h6)
+            route_penalty(200000, below_3_h6)
 
         # SOFT: Cuando Q está activo, penalizar h11/h12 < 3 (200k).
         # Esto compensa la relajación del hard-min (3→2) hecha arriba: el solver
@@ -2566,7 +3033,7 @@ class ShiftScheduler:
                     below_3_h = model.NewBoolVar(f"below3_h{h}_{d}_q")
                     model.Add(cov_h < 3).OnlyEnforceIf(below_3_h)
                     model.Add(cov_h >= 3).OnlyEnforceIf(below_3_h.Not())
-                    peak_penalties.append(200000 * below_3_h)
+                    route_penalty(200000, below_3_h)
 
         # SOFT: Prefer 4+ people during peak hours (Lun-Sáb, h7-10 and h16-19)
         # AM peak (h7-h10) has a much higher penalty than PM — losing AM coverage can NEVER
@@ -2583,9 +3050,15 @@ class ShiftScheduler:
                 below_4 = model.NewBoolVar(f"below4_{d}_{h}")
                 model.Add(cov < 4).OnlyEnforceIf(below_4)
                 model.Add(cov >= 4).OnlyEnforceIf(below_4.Not())
-                # AM hours get 5M penalty (uncrossable), PM hours keep 500k
-                am_penalty = 5000000 if h in [7, 8, 9, 10] else 500000
-                peak_penalties.append(am_penalty * below_4)
+                # AM hours get 5M penalty (uncrossable). PM hours: 500k in standard
+                # mode (staff is ample, keep it a soft tie-break so consistency holds),
+                # 1M in short-staffed mode — above the 900k consistency penalty so the
+                # solver prefers reaching the IDEAL (4) at PM peak over keeping a person
+                # on their consistent shift, whenever a feasible reassignment exists
+                # (policy B: coverage wins the tradeoff, scoped to the short-staffed case).
+                pm_penalty = 500000 if standard_mode else 1000000
+                am_penalty = 5000000 if h in [7, 8, 9, 10] else pm_penalty
+                route_penalty(am_penalty, below_4)
 
         # SOFT: Prefer 4+ people during off-peak hours as well (Lun-Sáb, h11-15)
         # But this penalty is much lower, so solver drops these hours first if short-staffed
@@ -2671,7 +3144,7 @@ class ShiftScheduler:
                 model.Add(q_extra_carriers == 0).OnlyEnforceIf(at_most_one_distinct)
                 model.Add(q_extra_carriers == nq_distinct - 1).OnlyEnforceIf(at_most_one_distinct.Not())
                 QUEBRADO_EXTRA_CARRIER_PENALTY = 1_200_000
-                peak_penalties.append(QUEBRADO_EXTRA_CARRIER_PENALTY * q_extra_carriers)
+                route_penalty(QUEBRADO_EXTRA_CARRIER_PENALTY, q_extra_carriers)
 
         # =========================
         # RESTRICCIÓN: PENALIZACIÓN DE TURNOS OVERTIME (T11, T16)
@@ -2681,8 +3154,8 @@ class ShiftScheduler:
         OVERTIME_PENALTY = 750000
         for e in self.employees:
             for d in DAYS:
-                peak_penalties.append(OVERTIME_PENALTY * x[(e, d, "T11_12-20")])
-                peak_penalties.append(OVERTIME_PENALTY * x[(e, d, "T16_05-14")])
+                route_penalty(OVERTIME_PENALTY, x[(e, d, "T11_12-20")])
+                route_penalty(OVERTIME_PENALTY, x[(e, d, "T16_05-14")])
             
         # =========================
         # CONSTRAINT: Forced Quebrado (Hard)
@@ -2693,6 +3166,10 @@ class ShiftScheduler:
         ALL_Q_SHIFTS = ["Q1_05-11+17-20", "Q2_07-11+17-20", "Q3_05-11+17-22"]
         for e in self.employees:
             if self.emp_data[e].get('forced_quebrado', False):
+                if absent_all_week(e):
+                    # Whole week on VAC/PERM: the pills pin every day, so neither the
+                    # Q-only rule nor the single rest day can apply (see absent_all_week).
+                    continue
                 qpref = self.emp_data[e].get('quebrado_preferido', 'auto')
                 if qpref == 'auto' or qpref not in ALL_Q_SHIFTS:
                     allowed_q = ALL_Q_SHIFTS  # comportamiento actual
@@ -2704,7 +3181,7 @@ class ShiftScheduler:
                         # fuerte (20M) para que haga turno normal de domingo.
                         # Si cobertura obliga, el solver puede asignar Q igual.
                         for qs in ALL_Q_SHIFTS:
-                            penalties.append(20_000_000 * x[(e, d, qs)])
+                            route_penalty(20_000_000, x[(e, d, qs)])
                         continue
                     for s in SHIFT_NAMES:
                         if s not in ["OFF", "VAC", "PERM"] + allowed_q:
@@ -2919,7 +3396,7 @@ class ShiftScheduler:
                 night_not_on_collision = model.NewBoolVar(f"night_not_on_collision_{d}")
                 model.AddBoolAnd([collision_vars[d], is_working_night.Not()]).OnlyEnforceIf(night_not_on_collision)
                 model.AddBoolOr([collision_vars[d].Not(), is_working_night]).OnlyEnforceIf(night_not_on_collision.Not())
-                penalties.append(1000000 * night_not_on_collision)
+                route_penalty(1000000, night_not_on_collision)
         
         # =========================
         # COLLISION DAY CONFIG
@@ -2967,14 +3444,14 @@ class ShiftScheduler:
                 # shortfall_am >= min_peak_am - cov
                 model.Add(shortfall_am >= min_peak_am - cov).OnlyEnforceIf(elective_collision[d])
                 model.Add(shortfall_am >= 0) # never negative
-                peak_penalties.append(2000000 * shortfall_am)
+                route_penalty(2000000, shortfall_am)
 
             for h in [17, 18, 19]:
                 cov = coverage[(d, h)]
                 shortfall_pm = model.NewIntVar(0, 10, f"shortfall_pm_{d}_{h}")
                 model.Add(shortfall_pm >= min_peak_pm - cov).OnlyEnforceIf(elective_collision[d])
                 model.Add(shortfall_pm >= 0)
-                peak_penalties.append(2000000 * shortfall_pm)
+                route_penalty(2000000, shortfall_pm)
         
         # =========================
         # GLOBAL QUEBRADO TOGGLE
@@ -3024,10 +3501,23 @@ class ShiftScheduler:
                 use_manual_days = ref_days_mode == "manual" and ref_manual_days
 
             for d in DAYS:
-                if is_special_closed(d) or is_special_sunday_like(d):
+                if is_special_closed(d):
+                    # Local cerrado: nadie trabaja, sin excepción.
                     model.Add(x[(refuerzo, d, "OFF")] == 1)
                     refuerzo_active_days[d] = model.NewConstant(0)
                     continue
+
+                if is_special_sunday_like(d):
+                    # Domingo (o "como domingo"): OFF forzado salvo que el día
+                    # esté EXPLÍCITAMENTE seleccionado en el horario del refuerzo.
+                    day_explicitly_selected = (
+                        (has_per_day_schedule and d in current_refuerzo_custom_shift)
+                        or (use_manual_days and d in ref_manual_days)
+                    )
+                    if not day_explicitly_selected:
+                        model.Add(x[(refuerzo, d, "OFF")] == 1)
+                        refuerzo_active_days[d] = model.NewConstant(0)
+                        continue
 
                 if saturday_only_refuerzo:
                     if d == "Sáb":
@@ -3040,7 +3530,17 @@ class ShiftScheduler:
 
                 if use_manual_days:
                     # Modo manual: Refuerzo trabaja solo en días seleccionados
-                    if d in ref_manual_days:
+                    is_auto_day = (
+                        has_per_day_schedule
+                        and current_refuerzo_custom_shift.get(d) == REFUERZO_AUTO_DAY
+                    )
+                    if is_auto_day:
+                        # Día AUTO: NO forzar OFF — el solver decide si trabaja.
+                        works = model.NewBoolVar(f"ref_auto_works_{refuerzo}_{d}")
+                        model.Add(x[(refuerzo, d, "OFF")] == 0).OnlyEnforceIf(works)
+                        model.Add(x[(refuerzo, d, "OFF")] == 1).OnlyEnforceIf(works.Not())
+                        refuerzo_active_days[d] = works
+                    elif d in ref_manual_days:
                         model.Add(x[(refuerzo, d, "OFF")] == 0)
                         refuerzo_active_days[d] = model.NewConstant(1)
                     else:
@@ -3052,12 +3552,29 @@ class ShiftScheduler:
                     model.Add(x[(refuerzo, d, "OFF")] == 1).OnlyEnforceIf(collision_vars[d].Not())
                     refuerzo_active_days[d] = collision_vars[d]
 
+            # Pool de turnos para días AUTO (el solver elige uno, o deja OFF).
+            if standard_mode:
+                refuerzo_auto_pool = {default_diurno_refuerzo_shift, "R2_16-20"}
+            else:
+                refuerzo_auto_pool = {
+                    default_diurno_refuerzo_shift, "R2_16-20",
+                    "T1_05-13", "T16_05-14", "T2_06-14", "D1_05-13",
+                    "T3_07-15", "T5_09-17", "T17_16-23",
+                    "T8_13-20", "T13_16-22", "T12_14-22", "D2_14-22", "D3_15-23",
+                    "N_22-05", "Q3_05-11+17-22",
+                }
+
             # Turnos Permitidos — per-day schedule gets its own shift per day
             if has_per_day_schedule:
                 for d in DAYS:
-                    # If day is active, only allow its specific shift + OFF
-                    if d in current_refuerzo_custom_shift:
-                        day_shift = current_refuerzo_custom_shift[d]
+                    day_shift = current_refuerzo_custom_shift.get(d)
+                    if day_shift == REFUERZO_AUTO_DAY:
+                        # Día AUTO: permitir el pool (+ OFF); el solver elige.
+                        for s in SHIFT_NAMES:
+                            if s != "OFF" and s not in refuerzo_auto_pool:
+                                model.Add(x[(refuerzo, d, s)] == 0)
+                    elif day_shift is not None:
+                        # Día FIJO: solo su turno específico (+ OFF).
                         for s in SHIFT_NAMES:
                             if s != day_shift and s != "OFF":
                                 model.Add(x[(refuerzo, d, s)] == 0)
@@ -3082,10 +3599,12 @@ class ShiftScheduler:
                     if effective_ref_type == 'nocturno':
                         allowed_shifts_refuerzo.extend(["R2_16-20", "T17_16-23", "N_22-05", "T10_15-22", "T12_14-22", "T13_16-22", "D2_14-22", "D3_15-23"])
                     elif effective_ref_type == 'diurno':
+                        # Daytime-only refuerzo: morning/day shifts exclusively.
+                        # Afternoon/evening shifts (start >= 13h) must never be
+                        # offered here — that's the 'nocturno'/'automatico' pool.
                         allowed_shifts_refuerzo.extend([
                             default_diurno_refuerzo_shift, "T1_05-13", "T16_05-14", "T2_06-14", "D1_05-13",
-                            "T3_07-15", "T5_09-17",
-                            "T8_13-20", "T13_16-22", "D2_14-22"
+                            "T3_07-15", "T5_09-17"
                         ])
                     else: # automatico
                         allowed_shifts_refuerzo.extend([
@@ -3113,11 +3632,37 @@ class ShiftScheduler:
                 continue  # legacy refuerzo handled in REFUERZO LOGIC block above
             _ae_tipo = _ae_info.get('refuerzo_tipo', 'personalizado')
             if _ae_tipo == 'personalizado':
-                continue  # handled via fixed_shifts
+                # Fixed/OFF days are handled via fixed_shifts + strict. Only AUTO days
+                # need handling here: allow the pool (+ OFF) so the solver picks a
+                # shift or leaves OFF (per-day mix of fixed and automatic).
+                _ae_auto = _ae_info.get('refuerzo_auto_days', [])
+                if _ae_auto:
+                    if standard_mode:
+                        _auto_pool = {default_diurno_refuerzo_shift, "R2_16-20"}
+                    else:
+                        _auto_pool = {
+                            default_diurno_refuerzo_shift, "R2_16-20",
+                            "T1_05-13", "T16_05-14", "T2_06-14", "D1_05-13",
+                            "T3_07-15", "T5_09-17", "T17_16-23",
+                            "T8_13-20", "T13_16-22", "T12_14-22", "D2_14-22", "D3_15-23",
+                            "N_22-05", "Q3_05-11+17-22",
+                        }
+                    for _d in _ae_auto:
+                        if _d not in DAYS or is_special_closed(_d):
+                            continue
+                        for _s in SHIFT_NAMES:
+                            if _s != "OFF" and _s not in _auto_pool:
+                                model.Add(x[(_ae, _d, _s)] == 0)
+                continue  # handled via fixed_shifts (+ AUTO days above)
             _ae_active = _ae_info.get('refuerzo_active_days', [])
             # Day-level constraints
             for d in DAYS:
-                if is_special_closed(d) or is_special_sunday_like(d):
+                if is_special_closed(d):
+                    # Local cerrado: nadie trabaja, sin excepción.
+                    model.Add(x[(_ae, d, "OFF")] == 1)
+                elif is_special_sunday_like(d) and d not in _ae_active:
+                    # Domingo (o "como domingo"): OFF forzado salvo que el día
+                    # esté explícitamente seleccionado en el horario del refuerzo.
                     model.Add(x[(_ae, d, "OFF")] == 1)
                 elif d in _ae_active:
                     model.Add(x[(_ae, d, "OFF")] == 0)
@@ -3134,7 +3679,8 @@ class ShiftScheduler:
                 if standard_mode:
                     _ae_allowed.update([default_diurno_refuerzo_shift])
                 else:
-                    _ae_allowed.update([default_diurno_refuerzo_shift, "T1_05-13", "T16_05-14", "T2_06-14", "D1_05-13", "T3_07-15", "T5_09-17", "T8_13-20", "T13_16-22", "D2_14-22"])
+                    # Daytime-only refuerzo: no afternoon/evening shifts (start >= 13h).
+                    _ae_allowed.update([default_diurno_refuerzo_shift, "T1_05-13", "T16_05-14", "T2_06-14", "D1_05-13", "T3_07-15", "T5_09-17"])
             else:  # automatico, sabado
                 if standard_mode:
                     _ae_allowed.update([default_diurno_refuerzo_shift, "R2_16-20"])
@@ -3220,21 +3766,24 @@ class ShiftScheduler:
             )
             max_off = max(1, manual_off_count) + closed_off_count
             allow_no_rest = self.emp_data[e].get('allow_no_rest', False)
-            
+            # A week fully covered by VAC/PERM has no day left for an OFF, so the
+            # rest-day floor cannot be met and must not be imposed.
+            needs_rest_day = not allow_no_rest and not absent_all_week(e)
+
             if e in persona_hace_libres:
                 # Libres candidates: conditional constraints
-                if not allow_no_rest:
+                if needs_rest_day:
                     model.Add(off_days >= 1).OnlyEnforceIf(persona_hace_libres[e])
-                
+
                 model.Add(off_days <= max_off).OnlyEnforceIf(persona_hace_libres[e])
-                
-                if not allow_no_rest:
+
+                if needs_rest_day:
                     model.Add(off_days >= 1).OnlyEnforceIf(persona_hace_libres[e].Not())
                 model.Add(off_days <= max_off + 1).OnlyEnforceIf(persona_hace_libres[e].Not())
             else:
                 # Not in libres system (e.g. can't do night, or is night person)
                 # Simple unconditional off-day constraint
-                if not allow_no_rest:
+                if needs_rest_day:
                     model.Add(off_days >= 1)
                 model.Add(off_days <= max_off + 1)
 
@@ -3299,12 +3848,15 @@ class ShiftScheduler:
             t12_reward = -1200   # T12_14-22 (8h) covers h14-h21 — strong PM coverage
             t9_reward = -800     # T9_14-21 (7h) covers h14-h20
         else:
-            # Short-staffed: Q shifts are ESSENTIAL for peak coverage.
-            # Negative penalty = REWARD.  The solver actively seeks Q assignments
-            # because they bridge AM+PM peaks with one person, saving 500k/h in
-            # coverage-gap penalties while earning this direct bonus.
-            q1_penalty = -800000
-            q2_penalty = -600000
+            # Short-staffed: Q shifts are COVERAGE-DRIVEN, never rewarded.
+            # The old unconditional reward (-800k/-600k per Q day) made the
+            # solver stack broken shifts even when peaks were already at the
+            # ideal (4), producing 5-person bands built on quebrados. With a
+            # moderate positive cost, a Q enters ONLY when the coverage-gap
+            # penalty it closes (1M/h PM, 5M/h AM) outweighs it — i.e. only
+            # when no regular shift combination reaches the preset ideal.
+            q1_penalty = 200000
+            q2_penalty = 250000
             t8_reward = 0
             t12_reward = -400
             t9_reward = -300
@@ -3437,19 +3989,36 @@ class ShiftScheduler:
                     model.Add(penalizacion == 0).OnlyEnforceIf(exento)
                     model.Add(penalizacion == 0).OnlyEnforceIf(usa_otro.Not())
 
-                    penalties.append(penalizacion)
+                    major_penalties.append(penalizacion)  # IntVar 0..900k (weight embedded)
                     
         # O3. Broken shifts Q1/Q2/Q3 — penalty depends on mode and employee config.
         # forced_quebrado_total: no penalty for preferred Q type; normal penalty for others.
-        # forced_quebrado_partial: moderate penalty so solver only uses Q when
-        #   coverage gap cost (500k/hr) exceeds this penalty.  In short-staffed
-        #   mode partial employees follow the same reward as everyone else.
+        # forced_quebrado_partial: COVERAGE-DRIVEN in BOTH modes. A moderate penalty
+        #   means the solver inserts the partial-Q only when the below-ideal coverage
+        #   gap penalty (5M AM / 500k PM per hour) outweighs it — i.e. only on the days
+        #   it is actually needed to hold the IDEAL (4 at peak), never every day.
         FQ_PARTIAL_Q_PENALTY = 200_000
+        # When at least one employee is designated quebrado_partial, that person is
+        # the coverage-Q carrier.  In short-staffed mode every OTHER employee normally
+        # earns the -800k Q reward, which would let a non-designated person steal the
+        # carrier role and flood Q (defeating the purpose of the flag).  So while a
+        # partial carrier exists, every non-designated employee gets a positive
+        # fallback cost instead: above the PM gap (1M, policy B) so they don't chase
+        # PM coverage via Q, below the AM gap (5M) so they can still close an AM
+        # emergency when the carrier is OFF.  Refuerzos are NOT exempted here — a
+        # refuerzo left on the -800k reward would outbid the partial carrier and take
+        # the Q itself.
+        NONPARTIAL_Q_FALLBACK_PENALTY = 1_300_000
+        has_partial_q = any(
+            self.emp_data[e].get('forced_quebrado_partial', False)
+            for e in self.employees
+        )
         ALL_Q_SHIFTS_PEN = ["Q1_05-11+17-20", "Q2_07-11+17-20", "Q3_05-11+17-22"]
         for e in self.employees:
             fq_total = self.emp_data[e].get('forced_quebrado', False)
             fq_partial = self.emp_data[e].get('forced_quebrado_partial', False)
             qpref = self.emp_data[e].get('quebrado_preferido', 'auto')
+            steer_to_partial = has_partial_q and not standard_mode
             for d in DAYS:
                 if fq_total:
                     if qpref == 'auto':
@@ -3462,16 +4031,26 @@ class ShiftScheduler:
                                 pass  # sin penalty — es el tipo elegido
                             else:
                                 p = q1_penalty if qs in ("Q1_05-11+17-20", "Q3_05-11+17-22") else q2_penalty
-                                penalties.append(p * x[(e, d, qs)])
+                                route_penalty(p, x[(e, d, qs)])
                 elif fq_partial:
-                    p = FQ_PARTIAL_Q_PENALTY if standard_mode else q1_penalty
-                    penalties.append(p * x[(e, d, "Q1_05-11+17-20")])
-                    penalties.append(p * x[(e, d, "Q2_07-11+17-20")])
-                    penalties.append(p * x[(e, d, "Q3_05-11+17-22")])
+                    # Coverage-driven in BOTH modes (see note above). The old
+                    # short-staffed path used q1_penalty (-800k reward), which made
+                    # the partial employee take Q on nearly every working day —
+                    # indistinguishable from forced_quebrado_total.
+                    p = FQ_PARTIAL_Q_PENALTY
+                    route_penalty(p, x[(e, d, "Q1_05-11+17-20")])
+                    route_penalty(p, x[(e, d, "Q2_07-11+17-20")])
+                    route_penalty(p, x[(e, d, "Q3_05-11+17-22")])
+                elif steer_to_partial:
+                    # A partial carrier is designated: keep Q off non-designated
+                    # employees unless a real AM gap (5M) forces it.
+                    route_penalty(NONPARTIAL_Q_FALLBACK_PENALTY, x[(e, d, "Q1_05-11+17-20")])
+                    route_penalty(NONPARTIAL_Q_FALLBACK_PENALTY, x[(e, d, "Q2_07-11+17-20")])
+                    route_penalty(NONPARTIAL_Q_FALLBACK_PENALTY, x[(e, d, "Q3_05-11+17-22")])
                 else:
-                    penalties.append(q1_penalty * x[(e, d, "Q1_05-11+17-20")])
-                    penalties.append(q2_penalty * x[(e, d, "Q2_07-11+17-20")])
-                    penalties.append(q1_penalty * x[(e, d, "Q3_05-11+17-22")])
+                    route_penalty(q1_penalty, x[(e, d, "Q1_05-11+17-20")])
+                    route_penalty(q2_penalty, x[(e, d, "Q2_07-11+17-20")])
+                    route_penalty(q1_penalty, x[(e, d, "Q3_05-11+17-22")])
 
         # O4. Turnos Cortos T13
         for e in self.employees:
@@ -3531,9 +4110,9 @@ class ShiftScheduler:
                  # El incentivo debe superar la penalización de consistencia (900k)
                  # para que el solver elija T3 en lugar de T1 el fin de semana.
                  if is_woman and d in ("Sáb", "Dom") and is_special_sunday_like(d):
-                     penalties.append(950000 * x[(e, d, "T1_05-13")])
-                     penalties.append(-200000 * x[(e, d, "T3_07-15")])
-                     penalties.append(-150000 * x[(e, d, "T2_06-14")])
+                     route_penalty(950000, x[(e, d, "T1_05-13")])
+                     route_penalty(-200000, x[(e, d, "T3_07-15")])
+                     route_penalty(-150000, x[(e, d, "T2_06-14")])
         
         # O8. HEAVY EXTENDED SHIFTS - HARD BLOCKING
         # Heavy shifts (E1, E2, J_ 10h+) are FORBIDDEN. Q3 is the correct
@@ -3543,9 +4122,17 @@ class ShiftScheduler:
         
         # HARD BLOCK: No heavy extended shifts for anyone, ever.
         for e in self.employees:
+            e_fixed = self.emp_data[e].get('fixed_shifts', {}) or {}
             for d in DAYS:
                 for s in HEAVY_EXTENDED_SHIFTS:
                     if s == "T4_08-16" and day_modes.get(d) == SPECIAL_DAY_MODE_HOLY_THURSDAY:
+                        continue
+                    # Respect an EXPLICIT manual assignment of a heavy shift (e.g. the
+                    # jefe de pista's 10h base shift J_07-17/J_08-18/J_09-19/J_10-20).
+                    # This block only stops the SOLVER from auto-choosing heavy shifts;
+                    # it must NOT override a shift the user fixed on purpose (that
+                    # collision is what made the jefe's schedule impossible / infeasible).
+                    if e_fixed.get(d) == s:
                         continue
                     model.Add(x[(e, d, s)] == 0)
 
@@ -3554,10 +4141,10 @@ class ShiftScheduler:
                 continue
             holy_t4_total = sum(x[(e, d, "T4_08-16")] for e in self.employees)
             model.Add(holy_t4_total <= 1)
-            penalties.append(-180000 * holy_t4_total)
+            route_penalty(-180000, holy_t4_total)
             for e in self.employees:
-                penalties.append(180000 * x[(e, d, "T16_05-14")])
-                penalties.append(180000 * x[(e, d, "D2_14-22")])
+                route_penalty(180000, x[(e, d, "T16_05-14")])
+                route_penalty(180000, x[(e, d, "D2_14-22")])
 
         for d in DAYS:
             # Reuse collision_vars for short-staffed detection on weekdays.
@@ -3646,8 +4233,8 @@ class ShiftScheduler:
                  # Short-staff: D3 (15:00–23:00) solo como último recurso; preferir T17 (16:00–23:00).
                  # Antes D3 tenía recompensa (-1500), lo que lo favorecía indebidamente frente a T17.
                  if not standard_mode:
-                     penalties.append(800000 * x[(e, d, "D3_15-23")])
-                     penalties.append(-350000 * x[(e, d, "T17_16-23")])
+                     route_penalty(800000, x[(e, d, "D3_15-23")])
+                     route_penalty(-350000, x[(e, d, "T17_16-23")])
                  # D2_14-22: recompensa condicional (ver O9c abajo)
 
         # O9c. Preferencia T10_15-22 sobre D2_14-22 de Lun-Vie
@@ -3680,7 +4267,7 @@ class ShiftScheduler:
                 d2_normal = model.NewBoolVar(f"d2_normal_{e}_{d}")
                 model.AddBoolAnd([x[(e, d, "D2_14-22")], collision_vars[d].Not()]).OnlyEnforceIf(d2_normal)
                 model.AddBoolOr([x[(e, d, "D2_14-22")].Not(), collision_vars[d]]).OnlyEnforceIf(d2_normal.Not())
-                penalties.append(200000 * d2_normal)
+                route_penalty(200000, d2_normal)
 
                 # D2_14-22 en día colisión → recompensar normalmente
                 d2_collision = model.NewBoolVar(f"d2_collision_{e}_{d}")
@@ -3949,9 +4536,9 @@ class ShiftScheduler:
                     for s, var in turno_principal[e].items():
                         token = _am_pm_token(s)
                         if token == fixed_token:
-                            penalties.append(-FIXED_FAMILY_BOOST * var)  # recompensa
+                            route_penalty(-FIXED_FAMILY_BOOST, var)  # recompensa
                         elif token is not None and token != fixed_token:
-                            penalties.append(FIXED_FAMILY_BOOST * var)   # penaliza familia opuesta
+                            route_penalty(FIXED_FAMILY_BOOST, var)   # penaliza familia opuesta
                     continue
 
                 # SOFT PREFERENCES OVERRIDE: si el empleado tiene preferencias de turno
@@ -3986,9 +4573,9 @@ class ShiftScheduler:
                     for s, var in turno_principal[e].items():
                         token = _am_pm_token(s)
                         if token == soft_pref_token:
-                            penalties.append(-SOFT_PREF_BOOST * var)  # fuerte recompensa
+                            route_penalty(-SOFT_PREF_BOOST, var)  # fuerte recompensa
                         elif token is not None and token != soft_pref_token:
-                            penalties.append(SOFT_PREF_BOOST * var)   # fuerte penalidad familia opuesta
+                            route_penalty(SOFT_PREF_BOOST, var)   # fuerte penalidad familia opuesta
                     continue
 
                 # Penalty for repeating same token — scales exponentially with streak.
@@ -4010,9 +4597,9 @@ class ShiftScheduler:
                 for s, var in turno_principal[e].items():
                     token = _am_pm_token(s)
                     if token == last_token:
-                        penalties.append(penalty_same * var)
+                        route_penalty(penalty_same, var)
                     elif token == opposite_token:
-                        penalties.append(reward_opp * var)
+                        route_penalty(reward_opp, var)
 
                 # BALANCE CHECK: penalización extra desde |balance| >= 2 (antes 3).
                 # Activarla antes evita que un desbalance de 3 (PM-heavy crónico)
@@ -4027,7 +4614,7 @@ class ShiftScheduler:
                     for s, var in turno_principal[e].items():
                         token = _am_pm_token(s)
                         if token == dominant_token:
-                            penalties.append(imbalance_penalty * var)
+                            route_penalty(imbalance_penalty, var)
 
                 # TEAM-WIDE EQUITY: penalizar a quien concentra mucho más PM (o AM)
                 # que el promedio del equipo. Evita que el solver "elija siempre
@@ -4043,12 +4630,12 @@ class ShiftScheduler:
                         equity_pen = min(5_000_000, int(2_500_000 * (pm_excess - 0.25) + 400_000))
                         for s, var in turno_principal[e].items():
                             if _am_pm_token(s) == "PM":
-                                penalties.append(equity_pen * var)
+                                route_penalty(equity_pen, var)
                     elif am_excess > 0.25:
                         equity_pen = min(5_000_000, int(2_500_000 * (am_excess - 0.25) + 400_000))
                         for s, var in turno_principal[e].items():
                             if _am_pm_token(s) == "AM":
-                                penalties.append(equity_pen * var)
+                                route_penalty(equity_pen, var)
                 continue
             lookback_weeks = min(max(ctx.get("cycle_weeks", 1) - 1, 0), len(recent_tokens))
             if lookback_weeks <= 0:
@@ -4062,7 +4649,7 @@ class ShiftScheduler:
                     weight = max(8000, rotation_penalty_weights[-1] - (tail_idx * 2000))
                 for s, var in turno_principal[e].items():
                     if _rotation_token_for_shift(s, self.emp_data[e]) == token:
-                        penalties.append(weight * var)
+                        route_penalty(weight, var)
         # 2. SUNDAY ROTATION (History-based queue)
         # Build rotation queue by analyzing history: who had Sunday OFF least recently goes first
         # NOTE: Night person IS eligible for Sunday rotation — the persona_hace_libres
@@ -4121,7 +4708,7 @@ class ShiftScheduler:
 
                 for idx, e in enumerate(rotation_queue):
                     reward = SUNDAY_QUEUE_REWARDS[idx] if idx < len(SUNDAY_QUEUE_REWARDS) else SUNDAY_QUEUE_REWARDS[-1]
-                    penalties.append(-reward * sunday_absence_vars[e])
+                    route_penalty(-reward, sunday_absence_vars[e])
 
                 for d, congested in weekday_congestion.items():
                     for e, sunday_absent in sunday_absence_vars.items():
@@ -4146,13 +4733,13 @@ class ShiftScheduler:
                 # Si hay empate en antigüedad (varias personas con el mismo último
                 # domingo libre), la optimización del solver evalúa cuál opción
                 # genera el mejor horario.
-                penalties.append(500_000_000 * sunday_absence_vars[rotation_target].Not())
+                route_penalty(500_000_000, sunday_absence_vars[rotation_target].Not())
 
             # Second in queue: strongly prefer Sunday OFF for the next person
             if len(rotation_queue) >= 2:
                 second_target = rotation_queue[1]
                 if second_target in sunday_absence_vars:
-                    penalties.append(20_000_000 * sunday_absence_vars[second_target].Not())
+                    route_penalty(20_000_000, sunday_absence_vars[second_target].Not())
 
             # O6. Sunday Rotation (Historial Compatibility)
             # Verify if they worked last Sunday.
@@ -4247,12 +4834,33 @@ class ShiftScheduler:
         # and 30 shifts, which would bloat the model unacceptably.
 
         # Optimization
-        model.Minimize(sum(penalties) + sum(peak_penalties))
-        
+        # Lexicographic mode (default): solve tier by tier, freezing each
+        # tier's optimum before optimizing the next. Legacy mode (config
+        # 'lexicographic': False): single weighted-sum objective as before.
+        lex_mode = bool(self.config.get('lexicographic', True))
+        lex_tiers = [
+            ("critical", crit_penalties),
+            ("major", major_penalties),
+            ("minor", penalties + peak_penalties),
+        ]
+        if not lex_mode:
+            model.Minimize(
+                sum(crit_penalties) + sum(major_penalties)
+                + sum(penalties) + sum(peak_penalties)
+            )
+
         solver = cp_model.CpSolver()
         # Allows an external caller to specify a custom max time for the solver.
         # FIX: The model complexity is too high to prove optimality. Force early termination.
-        max_t = self.config.get('max_time', 180)
+        # 'max_time' (interno, ej. trials de diagnóstico) tiene prioridad; si no viene,
+        # se usa el 'solver_max_time' configurable desde Parámetros del Motor (60-900s).
+        max_t = self.config.get('max_time')
+        if max_t is None:
+            try:
+                max_t = int(self.config.get('solver_max_time') or 180)
+            except (TypeError, ValueError):
+                max_t = 180
+            max_t = min(max(max_t, 30), 900)
         solver.parameters.max_time_in_seconds = max_t
         solver.parameters.relative_gap_limit = 0.005
         solver.parameters.absolute_gap_limit = 50_000
@@ -4297,15 +4905,54 @@ class ShiftScheduler:
                         model.AddHint(x[(e, d, s_prev)], 1)
         
         solution_counter = SolutionCounter()
-        # Fallback removed: fix_variables_to_their_hinted_value is too aggressive 
+        # Fallback removed: fix_variables_to_their_hinted_value is too aggressive
         # and causes Infeasible when new constraints conflict with old schedules.
         # Just let the first solve finish.
-        status = solver.Solve(model, solution_counter)
-        
-        # Fallback removed: fix_variables_to_their_hinted_value is too aggressive 
-        # and causes Infeasible when new constraints conflict with old schedules.
-        # Just let the first solve finish.
-        
+        lex_report = None
+        if lex_mode:
+            lex_report = []
+            deadline = time.monotonic() + max_t
+            active_tiers = [(nm, terms) for nm, terms in lex_tiers if terms]
+            status = cp_model.UNKNOWN
+            for i, (tier_name, terms) in enumerate(active_tiers):
+                remaining = deadline - time.monotonic()
+                is_last_pass = (i == len(active_tiers) - 1)
+                # First pass does the heavy lifting (feasibility from scratch);
+                # later passes start hinted at a known solution and converge
+                # fast, so give every non-final pass half the remaining budget.
+                solver.parameters.max_time_in_seconds = max(
+                    5.0, remaining if is_last_pass else remaining * 0.5
+                )
+                # The 50k absolute gap is calibrated for the big tiers; the
+                # minor tier holds weights < 150k, so it needs a finer gap.
+                solver.parameters.absolute_gap_limit = 2_000 if tier_name == "minor" else 50_000
+                tier_obj = sum(terms)
+                model.Minimize(tier_obj)
+                status = solver.Solve(model, solution_counter)
+                if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE) and i > 0:
+                    # Passes after the first are re-finding a known-feasible
+                    # solution (bounded by its own tier values, hinted at it),
+                    # so a failure here is a timing fluke: retry once with the
+                    # rest of the budget.
+                    solver.parameters.max_time_in_seconds = max(
+                        10.0, deadline - time.monotonic()
+                    )
+                    status = solver.Solve(model, solution_counter)
+                if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+                    break
+                tier_best = int(round(solver.ObjectiveValue()))
+                lex_report.append({
+                    "tier": tier_name,
+                    "objective": tier_best,
+                    "status": solver.StatusName(status),
+                })
+                if i < len(active_tiers) - 1:
+                    # Freeze this tier: lower tiers may not degrade it.
+                    model.Add(tier_obj <= tier_best)
+                    _refresh_solution_hints(model, solver, x)
+        else:
+            status = solver.Solve(model, solution_counter)
+
         if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
              res = {}
              
@@ -4385,18 +5032,21 @@ class ShiftScheduler:
                          3
                      ),
                      "solver_wall_time": solver.WallTime(),
+                     "solver_max_time_applied": max_t,
+                     "solver_status_optimal": bool(status == cp_model.OPTIMAL),
                      "min_rest_hours_applied": min_rest_hours,
                      "rest_between_shifts": rest_report,
                      "consistency_penalty": CONSISTENCY_PENALTY,
                      "consistency_exempt": consistency_exempt,
+                     "lexicographic": lex_report,
                      "refuerzo_employees": [e for e in self.employees if self.emp_data.get(e, {}).get('is_refuerzo', False)],
                  }
              }
         if status == cp_model.INFEASIBLE:
-             diagnosis = self._diagnose_infeasible_result()
+             # El diagnóstico detallado (que corre solves de prueba) se ejecuta UNA sola
+             # vez en solve() tras agotar todos los niveles de descanso, no aquí — así se
+             # evita repetirlo por cada nivel del retry loop.
              message = "No se pudo generar horario. Revise los turnos fijos estrictos y la cobertura minima."
-             if diagnosis and diagnosis.get("message"):
-                 message = diagnosis["message"]
              return {"status": "Infeasible", "message": message}
 
         status_name = {
